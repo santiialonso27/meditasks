@@ -624,13 +624,13 @@
     }
 
     .beta-pill{
-      padding:4px 10px;
+      padding:2px 8px;
       border-radius:999px;
 
       background: var(--gradient-to);
       color:#000;
 
-      font-size:11px;
+      font-size:10px;
       font-weight:700;
       letter-spacing:.5px;
 
@@ -640,9 +640,29 @@
     }
 
     .version{
-      font-size:13px;
+      font-size:11px;
       opacity:.35;
       font-weight:600;
+    }
+
+    .brand{
+      display:flex;
+      align-items:stretch;
+      gap:14px;
+    }
+
+    .brand-title{
+      font-weight:800;
+      font-size:17px;
+      line-height:0.95;
+    }
+
+    .brand-meta{
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      gap:4px;
+      transform: translateY(-6px);
     }
 
   </style>
@@ -656,7 +676,10 @@
         <div class="app-logo-wrapper" aria-hidden="true">
           <img src="/flav-icon.png" class="app-logo">
         </div>
-        MEDI-TASKS
+        <div class="brand-title">
+          MEDI-<br>
+          TASKS
+        </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
           <span class="version">v0.3</span>
