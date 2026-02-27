@@ -294,8 +294,8 @@
       transition: border-color .15s ease, background .15s ease;
     }
     .input:focus{
-      border-color: rgba(139,92,246,.55);
-      background: rgba(139,92,246,.06);
+      border-color: var(--gradient-to);
+      background: color-mix(in srgb, var(--gradient-to) 10%, transparent);
     }
     .input::placeholder{ color:#6b6b76; }
 
@@ -588,6 +588,63 @@
       display:block;
     }
 
+    .theme-sphere{
+      width:18px;
+      height:18px;
+      border-radius:50%;
+
+      background: var(--app-gradient);
+
+      border:1.5px solid rgba(255,255,255,.9);
+
+      box-shadow:
+        inset 0 2px 4px rgba(255,255,255,.25),
+        inset 0 -3px 5px rgba(0,0,0,.4);
+
+      transition: transform .2s ease;
+    }
+
+    #themeToggle:hover .theme-sphere{
+      transform: scale(1.08);
+    }
+
+    #soundToggle,
+    #themeToggle{
+      width:36px;
+      height:36px;
+      min-width:36px;
+      flex:0 0 36px;
+    }
+
+    .brand-meta{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      margin-top:6px;
+    }
+
+    .beta-pill{
+      padding:4px 10px;
+      border-radius:999px;
+
+      background: var(--gradient-to);
+      color:#000;
+
+      font-size:11px;
+      font-weight:700;
+      letter-spacing:.5px;
+
+      box-shadow:
+        inset 0 1px 2px rgba(255,255,255,.35),
+        0 4px 12px rgba(0,0,0,.25);
+    }
+
+    .version{
+      font-size:13px;
+      opacity:.35;
+      font-weight:600;
+    }
+
   </style>
 </head>
 
@@ -600,8 +657,10 @@
           <img src="/flav-icon.png" class="app-logo">
         </div>
         MEDI-TASKS
-        <span style="opacity:.6;font-weight:600">beta</span>
-        <span style="opacity:.2;font-weight:600">v0.2</span>
+        <div class="brand-meta">
+          <span class="beta-pill">BETA</span>
+          <span class="version">v0.3</span>
+        </div>
         <div class="badge" id="soundToggle" style="cursor:pointer;">
             <svg id="soundIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
@@ -610,7 +669,7 @@
             </svg>
           </div>
         <div class="badge" id="themeToggle" style="cursor:pointer;" title="Cambiar tema">
-          🎨
+          <div class="theme-sphere"></div>
         </div>
         <div class="theme-menu" id="themeMenu">
           <div class="theme-option" data-theme="theme-default">
@@ -643,13 +702,14 @@
     <div class="panel">
       <h3 class="changelog-title">
         Changelog
-        <span class="changelog-version">v0.2</span>
+        <span class="changelog-version">v0.3</span>
       </h3>
       <div class="muted changelog">
         <ul>
           <li>Se añadieron temas seleccionables</li>
           <li>Calendario visual estático</li>
           <li>Doble click para editar tarea</li>
+          <li>Mejoras visuales</li>
         </ul>
       </div>
     </div>
