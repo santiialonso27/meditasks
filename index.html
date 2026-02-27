@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>MediTasks</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/flav-icon.png">
   <style>
     :root{
       --bg:#09090b;
@@ -15,19 +17,48 @@
       --text:#f4f4f5;
       --muted:#a1a1aa;
       --border:#27272a;
-      --accent:#8b5cf6;
-      --accent2:#7c3aed;
       --danger:#ef4444;
       --shadow: 0 20px 60px rgba(0,0,0,.45);
-      --app-gradient: linear-gradient(135deg,#8b5cf6,#00ffaa);
-      --app-gradient-soft: linear-gradient(135deg,rgba(139,92,246,.35),rgba(0,255,170,.25));
+      --gradient-from:#8b5cf6;
+      --gradient-to:#00ffaa;
+      --accent: var(--gradient-from);
+      --accent-soft: color-mix(in srgb, var(--gradient-to) 35%, transparent);
+      --gradient-from-soft:rgba(139,92,246,.35);
+      --gradient-to-soft:rgba(0,255,170,.25);
+      --app-gradient: linear-gradient(135deg,var(--gradient-from),var(--gradient-to));
+      --app-gradient-soft: linear-gradient(135deg,var(--gradient-from-soft),var(--gradient-to-soft));  
     }
+    /* THEME: DEFAULT */
+    :root.theme-default {
+      --gradient-from:#8b5cf6;
+      --gradient-to:#00ffaa;
+
+      --gradient-from-soft:rgba(139,92,246,.35);
+      --gradient-to-soft:rgba(0,255,170,.25);
+    }
+    /* THEME: AMATISTA */
+    :root.theme-violet-pink {
+      --gradient-from:#8b5cf6;
+      --gradient-to:#ec4899;
+
+      --gradient-from-soft:rgba(139,92,246,.35);
+      --gradient-to-soft:rgba(236,72,153,.25);
+    }
+    /* THEME: LAVA */
+    :root.theme-lava {
+      --gradient-from:#dc2626;
+      --gradient-to:#ff6a00;
+
+      --gradient-from-soft:rgba(220,38,38,.35);
+      --gradient-to-soft:rgba(255,106,0,.25);
+    }
+
     *{ box-sizing:border-box; margin:0; padding:0; font-family:Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body{
       height:100vh; display:flex; overflow:hidden; color:var(--text);
       background:
-        radial-gradient(1200px 700px at 15% 10%, rgba(139,92,246,.18), transparent 55%),
-        radial-gradient(900px 600px at 85% 20%, rgba(124,58,237,.10), transparent 55%),
+        radial-gradient(1200px 700px at 15% 10%, var(--gradient-from-soft), transparent 55%),
+        radial-gradient(900px 600px at 85% 20%, var(--gradient-to-soft), transparent 55%),
         var(--bg);
     }
     ::-webkit-scrollbar{ width:8px; height:8px; }
@@ -65,7 +96,7 @@
       transform: translateY(-2px);
       box-shadow:
         inset 0 1px 0 rgba(255,255,255,.25),
-        0 15px 40px rgba(16,185,129,.25);
+        0 15px 40px var(--gradient-to-soft);
     }
     .btn{
       border:1px solid var(--border);
@@ -152,6 +183,10 @@
       border-bottom:1px solid var(--border);
       display:flex; justify-content:space-between; align-items:flex-end; gap:10px;
     }
+    .col-head > div:first-child{
+      flex:1;
+      min-width:0;
+    }
     .col-title{ font-weight:900; letter-spacing:-.2px; }
     .col-sub{ font-size:12px; color:var(--muted); margin-top:4px; }
     .progress{
@@ -165,7 +200,7 @@
     .progress-bar{
       height:100%;
       width:0%;
-      background:linear-gradient(90deg,#8b5cf6,#10b981);
+      background:linear-gradient(90deg,var(--gradient-from),var(--gradient-to));
       border-radius:999px;
       transition: width .3s ease;
     }
@@ -173,7 +208,7 @@
       border: 1px solid transparent;
       background:
         linear-gradient(#121214,#121214) padding-box,
-        linear-gradient(135deg,#8b5cf6,#10b981) border-box;
+        var(--app-gradient) border-box;
       position: relative;
       overflow: hidden;
     }
@@ -185,9 +220,10 @@
       white-space:nowrap;
     }
     .pill.today{
-      border-color: rgba(139,92,246,.55);
-      background: rgba(139,92,246,.12);
-      color:#ded6ff;
+      border-color: var(--gradient-to);
+      background: var(--gradient-to-soft);
+      color: var(--text);
+      font-weight:600;
     }
 
     .list{
@@ -310,7 +346,7 @@
     .mini-calendar .day.today{
       background:var(--app-gradient-soft);
       border:1px solid rgba(255,255,255,.2);
-      box-shadow:0 0 15px rgba(139,92,246,.3);
+      box-shadow:0 0 15px var(--gradient-from-soft);
       font-weight:700;
     }
 
@@ -449,6 +485,69 @@
       outline: none;
     }
 
+    /* Theme menu */
+    .theme-menu{
+      position:absolute;
+      top:60px;
+      left:20px;
+      background:var(--card2);
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:10px;
+      display:none;
+      flex-direction:column;
+      gap:8px;
+      box-shadow:0 20px 60px rgba(0,0,0,.5);
+      z-index:100;
+      width:180px;
+    }
+
+    .theme-menu.open{
+      display:flex;
+    }
+
+    .theme-option{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:6px;
+      border-radius:10px;
+      cursor:pointer;
+      transition:.2s ease;
+    }
+
+    .theme-option:hover{
+      background:rgba(255,255,255,.05);
+    }
+
+    .theme-option.active{
+      background:rgba(255,255,255,.08);
+      border:1px solid rgba(255,255,255,.08);
+    }
+
+    .theme-preview{
+      width:36px;
+      height:22px;
+      border-radius:6px;
+      border:1px solid rgba(255,255,255,.15);
+    }
+
+    .preview-default{
+      background:linear-gradient(135deg,#8b5cf6,#00ffaa);
+    }
+
+    .preview-violet-pink{
+      background:linear-gradient(135deg,#8b5cf6,#ec4899);
+    }
+
+    .preview-lava{
+      background:linear-gradient(135deg,#dc2626,#ff6a00);
+    }
+
+    #soundToggle svg{
+      color: var(--text);
+    }
+
   </style>
 </head>
 
@@ -470,14 +569,34 @@
         </div>
         MEDI-TASKS
         <span style="opacity:.6;font-weight:600">beta</span>
-        <span style="opacity:.2;font-weight:600">v0.1</span>
+        <span style="opacity:.2;font-weight:600">v0.2</span>
         <div class="badge" id="soundToggle" style="cursor:pointer;">
-            <svg id="soundIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg id="soundIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
               <path d="M15 9a5 5 0 0 1 0 6"></path>
               <path d="M18 7a9 9 0 0 1 0 10"></path>
             </svg>
           </div>
+        <div class="badge" id="themeToggle" style="cursor:pointer;" title="Cambiar tema">
+          🎨
+        </div>
+        <div class="theme-menu" id="themeMenu">
+          <div class="theme-option" data-theme="theme-default">
+            <div class="theme-preview preview-default"></div>
+            <span>Default</span>
+          </div>
+
+          <div class="theme-option" data-theme="theme-violet-pink">
+            <div class="theme-preview preview-violet-pink"></div>
+            <span>Amatista</span>
+          </div>
+
+          <div class="theme-option" data-theme="theme-lava">
+            <div class="theme-preview preview-lava"></div>
+            <span>Lava</span>
+          </div> 
+
+        </div>  
       </div>
     </div>
 
@@ -492,11 +611,11 @@
     <div class="panel">
       <h3 class="changelog-title">
         Changelog
-        <span class="changelog-version">v0.1</span>
+        <span class="changelog-version">v0.2</span>
       </h3>
       <div class="muted changelog">
         <ul>
-          <li>Primera version estable</li>
+          <li>Se añadieron temas seleccionables</li>
           <li>Calendario visual estático</li>
           <li>Doble click para editar tarea</li>
         </ul>
