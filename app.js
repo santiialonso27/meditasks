@@ -3,7 +3,7 @@ const statusText = document.getElementById("statusText");
 
 
 const DAYS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
-const storeKey = "blitzit_tasks";
+const storeKey = "meditasks_tasks";
 
 let tasks = JSON.parse(localStorage.getItem(storeKey)) || {};
 
@@ -34,11 +34,11 @@ function createDayColumn(date) {
         <div class="progress">
           <div class="progress-bar"></div>
         </div>
-
       </div>
-      <span class="pill ${isToday(date) ? "today" : ""}">
-        ${isToday(date) ? "Hoy" : ""}
-      </span>
+
+      ${isToday(date) ? `
+        <span class="pill today">Hoy</span>
+      ` : ""}
     </div>
 
     <div class="list"></div>
@@ -270,7 +270,7 @@ function init() {
     d.setDate(today.getDate() + i);
     board.appendChild(createDayColumn(d));
   }
-  statusText.textContent = "Listo · tareas guardadas localmente";
+  statusText.textContent = "Listo · Tareas guardadas localmente";
 }
 
 function playRewardSound() {
@@ -419,5 +419,56 @@ function renderMiniCalendar() {
 }
 
 renderMiniCalendar();
+
+const themeToggle = document.getElementById("themeToggle");
+const themeMenu = document.getElementById("themeMenu");
+const themeOptions = document.querySelectorAll(".theme-option");
+
+const THEMES = [
+  "theme-default",
+  "theme-violet-pink",
+  "theme-lava"
+];
+
+let currentTheme = localStorage.getItem("app_theme") || "theme-default";
+
+applyTheme(currentTheme);
+updateActiveThemeUI();
+
+themeToggle.addEventListener("click", (e) => {
+  e.stopPropagation();
+  themeMenu.classList.toggle("open");
+});
+
+document.addEventListener("click", () => {
+  themeMenu.classList.remove("open");
+});
+
+themeOptions.forEach(option => {
+  option.addEventListener("click", () => {
+    const selected = option.dataset.theme;
+    currentTheme = selected;
+
+    applyTheme(selected);
+    localStorage.setItem("app_theme", selected);
+    updateActiveThemeUI();
+
+    themeMenu.classList.remove("open");
+  });
+});
+
+function applyTheme(theme) {
+  document.documentElement.classList.remove(...THEMES);
+  document.documentElement.classList.add(theme);
+}
+
+function updateActiveThemeUI(){
+  themeOptions.forEach(option=>{
+    option.classList.toggle(
+      "active",
+      option.dataset.theme === currentTheme
+    );
+  });
+}
 
 init();
