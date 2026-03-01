@@ -324,23 +324,41 @@ function createDayColumn(date) {
 
         // Si se acaba de completar (no desmarcar)
         if (!wasDone && t.done) {
+
+          const total = tasks[iso].length;
+          const completed = tasks[iso].filter(task => task.done).length;
+
           setTimeout(() => {
             const tasksEls = col.querySelectorAll(".task");
             const last = tasksEls[i];
             if (last) {
               last.classList.add("reward");
             }
-            if (soundEnabled) {
+          }, 0);
+
+          if (soundEnabled) {
+            if (total > 0 && completed === total) {
+              // 🎉 Día completo
+              playDayCompleteSound();
+            } else {
+              // ✔ Solo una tarea
               playRewardSound();
             }
-          }, 0);
+          }
         }
       };
 
       el.querySelector("button").onclick = e => {
         e.stopPropagation();
+
         tasks[iso].splice(i,1);
-        save(); render();
+
+        if (soundEnabled) {
+          playRewardSound(); // 🔥 sonido al borrar
+        }
+
+        save();
+        render();
       };
 
       list.appendChild(el);
@@ -350,7 +368,7 @@ function createDayColumn(date) {
       e.preventDefault();
     });
 
-    list.addEventListener("drop", e => {
+    list.addEventxListener("drop", e => {
       e.preventDefault();
 
       const raw = e.dataTransfer.getData("text/plain");
@@ -416,24 +434,24 @@ function init() {
   statusText.textContent = "Listo · Tareas guardadas localmente";
 }
 
+const completeSound = new Audio("/sounds/task_complete.mp3");
+completeSound.volume = 0.6;
+completeSound.preload = "auto";
+completeSound.load();
+
+const dayCompleteSound = new Audio("/sounds/day_complete.mp3");
+dayCompleteSound.volume = 0.7;
+dayCompleteSound.preload = "auto";
+dayCompleteSound.load();
+
 function playRewardSound() {
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  completeSound.currentTime = 0;
+  completeSound.play();
+}
 
-  const oscillator = ctx.createOscillator();
-  const gainNode = ctx.createGain();
-
-  oscillator.type = "sine";
-  oscillator.frequency.setValueAtTime(880, ctx.currentTime); // tono agudo
-  oscillator.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.15);
-
-  gainNode.gain.setValueAtTime(0.2, ctx.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
-
-  oscillator.connect(gainNode);
-  gainNode.connect(ctx.destination);
-
-  oscillator.start();
-  oscillator.stop(ctx.currentTime + 0.25);
+function playDayCompleteSound() {
+  dayCompleteSound.currentTime = 0;
+  dayCompleteSound.play();
 }
 
 const soundToggle = document.getElementById("soundToggle");
