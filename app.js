@@ -24,6 +24,9 @@ const db = getFirestore(app);
 const board = document.getElementById("board");
 const statusText = document.getElementById("statusText");
 const loginBtn = document.getElementById("loginBtn");
+const logoutOverlay = document.getElementById("logoutOverlay");
+const cancelLogout = document.getElementById("cancelLogout");
+const confirmLogout = document.getElementById("confirmLogout");
 
 let currentUser = null;
 
@@ -85,10 +88,27 @@ onAuthStateChanged(auth, async (user) => {
 
 
 loginBtn.addEventListener("click", async () => {
+
   if (!currentUser) {
     await signInWithPopup(auth, provider);
   } else {
-    await signOut(auth);
+    logoutOverlay.classList.add("open");
+  }
+
+});
+
+cancelLogout.addEventListener("click", () => {
+  logoutOverlay.classList.remove("open");
+});
+
+confirmLogout.addEventListener("click", async () => {
+  logoutOverlay.classList.remove("open");
+  await signOut(auth);
+});
+
+logoutOverlay.addEventListener("click", (e) => {
+  if (e.target === logoutOverlay) {
+    logoutOverlay.classList.remove("open");
   }
 });
 
