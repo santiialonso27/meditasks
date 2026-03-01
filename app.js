@@ -1,7 +1,46 @@
+// 🔥 Firebase
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAvw34oR9TdAkV7i_eyCNb-G6l2aTdutj0",
+  authDomain: "meditasks-95453.firebaseapp.com",
+  projectId: "meditasks-95453",
+  storageBucket: "meditasks-95453.firebasestorage.app",
+  messagingSenderId: "775113764876",
+  appId: "1:775113764876:web:9bd8f60593f804d251fe29"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const provider = new GoogleAuthProvider();
 const board = document.getElementById("board");
 const statusText = document.getElementById("statusText");
+const loginBtn = document.getElementById("loginBtn");
+
+let currentUser = null;
+
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    currentUser = user;
+    statusText.textContent = "Conectado como " + user.displayName;
+  } else {
+    currentUser = null;
+    statusText.textContent = "No conectado";
+  }
+});
 
 
+
+loginBtn.addEventListener("click", async () => {
+  if (!currentUser) {
+    await signInWithPopup(auth, provider);
+  } else {
+    await signOut(auth);
+  }
+});
+
+//CODIGO ANTIGUO
 const DAYS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 const storeKey = "meditasks_tasks";
 
