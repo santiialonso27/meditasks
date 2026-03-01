@@ -368,7 +368,7 @@ function createDayColumn(date) {
       e.preventDefault();
     });
 
-    list.addEventxListener("drop", e => {
+    list.addEventListener("drop", e => {
       e.preventDefault();
 
       const raw = e.dataTransfer.getData("text/plain");
