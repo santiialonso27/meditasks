@@ -340,6 +340,7 @@ function createDayColumn(date) {
             if (total > 0 && completed === total) {
               // 🎉 Día completo
               playDayCompleteSound();
+              launchConfetti();
             } else {
               // ✔ Solo una tarea
               playRewardSound();
@@ -452,6 +453,31 @@ function playRewardSound() {
 function playDayCompleteSound() {
   dayCompleteSound.currentTime = 0;
   dayCompleteSound.play();
+}
+
+function launchConfetti() {
+  const duration = 2000;
+  const end = Date.now() + duration;
+
+  (function frame() {
+    confetti({
+      particleCount: 6,
+      angle: 60,
+      spread: 55,
+      origin: { x: 0 }
+    });
+
+    confetti({
+      particleCount: 6,
+      angle: 120,
+      spread: 55,
+      origin: { x: 1 }
+    });
+
+    if (Date.now() < end) {
+      requestAnimationFrame(frame);
+    }
+  })();
 }
 
 const soundToggle = document.getElementById("soundToggle");
