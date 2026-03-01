@@ -380,6 +380,29 @@
       border:1px solid transparent;
     }
 
+    .calendar-nav{
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+
+    .cal-btn{
+      width:28px;
+      height:28px;
+      border-radius:8px;
+      border:1px solid var(--border);
+      background:rgba(255,255,255,.03);
+      color:var(--text);
+      cursor:pointer;
+      font-weight:700;
+      transition:.2s ease;
+    }
+
+    .cal-btn:hover{
+      background:var(--app-gradient-soft);
+      border-color:var(--gradient-to);
+    }
+
     .changelog-title{
       display:flex;
       align-items:center;
@@ -893,7 +916,7 @@
         </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
-          <span class="version">v0.4</span>
+          <span class="version">v0.5</span>
         </div>
       </div>
 
@@ -936,7 +959,11 @@
     <div class="sidebar-scroll">
 
     <div class="panel month-panel">
-      <div class="mini-calendar" id="miniCalendar"></div>
+      <div class="calendar-nav">
+        <button id="prevMonth" class="cal-btn">‹</button>
+        <div class="mini-calendar" id="miniCalendar"></div>
+        <button id="nextMonth" class="cal-btn">›</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -946,7 +973,7 @@
     <div class="panel">
       <h3 class="changelog-title">
         Cambios
-        <span class="changelog-version">v0.4</span>
+        <span class="changelog-version">v0.5</span>
       </h3>
       <div class="muted changelog">
         <ul>
