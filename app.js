@@ -5,7 +5,8 @@ import {
   getFirestore, 
   doc, 
   setDoc, 
-  getDoc 
+  getDoc,
+  onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -29,10 +30,12 @@ const cancelLogout = document.getElementById("cancelLogout");
 const confirmLogout = document.getElementById("confirmLogout");
 
 let currentUser = null;
+let unsubscribe = null;
 
 onAuthStateChanged(auth, async (user) => {
 
   if (user) {
+
     currentUser = user;
 
     const fullName = user.displayName || "";
@@ -42,31 +45,47 @@ onAuthStateChanged(auth, async (user) => {
     loginBtn.innerHTML = `
       <div class="login-content">
         <span class="login-text white-text">
-          👋🏼  HOLA ${firstName}!
+          👋🏼 HOLA ${firstName}!
         </span>
       </div>
     `;
 
     statusText.textContent = "Sincronizando tareas...";
 
-    // 🔥 1️⃣ Obtener tareas en la nube
-    const snap = await getDoc(doc(db, "users", user.uid));
-
-    if (snap.exists()) {
-      tasks = snap.data().tasks || {};
-    } else {
-      // 🔥 2️⃣ Si no tenía en la nube pero sí en local → subirlas
-      const localTasks = JSON.parse(localStorage.getItem(storeKey)) || {};
-      tasks = localTasks;
-
-      await setDoc(doc(db, "users", user.uid), { tasks });
-      localStorage.removeItem(storeKey);
+    // 🔥 Cancelar listener anterior si existía
+    if (unsubscribe) {
+      unsubscribe();
+      unsubscribe = null;
     }
 
-    init();
-    statusText.textContent = "Tareas guardadas con éxito";
+    const userRef = doc(db, "users", user.uid);
+
+    // 🔥 Listener en tiempo real
+    unsubscribe = onSnapshot(userRef, async (snapshot) => {
+
+      if (snapshot.exists()) {
+        tasks = snapshot.data().tasks || {};
+      } else {
+        // Si no tenía en la nube → subir lo local
+        const localTasks = JSON.parse(localStorage.getItem(storeKey)) || {};
+        tasks = localTasks;
+        await setDoc(userRef, { tasks });
+      }
+
+      // Limpiar local para evitar duplicados
+      localStorage.removeItem(storeKey);
+
+      init();
+      statusText.textContent = "Tareas guardadas con éxito";
+    });
 
   } else {
+
+    // 🔥 Si había listener activo → apagarlo
+    if (unsubscribe) {
+      unsubscribe();
+      unsubscribe = null;
+    }
 
     currentUser = null;
 
@@ -80,10 +99,13 @@ onAuthStateChanged(auth, async (user) => {
       </div>
     `;
 
+    // Restaurar tareas locales si existen
     tasks = JSON.parse(localStorage.getItem(storeKey)) || {};
     init();
+
     statusText.textContent = "Inicia sesión para guardar tus tareas";
   }
+
 });
 
 
