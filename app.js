@@ -23,13 +23,38 @@ let currentUser = null;
 onAuthStateChanged(auth, (user) => {
   if (user) {
     currentUser = user;
-    statusText.textContent = "Conectado como " + user.displayName;
+
+    const fullName = user.displayName || "";
+    const firstName = fullName.split(" ")[0];
+
+    loginBtn.classList.add("logged-in");
+
+    loginBtn.innerHTML = `
+      <div class="login-content">
+        <span class="login-text white-text">
+          Hola ${firstName}!
+        </span>
+      </div>
+    `;
+
+    statusText.textContent = "Sesión iniciada";
   } else {
     currentUser = null;
+
+    loginBtn.classList.remove("logged-in");
+
+    loginBtn.innerHTML = `
+      <div class="login-content">
+        <img src="/google-icon.png" class="google-icon" alt="Google">
+        <span class="login-text">
+          Iniciar sesión
+        </span>
+      </div>
+    `;
+
     statusText.textContent = "No conectado";
   }
 });
-
 
 
 loginBtn.addEventListener("click", async () => {
