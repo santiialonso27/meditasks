@@ -705,3 +705,4 @@ window.addEventListener("beforeunload", function (e) {
 });
 
 init();
+renderMiniCalendar();
