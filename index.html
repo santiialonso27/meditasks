@@ -497,12 +497,20 @@
     .edit-input {
       width: 100%;
       background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(139,92,246,.5);
+      border: 1px solid var(--gradient-from);
       border-radius: 8px;
       padding: 6px 8px;
       color: white;
       font-size: inherit;
       outline: none;
+      transition: border-color .2s ease, box-shadow .2s ease;
+    }
+
+    .edit-input:focus {
+      border-color: var(--gradient-to);
+      box-shadow:
+        0 0 0 2px var(--gradient-from-soft),
+        0 0 12px var(--gradient-to-soft);
     }
 
     /* Theme menu */
