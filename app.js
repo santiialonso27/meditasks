@@ -42,7 +42,7 @@ onAuthStateChanged(auth, async (user) => {
     loginBtn.innerHTML = `
       <div class="login-content">
         <span class="login-text white-text">
-          👋🏼 HOLA ${firstName}!
+          👋🏼  HOLA ${firstName}!
         </span>
       </div>
     `;
