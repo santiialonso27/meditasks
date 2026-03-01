@@ -64,7 +64,7 @@ onAuthStateChanged(auth, async (user) => {
     }
 
     init();
-    statusText.textContent = "Tareas sincronizadas";
+    statusText.textContent = "Tareas guardadas con éxito";
 
   } else {
 
@@ -82,7 +82,7 @@ onAuthStateChanged(auth, async (user) => {
 
     tasks = JSON.parse(localStorage.getItem(storeKey)) || {};
     init();
-    statusText.textContent = "Modo local";
+    statusText.textContent = "Inicia sesión para guardar tus tareas";
   }
 });
 
