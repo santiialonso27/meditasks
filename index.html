@@ -786,6 +786,87 @@
         0 12px 30px rgba(0,0,0,.55);
     }
 
+    /* Overlay */
+    .overlay{
+      position:fixed;
+      inset:0;
+      background: rgba(0,0,0,.65);
+      backdrop-filter: blur(12px);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:200;
+    }
+
+    .overlay.open{
+      display:flex;
+    }
+
+    /* Modal */
+    .logout-modal{
+      width: min(420px, 90vw);
+      padding: 28px;
+      border-radius: 20px;
+
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.04), transparent 40%),
+        var(--card2);
+
+      border: 1px solid var(--border);
+
+      box-shadow:
+        0 30px 80px rgba(0,0,0,.6);
+
+      text-align:center;
+    }
+
+    .logout-modal h3{
+      font-size:15px;
+      font-weight:800;
+      margin-bottom:22px;
+      letter-spacing:-.2px;
+    }
+
+    /* Botones */
+    .logout-actions{
+      display:flex;
+      gap:14px;
+      justify-content:center;
+    }
+
+    .btn-cancel{
+      flex:1;
+      padding:12px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.04);
+      color:var(--text);
+      font-weight:600;
+      cursor:pointer;
+      transition:.2s ease;
+    }
+
+    .btn-cancel:hover{
+      background: rgba(255,255,255,.08);
+    }
+
+    .btn-danger{
+      flex:1;
+      padding:12px;
+      border-radius:12px;
+      border:none;
+      background:#dc2626;
+      color:white;
+      font-weight:700;
+      cursor:pointer;
+      transition:.2s ease;
+    }
+
+    .btn-danger:hover{
+      background:#ef4444;
+      transform: translateY(-1px);
+    }
+
   </style>
 </head>
 
@@ -872,6 +953,15 @@
 
   <main class="board" id="board"></main>
 
+  <div class="overlay" id="logoutOverlay">
+    <div class="logout-modal">
+      <h3>¿ESTÁS SEGURO QUE DESEAS CERRAR SESIÓN?</h3>
+      <div class="logout-actions">
+        <button class="btn-cancel" id="cancelLogout">Cancelar</button>
+        <button class="btn-danger" id="confirmLogout">Cerrar sesión</button>
+      </div>
+    </div>
+  </div>
 
 <script type="module" src="app.js"></script>
 </body>
