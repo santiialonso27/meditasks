@@ -1,6 +1,12 @@
 // 🔥 Firebase
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  getDoc 
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAvw34oR9TdAkV7i_eyCNb-G6l2aTdutj0",
@@ -14,13 +20,15 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
+const db = getFirestore(app);
 const board = document.getElementById("board");
 const statusText = document.getElementById("statusText");
 const loginBtn = document.getElementById("loginBtn");
 
 let currentUser = null;
 
-onAuthStateChanged(auth, (user) => {
+onAuthStateChanged(auth, async (user) => {
+
   if (user) {
     currentUser = user;
 
@@ -28,7 +36,6 @@ onAuthStateChanged(auth, (user) => {
     const firstName = fullName.split(" ")[0].toUpperCase();
 
     loginBtn.classList.add("logged-in");
-
     loginBtn.innerHTML = `
       <div class="login-content">
         <span class="login-text white-text">
@@ -37,12 +44,30 @@ onAuthStateChanged(auth, (user) => {
       </div>
     `;
 
-    statusText.textContent = "Sesión iniciada";
+    statusText.textContent = "Sincronizando tareas...";
+
+    // 🔥 1️⃣ Obtener tareas en la nube
+    const snap = await getDoc(doc(db, "users", user.uid));
+
+    if (snap.exists()) {
+      tasks = snap.data().tasks || {};
+    } else {
+      // 🔥 2️⃣ Si no tenía en la nube pero sí en local → subirlas
+      const localTasks = JSON.parse(localStorage.getItem(storeKey)) || {};
+      tasks = localTasks;
+
+      await setDoc(doc(db, "users", user.uid), { tasks });
+      localStorage.removeItem(storeKey);
+    }
+
+    init();
+    statusText.textContent = "Tareas sincronizadas";
+
   } else {
+
     currentUser = null;
 
     loginBtn.classList.remove("logged-in");
-
     loginBtn.innerHTML = `
       <div class="login-content">
         <img src="/google-icon.png" class="google-icon" alt="Google">
@@ -52,7 +77,9 @@ onAuthStateChanged(auth, (user) => {
       </div>
     `;
 
-    statusText.textContent = "No conectado";
+    tasks = JSON.parse(localStorage.getItem(storeKey)) || {};
+    init();
+    statusText.textContent = "Modo local";
   }
 });
 
@@ -74,8 +101,18 @@ let tasks = JSON.parse(localStorage.getItem(storeKey)) || {};
 let soundEnabled = JSON.parse(localStorage.getItem("soundEnabled"));
 if (soundEnabled === null) soundEnabled = true;
 
-function save() {
-  localStorage.setItem(storeKey, JSON.stringify(tasks));
+async function save() {
+
+  if (currentUser) {
+    await setDoc(
+      doc(db, "users", currentUser.uid),
+      { tasks },
+      { merge: true }
+    );
+  } else {
+    localStorage.setItem(storeKey, JSON.stringify(tasks));
+  }
+
 }
 
 function createDayColumn(date) {
@@ -534,5 +571,16 @@ function updateActiveThemeUI(){
     );
   });
 }
+
+window.addEventListener("beforeunload", function (e) {
+
+  const hasTasks = Object.values(tasks).some(day => day.length > 0);
+
+  if (!currentUser && hasTasks) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+
+});
 
 init();
