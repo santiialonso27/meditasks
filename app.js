@@ -622,6 +622,19 @@ function renderMiniCalendar() {
 
 renderMiniCalendar();
 
+const prevMonthBtn = document.getElementById("prevMonth");
+const nextMonthBtn = document.getElementById("nextMonth");
+
+prevMonthBtn.addEventListener("click", () => {
+  currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
+  renderMiniCalendar();
+});
+
+nextMonthBtn.addEventListener("click", () => {
+  currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
+  renderMiniCalendar();
+});
+
 const themeToggle = document.getElementById("themeToggle");
 const themeMenu = document.getElementById("themeMenu");
 const themeOptions = document.querySelectorAll(".theme-option");
