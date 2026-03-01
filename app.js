@@ -570,11 +570,13 @@ function renderMiniCalendar() {
   const weekdays = ["L","M","M","J","V","S","D"];
 
   let html = `
-    <div class="month-title">${monthTitle} ${year}</div>
-    <div class="weekdays">
-      ${weekdays.map(d => `<div>${d}</div>`).join("")}
+    <div class="month-header">
+      <button class="month-nav-btn" id="prevMonth">‹</button>
+      <div class="month-title">${monthTitle} ${year}</div>
+      <button class="month-nav-btn" id="nextMonth">›</button>
     </div>
-    <div class="days">
+
+    <div class="weekdays">
   `;
 
   // DÍAS DEL MES ANTERIOR
@@ -618,22 +620,27 @@ function renderMiniCalendar() {
   html += `</div>`;
 
   container.innerHTML = html;
+
+  // ⬅️ Después de renderizar el HTML, volvemos a enganchar los botones
+
+  const prevMonthBtn = document.getElementById("prevMonth");
+  const nextMonthBtn = document.getElementById("nextMonth");
+
+  if (prevMonthBtn) {
+    prevMonthBtn.addEventListener("click", () => {
+      currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
+      renderMiniCalendar();
+    });
+  }
+
+  if (nextMonthBtn) {
+    nextMonthBtn.addEventListener("click", () => {
+      currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
+      renderMiniCalendar();
+    });
+  }
 }
 
-renderMiniCalendar();
-
-const prevMonthBtn = document.getElementById("prevMonth");
-const nextMonthBtn = document.getElementById("nextMonth");
-
-prevMonthBtn.addEventListener("click", () => {
-  currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
-  renderMiniCalendar();
-});
-
-nextMonthBtn.addEventListener("click", () => {
-  currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
-  renderMiniCalendar();
-});
 
 const themeToggle = document.getElementById("themeToggle");
 const themeMenu = document.getElementById("themeMenu");
