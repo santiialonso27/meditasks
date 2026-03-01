@@ -457,24 +457,31 @@ function playDayCompleteSound() {
 }
 
 function launchConfetti() {
-  const duration = 2500;
+  const duration = 3000;
   const end = Date.now() + duration;
 
   (function frame() {
 
+    const baseSettings = {
+      particleCount: 10,
+      spread: 70,
+      startVelocity: 65,   // 🔥 más potencia
+      gravity: 0.7,        // 🔥 caen más lento
+      ticks: 200,          // 🔥 viven más tiempo
+      scalar: 1.1
+    };
+
     // Esquina inferior izquierda
     confetti({
-      particleCount: 8,
-      angle: 75,
-      spread: 65,
+      ...baseSettings,
+      angle: 70,
       origin: { x: 0, y: 1 }
     });
 
     // Esquina inferior derecha
     confetti({
-      particleCount: 8,
-      angle: 105,
-      spread: 65,
+      ...baseSettings,
+      angle: 110,
       origin: { x: 1, y: 1 }
     });
 
