@@ -8,6 +8,7 @@ import {
   getDoc,
   onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import confetti from "https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.module.mjs";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAvw34oR9TdAkV7i_eyCNb-G6l2aTdutj0",
@@ -460,14 +461,14 @@ function launchConfetti() {
   const end = Date.now() + duration;
 
   (function frame() {
-    confetti({
+    window.confetti({
       particleCount: 6,
       angle: 60,
       spread: 55,
       origin: { x: 0 }
     });
 
-    confetti({
+    window.confetti({
       particleCount: 6,
       angle: 120,
       spread: 55,
