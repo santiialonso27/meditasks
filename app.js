@@ -457,27 +457,31 @@ function playDayCompleteSound() {
 }
 
 function launchConfetti() {
-  const duration = 2000;
+  const duration = 2500;
   const end = Date.now() + duration;
 
   (function frame() {
+
+    // Esquina inferior izquierda
     confetti({
-      particleCount: 6,
-      angle: 60,
-      spread: 55,
-      origin: { x: 0 }
+      particleCount: 8,
+      angle: 75,
+      spread: 65,
+      origin: { x: 0, y: 1 }
     });
 
+    // Esquina inferior derecha
     confetti({
-      particleCount: 6,
-      angle: 120,
-      spread: 55,
-      origin: { x: 1 }
+      particleCount: 8,
+      angle: 105,
+      spread: 65,
+      origin: { x: 1, y: 1 }
     });
 
     if (Date.now() < end) {
       requestAnimationFrame(frame);
     }
+
   })();
 }
 
