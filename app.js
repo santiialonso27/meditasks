@@ -563,7 +563,7 @@ function renderMiniCalendar() {
   startDay = (startDay === 0) ? 6 : startDay - 1;
   const totalDays = lastDay.getDate();
 
-  const monthName = now.toLocaleDateString("es-ES", { month: "long" });
+  const monthName = currentCalendarDate.toLocaleDateString("es-ES", { month: "long" });
   const monthTitle =
     monthName.charAt(0).toUpperCase() + monthName.slice(1);
 
