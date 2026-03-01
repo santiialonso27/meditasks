@@ -25,14 +25,14 @@ onAuthStateChanged(auth, (user) => {
     currentUser = user;
 
     const fullName = user.displayName || "";
-    const firstName = fullName.split(" ")[0];
+    const firstName = fullName.split(" ")[0].toUpperCase();
 
     loginBtn.classList.add("logged-in");
 
     loginBtn.innerHTML = `
       <div class="login-content">
         <span class="login-text white-text">
-          Hola ${firstName}!
+          HOLA ${firstName}!
         </span>
       </div>
     `;
