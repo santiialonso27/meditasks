@@ -47,7 +47,7 @@ onAuthStateChanged(auth, (user) => {
       <div class="login-content">
         <img src="/google-icon.png" class="google-icon" alt="Google">
         <span class="login-text">
-          Iniciar sesión
+          INICIAR SESIÓN
         </span>
       </div>
     `;
