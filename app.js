@@ -457,7 +457,7 @@ function playDayCompleteSound() {
 }
 
 function launchConfetti() {
-  const duration = 3000;
+  const duration = 2000;
   const end = Date.now() + duration;
 
   (function frame() {
@@ -467,7 +467,7 @@ function launchConfetti() {
       spread: 70,
       startVelocity: 65,   // 🔥 más potencia
       gravity: 0.7,        // 🔥 caen más lento
-      ticks: 200,          // 🔥 viven más tiempo
+      ticks: 100,          // 🔥 viven más tiempo
       scalar: 1.1
     };
 
