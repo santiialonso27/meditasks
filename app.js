@@ -32,6 +32,7 @@ const confirmLogout = document.getElementById("confirmLogout");
 
 let currentUser = null;
 let unsubscribe = null;
+let currentCalendarDate = new Date();
 
 onAuthStateChanged(auth, async (user) => {
 
@@ -550,9 +551,8 @@ function renderMiniCalendar() {
   const container = document.getElementById("miniCalendar");
   if (!container) return;
 
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
+  const year = currentCalendarDate.getFullYear();
+  const month = currentCalendarDate.getMonth();
 
   const firstDay = new Date(year, month, 1);
   const lastDay = new Date(year, month + 1, 0);
@@ -590,8 +590,11 @@ function renderMiniCalendar() {
 
   // días del mes actual
   for (let d = 1; d <= totalDays; d++) {
+    const today = new Date();
     const isToday =
-      d === now.getDate();
+      d === today.getDate() &&
+      month === today.getMonth() &&
+      year === today.getFullYear();
 
     html += `
       <div class="day ${isToday ? "today" : ""}">
