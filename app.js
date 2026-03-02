@@ -159,9 +159,16 @@ async function save() {
 
 }
 
+function formatLocalDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function createDayColumn(date) {
   const dayIndex = date.getDay();
-  const iso = date.toISOString().slice(0,10);
+  const iso = formatLocalDate(date);
   if (!tasks[iso]) tasks[iso] = [];
 
   const col = document.createElement("div");
@@ -288,10 +295,12 @@ function createDayColumn(date) {
             save();
           }
           render();
+          renderMiniCalendar();
         }
 
         function cancelEdit() {
           render();
+          renderMiniCalendar();
         }
 
         input.addEventListener("keydown", e => {
@@ -323,6 +332,7 @@ function createDayColumn(date) {
         t.done = !t.done;
         save();
         render();
+        renderMiniCalendar();
 
         // Si se acaba de completar (no desmarcar)
         if (!wasDone && t.done) {
@@ -362,6 +372,7 @@ function createDayColumn(date) {
 
         save();
         render();
+        renderMiniCalendar();
       };
 
       list.appendChild(el);
@@ -435,6 +446,7 @@ function init() {
     board.appendChild(createDayColumn(d));
   }
   statusText.textContent = "Listo · Tareas guardadas localmente";
+  renderMiniCalendar();
 }
 
 const completeSound = new Audio("/sounds/task_complete.mp3");
@@ -520,7 +532,7 @@ function updateSoundIcon() {
 }
 
 function carryOverPendings() {
-  const today = new Date().toISOString().slice(0,10);
+  const today = formatLocalDate(new Date());
 
   // Obtener todas las fechas guardadas
   const dates = Object.keys(tasks);
@@ -577,6 +589,10 @@ function renderMiniCalendar() {
     </div>
 
     <div class="weekdays">
+      ${weekdays.map(d => `<div>${d}</div>`).join("")}
+    </div>
+
+    <div class="days">
   `;
 
   // DÍAS DEL MES ANTERIOR
@@ -590,17 +606,25 @@ function renderMiniCalendar() {
     `;
   }
 
-  // días del mes actual
   for (let d = 1; d <= totalDays; d++) {
     const today = new Date();
+
     const isToday =
       d === today.getDate() &&
       month === today.getMonth() &&
       year === today.getFullYear();
 
+    const dateObj = new Date(year, month, d);
+    const dateStr = formatLocalDate(dateObj);
+
+    const hasTasks =
+      tasks[dateStr] &&
+      tasks[dateStr].length > 0;
+
     html += `
-      <div class="day ${isToday ? "today" : ""}">
-        ${d}
+      <div class="day ${isToday ? "today" : ""}" data-date="${dateStr}">
+        <span class="day-number">${d}</span>
+        ${hasTasks && !isToday ? `<span class="dot"></span>` : ""}
       </div>
     `;
   }
@@ -639,8 +663,62 @@ function renderMiniCalendar() {
       renderMiniCalendar();
     });
   }
+  const dayEls = container.querySelectorAll(".day:not(.other-month)");
+
+  dayEls.forEach(dayEl => {
+    dayEl.addEventListener("click", () => {
+      const dateStr = dayEl.dataset.date;
+      openDayModal(dateStr);
+    });
+  });
 }
 
+
+
+function openDayModal(dateStr) {
+
+  const existing = document.getElementById("dayOverlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "overlay open";
+  overlay.id = "dayOverlay";
+
+  const modal = document.createElement("div");
+  modal.className = "modal";
+
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const selectedDate = new Date(year, month - 1, day);
+
+  modal.innerHTML = `
+    <div class="mhead">
+      <strong>${selectedDate.toLocaleDateString()}</strong>
+      <button class="btn" id="closeDayModal">Cerrar</button>
+    </div>
+    <div class="mbody" id="dayModalBody"></div>
+  `;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const body = modal.querySelector("#dayModalBody");
+
+  // 🔥 Reutilizamos tu función existente
+  const column = createDayColumn(selectedDate);
+  body.appendChild(column);
+
+  modal.querySelector("#closeDayModal").addEventListener("click", () => {
+    overlay.remove();
+    init(); // 🔥 refresca las 7 columnas
+  });
+
+  overlay.addEventListener("click", e => {
+    if (e.target === overlay) {
+      overlay.remove();
+      init(); // 🔥 refresca board
+    }
+  });
+}
 
 const themeToggle = document.getElementById("themeToggle");
 const themeMenu = document.getElementById("themeMenu");
@@ -705,4 +783,3 @@ window.addEventListener("beforeunload", function (e) {
 });
 
 init();
-renderMiniCalendar();
