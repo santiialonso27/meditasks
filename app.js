@@ -33,6 +33,7 @@ const confirmLogout = document.getElementById("confirmLogout");
 let currentUser = null;
 let unsubscribe = null;
 let currentCalendarDate = new Date();
+let hasCarriedOver = false;
 
 onAuthStateChanged(auth, async (user) => {
 
@@ -436,8 +437,12 @@ function isToday(d) {
 }
 
 function init() {
-  carryOverPendings();
-  
+
+  if (!hasCarriedOver) {
+    carryOverPendings();
+    hasCarriedOver = true;
+  }
+
   board.innerHTML = "";
   const today = new Date();
   for (let i = 0; i < 7; i++) {
@@ -445,7 +450,7 @@ function init() {
     d.setDate(today.getDate() + i);
     board.appendChild(createDayColumn(d));
   }
-  statusText.textContent = "Listo · Tareas guardadas localmente";
+
   renderMiniCalendar();
 }
 
@@ -555,8 +560,6 @@ function carryOverPendings() {
       delete tasks[dateKey];
     }
   });
-
-  save();
 }
 
 function renderMiniCalendar() {
