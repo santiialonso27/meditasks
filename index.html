@@ -4,7 +4,7 @@
 
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>MediTasks</title>
+  <title>MultiTareas</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="icon" href="/flav-icon.png">
   <style>
@@ -444,17 +444,20 @@
     }
 
     /* Modal calendar */
-    .overlay{
-      position:fixed; inset:0;
-      background: rgba(0,0,0,.65);
-      backdrop-filter: blur(10px);
-      display:none;
-      align-items:center; justify-content:center;
-      z-index:50;
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      padding: 40px;
     }
     .overlay.open{ display:flex; }
     .modal{
-      width:min(560px, calc(100vw - 28px));
+      width: min(480px, calc(100vw - 40px));
       border-radius:18px;
       border:1px solid var(--border);
       background: linear-gradient(180deg, rgba(255,255,255,.03), transparent 40%), var(--sidebar);
@@ -466,6 +469,10 @@
     @keyframes pop{
       from{ opacity:0; transform: translateY(16px) scale(.985); }
       to{ opacity:1; transform: translateY(0) scale(1); }
+    }
+    .modal .col {
+      min-width: 100%;
+      max-width: 100%;
     }
     .mhead{
       padding:14px;
@@ -485,21 +492,38 @@
       border-radius:14px;
       border:1px solid transparent;
       background: rgba(255,255,255,.02);
-      display:flex; align-items:center; justify-content:center;
+
+      display:flex;
+      align-items:flex-start;      /* 👈 antes centrado */
+      justify-content:center;
+
+      padding-top:6px;             /* 👈 sube el número */
+
       cursor:pointer;
       position:relative;
-      transition: transform .15s ease, border-color .15s ease, background .15s ease;
+      transition:.2s ease;
       user-select:none;
     }
     .day:hover{ transform: translateY(-1px); border-color:#34343a; background: rgba(255,255,255,.035); }
     .day.muted{ opacity:.3; pointer-events:none; }
     .day.today{ border-color: rgba(139,92,246,.35); }
     .day.selected{ border-color: rgba(139,92,246,.75); background: rgba(139,92,246,.16); }
+    .day-number{
+      position:relative;
+      z-index:1;
+    }
+
     .dot{
-      position:absolute; bottom:8px;
-      width:7px; height:7px; border-radius:999px;
-      background: var(--accent);
-      opacity:.9;
+      position:absolute;
+      bottom:6px;
+      width:7px;
+      height:7px;
+      border-radius:999px;
+
+      background: var(--gradient-to);      /* 👈 cambio */
+      box-shadow: 0 0 8px var(--gradient-to);
+
+      opacity:.95;
     }
     .mfoot{
       padding:0 14px 14px 14px;
@@ -938,8 +962,8 @@
           <img src="/flav-icon.png" class="app-logo">
         </div>
         <div class="brand-title">
-          MEDI-<br>
-          TASKS
+          MULTI-<br>
+          TAREAS
         </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
@@ -995,13 +1019,13 @@
     </div>
     <div class="panel">
       <h3 class="changelog-title">
-        Cambios
+        Notas de Versión
         <span class="changelog-version">v0.5</span>
       </h3>
       <div class="muted changelog">
         <ul>
           <li>Se añadieron temas seleccionables</li>
-          <li>Calendario visual estático</li>
+          <li>Click en el calendario para agregar tareas</li>
           <li>Doble click para editar tarea</li>
           <li>Mejoras visuales</li>
         </ul>
