@@ -11,12 +11,12 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAvw34oR9TdAkV7i_eyCNb-G6l2aTdutj0",
-  authDomain: "meditasks-95453.firebaseapp.com",
-  projectId: "meditasks-95453",
-  storageBucket: "meditasks-95453.firebasestorage.app",
-  messagingSenderId: "775113764876",
-  appId: "1:775113764876:web:9bd8f60593f804d251fe29"
+  apiKey: "AIzaSyBKxH2qTEhArWT09faZHNMTKS7Eu3YqhOs",
+  authDomain: "multitareas-b3a1e.firebaseapp.com",
+  projectId: "multitareas-b3a1e",
+  storageBucket: "multitareas-b3a1e.firebasestorage.app",
+  messagingSenderId: "944481413077",
+  appId: "1:944481413077:web:02b4f4e433ae52da9aff5c"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -25,7 +25,10 @@ const provider = new GoogleAuthProvider();
 const db = getFirestore(app);
 const board = document.getElementById("board");
 const statusText = document.getElementById("statusText");
-const loginBtn = document.getElementById("loginBtn");
+const loginCircleBtn = document.getElementById("loginCircleBtn");
+const closeMenuBtn = document.getElementById("closeMenuBtn");
+const loginTooltip = document.getElementById("loginTooltip");
+let tooltipTimeout = null;
 const logoutOverlay = document.getElementById("logoutOverlay");
 const cancelLogout = document.getElementById("cancelLogout");
 const confirmLogout = document.getElementById("confirmLogout");
@@ -35,23 +38,84 @@ let unsubscribe = null;
 let currentCalendarDate = new Date();
 let hasCarriedOver = false;
 
+let draggedElement = null;
+let currentTarget = null;
+let currentPosition = null;
+
+function updateGreeting(user) {
+  const greetingEl = document.getElementById("greetingTitle");
+  if (!greetingEl) return;
+
+  const now = new Date();
+  const hour = now.getHours();
+
+  let greetingText = "";
+
+  // Obtener nombre
+  let firstName = "Invitado";
+  if (user && user.displayName) {
+    firstName = user.displayName.split(" ")[0];
+  }
+
+  if (hour >= 6 && hour <= 19) {
+    greetingText = `Buen día, ${firstName}`;
+  } else {
+    greetingText = `Buenas noches, ${firstName}`;
+  }
+
+  greetingEl.textContent = greetingText;
+}
+
+function updateSubtitle(user) {
+  const subtitleEl = document.getElementById("dynamicSubtitle");
+  if (!subtitleEl) return;
+
+  const hour = new Date().getHours();
+
+  const morningPhrases = [
+    "Hoy va ser un gran día 🚀",
+    "Arranquemos con todo 💪",
+    "Un pequeño paso a la vez 🦶",
+    "Organizado se vive mejor ✨",
+    "Organizate desde temprano ☀️"
+  ];
+
+  const nightPhrases = [
+    "Organizate antes de dormir 💤",
+    "Que sea una noche productiva 🌙",
+    "Un cafe y a seguir ☕️",
+    "Tus objetivos no duermen 🏆",
+    "Ya casi cerras el día ✅"
+  ];
+
+  const phrases = (hour >= 6 && hour <= 19)
+    ? morningPhrases
+    : nightPhrases;
+
+  // elegir frase aleatoria
+  const randomIndex = Math.floor(Math.random() * phrases.length);
+  subtitleEl.textContent = phrases[randomIndex];
+}
+
 onAuthStateChanged(auth, async (user) => {
+
+  updateGreeting(user);
+  updateSubtitle(user);
 
   if (user) {
 
     currentUser = user;
+    // 🔥 Ocultar tooltip si estaba visible
+    loginTooltip.classList.remove("show");
+    clearTimeout(tooltipTimeout);
 
     const fullName = user.displayName || "";
     const firstName = fullName.split(" ")[0].toUpperCase();
-
-    loginBtn.classList.add("logged-in");
-    loginBtn.innerHTML = `
-      <div class="login-content">
-        <span class="login-text white-text">
-          👋🏼 HOLA ${firstName}!
-        </span>
-      </div>
+    // 🔥 Mostrar foto en botón circular
+    loginCircleBtn.innerHTML = `
+      <img src="${user.photoURL}" alt="Profile">
     `;
+    loginCircleBtn.classList.add("logged-in");
 
     statusText.textContent = "Sincronizando tareas...";
 
@@ -67,12 +131,26 @@ onAuthStateChanged(auth, async (user) => {
     unsubscribe = onSnapshot(userRef, async (snapshot) => {
 
       if (snapshot.exists()) {
-        tasks = snapshot.data().tasks || {};
+
+        const data = snapshot.data();
+
+        tasks = data.tasks || {};
+
+        // 🔥 cargar tema del usuario
+        if (data.theme) {
+          currentTheme = data.theme;
+          applyTheme(currentTheme);
+          updateActiveThemeUI();
+        }
+
       } else {
+
         // Si no tenía en la nube → subir lo local
         const localTasks = JSON.parse(localStorage.getItem(storeKey)) || {};
         tasks = localTasks;
-        await setDoc(userRef, { tasks });
+
+        await setDoc(userRef, { tasks }, { merge: true });
+
       }
 
       // Limpiar local para evitar duplicados
@@ -80,46 +158,104 @@ onAuthStateChanged(auth, async (user) => {
 
       init();
       statusText.textContent = "Tareas guardadas con éxito";
+
     });
 
-  } else {
+      } else {
 
-    // 🔥 Si había listener activo → apagarlo
-    if (unsubscribe) {
-      unsubscribe();
-      unsubscribe = null;
+        // 🔥 Usuario NO logueado
+        currentTheme = localStorage.getItem("app_theme") || "theme-default";
+        applyTheme(currentTheme);
+        updateActiveThemeUI();
+
+        if (unsubscribe) {
+          unsubscribe();
+          unsubscribe = null;
+        }
+
+        currentUser = null;
+
+        loginCircleBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="8" r="4"></circle>
+            <path d="M4 20c2-4 6-6 8-6s6 2 8 6"></path>
+          </svg>
+        `;
+        loginCircleBtn.classList.remove("logged-in");
+
+        tasks = JSON.parse(localStorage.getItem(storeKey)) || {};
+        init();
+
+        statusText.textContent = "Inicia sesión para guardar tus tareas";
+      }
+
+    });
+
+
+let profileMenuOpen = false;
+const cornerContainer = document.getElementById("cornerContainer");
+
+cornerContainer.classList.add("collapsed");
+
+function closeCornerMenu() {
+  // Fase 1: ocultar iconos instantáneo
+  cornerContainer.classList.add("closing");
+
+  // Fase 2: animar ancho en el siguiente frame
+  requestAnimationFrame(() => {
+    cornerContainer.classList.remove("expanded");
+    cornerContainer.classList.add("collapsed");
+  });
+
+  profileMenuOpen = false;
+
+  loginTooltip.classList.remove("show");
+  clearTimeout(tooltipTimeout);
+}
+
+function openCornerMenu() {
+  cornerContainer.classList.remove("collapsed");
+  cornerContainer.classList.add("expanded");
+
+  // esperar a que termine la transición antes de mostrar iconos
+  setTimeout(() => {
+    cornerContainer.classList.remove("closing");
+  }, 550); // mismo tiempo que la transición CSS
+
+  profileMenuOpen = true;
+}
+
+
+loginCircleBtn.addEventListener("click", async (e) => {
+  e.stopPropagation();
+
+  if (!profileMenuOpen) {
+    openCornerMenu();
+
+    // 🔥 Si NO está logueado → mostrar tooltip con delay
+    if (!currentUser) {
+      clearTimeout(tooltipTimeout);
+      tooltipTimeout = setTimeout(() => {
+        loginTooltip.classList.add("show");
+      }, 1000); //1 segundo de delay//
     }
 
-    currentUser = null;
-
-    loginBtn.classList.remove("logged-in");
-    loginBtn.innerHTML = `
-      <div class="login-content">
-        <img src="/google-icon.png" class="google-icon" alt="Google">
-        <span class="login-text">
-          INICIAR SESIÓN
-        </span>
-      </div>
-    `;
-
-    // Restaurar tareas locales si existen
-    tasks = JSON.parse(localStorage.getItem(storeKey)) || {};
-    init();
-
-    statusText.textContent = "Inicia sesión para guardar tus tareas";
+    return;
   }
-
-});
-
-
-loginBtn.addEventListener("click", async () => {
 
   if (!currentUser) {
     await signInWithPopup(auth, provider);
   } else {
     logoutOverlay.classList.add("open");
   }
+});
 
+closeMenuBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+
+  if (profileMenuOpen) {
+    closeCornerMenu();
+  }
 });
 
 cancelLogout.addEventListener("click", () => {
@@ -135,6 +271,13 @@ logoutOverlay.addEventListener("click", (e) => {
   if (e.target === logoutOverlay) {
     logoutOverlay.classList.remove("open");
   }
+});
+
+const settingsBtn = document.getElementById("settingsBtn");
+
+settingsBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  showToast("Ajustes aún no está disponible");
 });
 
 //CODIGO ANTIGUO
@@ -184,8 +327,11 @@ function createDayColumn(date) {
         <div class="col-title">${DAYS[dayIndex]}</div>
         <div class="col-sub">${date.toLocaleDateString()}</div>
 
-        <div class="progress">
-          <div class="progress-bar"></div>
+        <div class="progress-wrapper">
+          <div class="progress">
+            <div class="progress-bar"></div>
+          </div>
+          <div class="progress-percent">0%</div>
         </div>
       </div>
 
@@ -202,6 +348,120 @@ function createDayColumn(date) {
   `;
 
   const list = col.querySelector(".list");
+
+  // DRAG OVER LIST
+  list.addEventListener("dragover", e => {
+    e.preventDefault();
+
+    const tasksEls = list.querySelectorAll(".task");
+
+    if (tasksEls.length === 0) {
+      showIndicatorAtEnd();
+    }
+  });
+
+  // DRAG LEAVE
+  list.addEventListener("dragleave", e => {
+    if (!e.relatedTarget || !list.contains(e.relatedTarget)) {
+      removeIndicator();
+    }
+  });
+
+  // DROP EN LIST (al final)
+  list.addEventListener("drop", e => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const raw = e.dataTransfer.getData("text/plain");
+    if (!raw) return;
+
+    const data = JSON.parse(raw);
+    if (!tasks[data.fromDate]) return;
+
+    const originList = tasks[data.fromDate];
+    const movedTask = originList[data.index];
+    if (!movedTask) return;
+
+    originList.splice(data.index, 1);
+
+    // 🔥 usar el indicator SIEMPRE
+    const indicator = list.querySelector(".drop-indicator");
+
+    let insertIndex = tasks[iso].length;
+
+    if (indicator) {
+      const children = Array.from(list.children);
+      insertIndex = children.indexOf(indicator);
+    }
+
+    // 🔥 AJUSTE CLAVE
+    if (data.fromDate === iso && data.index < insertIndex) {
+      insertIndex--;
+    }
+
+    tasks[iso].splice(insertIndex, 0, movedTask);
+
+    if (indicator && draggedElement) {
+      list.insertBefore(draggedElement, indicator);
+      draggedElement.style.display = "";
+    }
+
+    removeIndicator();
+    save();
+
+    if (data.fromDate !== iso) {
+      init();
+    }
+  });
+
+  let dropIndicator = document.createElement("div");
+  dropIndicator.className = "drop-indicator";
+
+  function showIndicator(targetElement, position = "after") {
+
+    // 🔥 Si ya está en el mismo lugar, no hacer nada
+    if (currentTarget === targetElement && currentPosition === position) {
+      return;
+    }
+
+    currentTarget = targetElement;
+    currentPosition = position;
+
+    removeIndicator(false); // no resetear estado todavía
+
+    if(position === "before"){
+      targetElement.insertAdjacentElement("beforebegin", dropIndicator);
+    } else {
+      targetElement.insertAdjacentElement("afterend", dropIndicator);
+    }
+
+    requestAnimationFrame(()=>{
+      dropIndicator.classList.add("active");
+    });
+  }
+
+  function showIndicatorAtEnd(){
+    removeIndicator();
+    list.appendChild(dropIndicator);
+    requestAnimationFrame(()=>{
+      dropIndicator.classList.add("active");
+    });
+  }
+
+  function removeIndicator(resetState = true){
+
+    dropIndicator.classList.remove("active");
+
+    if(dropIndicator.parentNode){
+      dropIndicator.parentNode.removeChild(dropIndicator);
+    }
+
+    if(resetState){
+      currentTarget = null;
+      currentPosition = null;
+    }
+  }
+
   const input = col.querySelector(".input");
   const progressBar = col.querySelector(".progress-bar");
 
@@ -225,8 +485,10 @@ function createDayColumn(date) {
       const el = document.createElement("div");
       el.className = "task" + (t.done ? " done" : "");
       el.draggable = true;
+      //FUNCION DE DROP//
       el.addEventListener("drop", e => {
         e.preventDefault();
+        e.stopPropagation();
 
         const raw = e.dataTransfer.getData("text/plain");
         if (!raw) return;
@@ -241,27 +503,49 @@ function createDayColumn(date) {
         // eliminar del origen
         originList.splice(data.index, 1);
 
-        let insertIndex = i;
+        // 🔥 buscar la posición REAL del indicator en el DOM
+        const indicator = list.querySelector(".drop-indicator");
 
-        // si viene del mismo día y estaba arriba
-        if (data.fromDate === iso && data.index < i) {
-          insertIndex--;
+        let insertIndex = tasks[iso].length;
+
+        if (indicator) {
+          const children = Array.from(list.children);
+          insertIndex = children.indexOf(indicator);
         }
 
         tasks[iso].splice(insertIndex, 0, movedTask);
 
-        save();
-        init();
-      });
-      el.addEventListener("dragover", e => {
-          e.preventDefault();
-          el.style.borderColor = "rgba(139,92,246,.6)";
-        });
+        if (indicator && draggedElement) {
+          list.insertBefore(draggedElement, indicator);
+          draggedElement.style.display = "";
+        }
 
-        el.addEventListener("dragleave", () => {
-          el.style.borderColor = "";
-        });
-        
+        removeIndicator();
+        save();
+
+        if (data.fromDate !== iso) {
+          init();
+        }
+      });
+
+      //FUNCION DRAGOVER//
+      el.addEventListener("dragover", e => {
+        e.preventDefault();
+
+        // 🔥 NO permitir interactuar con la misma tarea
+        if (el === draggedElement) return;
+
+        const rect = el.getBoundingClientRect();
+        const offset = e.clientY - rect.top;
+        const middle = rect.height / 2;
+
+        if(offset < middle){
+          showIndicator(el, "before");
+        } else {
+          showIndicator(el, "after");
+        }
+      });
+
       el.dataset.index = i;
       el.dataset.date = iso;      el.innerHTML = `
         <div class="cb"></div>
@@ -316,15 +600,29 @@ function createDayColumn(date) {
         input.addEventListener("blur", saveEdit);
       });
       el.addEventListener("dragstart", e => {
+
+        draggedElement = el;
+
         e.dataTransfer.setData("text/plain", JSON.stringify({
           fromDate: iso,
           index: i
         }));
-        el.style.opacity = "0.4";
+
+        // 🔥 ocultar visualmente la tarea original
+        setTimeout(() => {
+          el.style.display = "none";
+        }, 0);
+
       });
 
       el.addEventListener("dragend", () => {
-        el.style.opacity = "1";
+
+        if (draggedElement) {
+          draggedElement.style.display = "";
+        }
+
+        draggedElement = null;
+        removeIndicator();
       });
 
       el.querySelector(".cb").onclick = () => {
@@ -379,42 +677,27 @@ function createDayColumn(date) {
       list.appendChild(el);
     });
 
-    list.addEventListener("dragover", e => {
-      e.preventDefault();
-    });
-
-    list.addEventListener("drop", e => {
-      e.preventDefault();
-
-      const raw = e.dataTransfer.getData("text/plain");
-      if (!raw) return;
-
-      const data = JSON.parse(raw);
-      if (!tasks[data.fromDate]) return;
-
-      const originList = tasks[data.fromDate];
-      const movedTask = originList[data.index];
-      if (!movedTask) return;
-
-      // eliminar del origen
-      originList.splice(data.index, 1);
-
-      // insertar al final
-      tasks[iso].push(movedTask);
-
-      save();
-      init();
-    });
 
     const total = tasks[iso].length;
     const completed = tasks[iso].filter(t => t.done).length;
 
     let percent = 0;
     if (total > 0) {
-      percent = (completed / total) * 100;
+      percent = Math.floor((completed / total) * 100);
     }
 
     progressBar.style.width = percent + "%";
+
+    const percentEl = col.querySelector(".progress-percent");
+    if (percentEl) {
+      percentEl.textContent = percent + "%";
+
+      if (percent === 100) {
+        percentEl.classList.add("complete");
+      } else {
+        percentEl.classList.remove("complete");
+      }
+    }
   }
 
   input.addEventListener("keydown", e => {
@@ -510,12 +793,38 @@ function launchConfetti() {
   })();
 }
 
-const soundToggle = document.getElementById("soundToggle");
+function showToast(message) {
+
+  // si ya existe uno, eliminarlo
+  const existing = document.getElementById("appToast");
+  if (existing) existing.remove();
+
+  const toast = document.createElement("div");
+  toast.id = "appToast";
+  toast.className = "app-toast";
+  toast.textContent = message;
+
+  document.body.appendChild(toast);
+
+  // animación entrada
+  requestAnimationFrame(() => {
+    toast.classList.add("show");
+  });
+
+  // auto eliminar
+  setTimeout(() => {
+    toast.classList.remove("show");
+    setTimeout(() => toast.remove(), 300);
+  }, 2500);
+}
+
+const soundToggle = document.getElementById("soundToggleTop");
 const soundIcon = document.getElementById("soundIcon");
 
 updateSoundIcon();
 
-soundToggle.addEventListener("click", () => {
+soundToggle.addEventListener("click", (e) => {
+  e.stopPropagation();
   soundEnabled = !soundEnabled;
   localStorage.setItem("soundEnabled", soundEnabled);
   updateSoundIcon();
@@ -560,6 +869,7 @@ function carryOverPendings() {
       delete tasks[dateKey];
     }
   });
+  save()
 }
 
 function renderMiniCalendar() {
@@ -670,7 +980,16 @@ function renderMiniCalendar() {
 
   dayEls.forEach(dayEl => {
     dayEl.addEventListener("click", () => {
+
       const dateStr = dayEl.dataset.date;
+
+      const todayStr = formatLocalDate(new Date());
+
+      if (dateStr < todayStr) {
+        showToast("No es posible crear tareas en días pasados");
+        return;
+      }
+
       openDayModal(dateStr);
     });
   });
@@ -723,7 +1042,7 @@ function openDayModal(dateStr) {
   });
 }
 
-const themeToggle = document.getElementById("themeToggle");
+const themeToggle = document.getElementById("themeToggleTop");
 const themeMenu = document.getElementById("themeMenu");
 const themeOptions = document.querySelectorAll(".theme-option");
 
@@ -733,10 +1052,7 @@ const THEMES = [
   "theme-lava"
 ];
 
-let currentTheme = localStorage.getItem("app_theme") || "theme-default";
-
-applyTheme(currentTheme);
-updateActiveThemeUI();
+let currentTheme = "theme-default";
 
 themeToggle.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -748,13 +1064,24 @@ document.addEventListener("click", () => {
 });
 
 themeOptions.forEach(option => {
-  option.addEventListener("click", () => {
+  option.addEventListener("click", async () => {
     const selected = option.dataset.theme;
     currentTheme = selected;
 
     applyTheme(selected);
-    localStorage.setItem("app_theme", selected);
     updateActiveThemeUI();
+
+    // 🔥 Guardar en Firebase si está logueado
+    if (currentUser) {
+      await setDoc(
+        doc(db, "users", currentUser.uid),
+        { theme: selected },
+        { merge: true }
+      );
+    } else {
+      // fallback si no está logueado
+      localStorage.setItem("app_theme", selected);
+    }
 
     themeMenu.classList.remove("open");
   });
@@ -784,5 +1111,31 @@ window.addEventListener("beforeunload", function (e) {
   }
 
 });
+
+const sidebar = document.querySelector(".sidebar");
+const sidebarToggle = document.getElementById("sidebarToggle");
+const collapseToggle = document.getElementById("collapseToggle");
+
+collapseToggle.addEventListener("click", (e) => {
+  e.stopPropagation();
+  sidebarCollapsed = !sidebarCollapsed;
+  sidebar.classList.toggle("collapsed", sidebarCollapsed);
+});
+
+let sidebarCollapsed = localStorage.getItem("sidebar_collapsed") === "true";
+
+if (sidebarCollapsed) {
+  sidebar.classList.add("collapsed");
+}
+
+sidebarToggle.addEventListener("click", () => {
+  sidebarCollapsed = !sidebarCollapsed;
+  sidebar.classList.toggle("collapsed", sidebarCollapsed);
+  localStorage.setItem("sidebar_collapsed", sidebarCollapsed);
+});
+
+setInterval(() => {
+  updateSubtitle(currentUser);
+}, 600000); // cada 10 minutos
 
 init();
