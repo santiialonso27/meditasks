@@ -813,7 +813,7 @@ function launchConfetti() {
 
 function showToast(message) {
 
-  if (!appReady || isFirstLoad) return;
+  if (!appReady) return;
 
   const existing = document.getElementById("appToast");
   if (existing) existing.remove();
