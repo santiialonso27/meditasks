@@ -46,31 +46,26 @@ function updateGreeting(user) {
   const greetingEl = document.getElementById("greetingTitle");
   if (!greetingEl) return;
 
-  const now = new Date();
-  const hour = now.getHours();
-
+  const hour = new Date().getHours();
   let greetingText = "";
 
-  // Obtener nombre
-  let firstName = "Invitado";
+  let nameToShow = "Invitado";
 
   if (user && user.displayName) {
     const parts = user.displayName.trim().split(" ");
 
     if (parts.length > 1) {
-      // quitar SOLO el último elemento (asumido como apellido)
-      parts.pop();
-      firstName = parts.join(" ");
+      parts.pop(); // eliminar SOLO el último (apellido)
+      nameToShow = parts.join(" ");
     } else {
-      firstName = parts[0];
+      nameToShow = parts[0];
     }
   }
 
-  if (hour >= 6 && hour <= 19) {
-    greetingText = `Buen día, ${firstName}`;
-  } else {
-    greetingText = `Buenas noches, ${firstName}`;
-  }
+  greetingText =
+    hour >= 6 && hour <= 19
+      ? `Buen día, ${nameToShow}`
+      : `Buenas noches, ${nameToShow}`;
 
   greetingEl.textContent = greetingText;
 }
@@ -118,8 +113,6 @@ onAuthStateChanged(auth, async (user) => {
     loginTooltip.classList.remove("show");
     clearTimeout(tooltipTimeout);
 
-    const fullName = user.displayName || "";
-    const firstName = fullName.split(" ")[0].toUpperCase();
     // 🔥 Mostrar foto en botón circular
     loginCircleBtn.innerHTML = `
       <img src="${user.photoURL}" alt="Profile">
@@ -149,7 +142,6 @@ onAuthStateChanged(auth, async (user) => {
         if (data.theme) {
           currentTheme = data.theme;
           applyTheme(currentTheme);
-          updateActiveThemeUI();
         }
 
       } else {
@@ -175,7 +167,6 @@ onAuthStateChanged(auth, async (user) => {
         // 🔥 Usuario NO logueado
         currentTheme = localStorage.getItem("app_theme") || "theme-default";
         applyTheme(currentTheme);
-        updateActiveThemeUI();
 
         if (unsubscribe) {
           unsubscribe();
@@ -238,15 +229,21 @@ function openCornerMenu() {
 loginCircleBtn.addEventListener("click", async (e) => {
   e.stopPropagation();
 
+  const isMobile = window.innerWidth <= 900;
+
+  // 🔥 Si es mobile y la sidebar está abierta → cerrarla primero
+  if (isMobile && !sidebar.classList.contains("collapsed")) {
+    sidebar.classList.add("collapsed");
+  }
+
   if (!profileMenuOpen) {
     openCornerMenu();
 
-    // 🔥 Si NO está logueado → mostrar tooltip con delay
     if (!currentUser) {
       clearTimeout(tooltipTimeout);
       tooltipTimeout = setTimeout(() => {
         loginTooltip.classList.add("show");
-      }, 1000); //1 segundo de delay//
+      }, 1000);
     }
 
     return;
@@ -991,12 +988,18 @@ function renderMiniCalendar() {
     dayEl.addEventListener("click", () => {
 
       const dateStr = dayEl.dataset.date;
-
       const todayStr = formatLocalDate(new Date());
 
       if (dateStr < todayStr) {
         showToast("No es posible crear tareas en días pasados");
         return;
+      }
+
+      const isMobile = window.innerWidth <= 900;
+
+      // 🔥 Si es mobile y la sidebar está abierta → cerrarla
+      if (isMobile && !sidebar.classList.contains("collapsed")) {
+        sidebar.classList.add("collapsed");
       }
 
       openDayModal(dateStr);
@@ -1051,9 +1054,82 @@ function openDayModal(dateStr) {
   });
 }
 
+function openThemeModal() {
+
+  const existing = document.getElementById("themeOverlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "overlay open";
+  overlay.id = "themeOverlay";
+
+  const modal = document.createElement("div");
+  modal.className = "modal";
+
+  modal.innerHTML = `
+    <div class="mhead">
+      <strong>Seleccionar Tema</strong>
+      <button class="btn" id="closeThemeModal">Cerrar</button>
+    </div>
+
+    <div class="mbody theme-grid">
+
+      <div class="theme-card" data-theme="theme-default">
+        <div class="theme-big preview-default"></div>
+        <span>Default</span>
+      </div>
+
+      <div class="theme-card" data-theme="theme-violet-pink">
+        <div class="theme-big preview-violet-pink"></div>
+        <span>Amatista</span>
+      </div>
+
+      <div class="theme-card" data-theme="theme-lava">
+        <div class="theme-big preview-lava"></div>
+        <span>Lava</span>
+      </div>
+
+    </div>
+  `;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  document.getElementById("closeThemeModal").addEventListener("click", () => {
+    overlay.remove();
+  });
+
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.remove();
+  });
+
+  const cards = modal.querySelectorAll(".theme-card");
+
+  cards.forEach(card => {
+    card.addEventListener("click", async () => {
+
+      const selected = card.dataset.theme;
+      currentTheme = selected;
+
+      applyTheme(selected);
+
+      if (currentUser) {
+        await setDoc(
+          doc(db, "users", currentUser.uid),
+          { theme: selected },
+          { merge: true }
+        );
+      } else {
+        localStorage.setItem("app_theme", selected);
+      }
+
+      overlay.remove();
+    });
+  });
+
+}
+
 const themeToggle = document.getElementById("themeToggleTop");
-const themeMenu = document.getElementById("themeMenu");
-const themeOptions = document.querySelectorAll(".theme-option");
 
 const THEMES = [
   "theme-default",
@@ -1065,49 +1141,12 @@ let currentTheme = "theme-default";
 
 themeToggle.addEventListener("click", (e) => {
   e.stopPropagation();
-  themeMenu.classList.toggle("open");
-});
-
-document.addEventListener("click", () => {
-  themeMenu.classList.remove("open");
-});
-
-themeOptions.forEach(option => {
-  option.addEventListener("click", async () => {
-    const selected = option.dataset.theme;
-    currentTheme = selected;
-
-    applyTheme(selected);
-    updateActiveThemeUI();
-
-    // 🔥 Guardar en Firebase si está logueado
-    if (currentUser) {
-      await setDoc(
-        doc(db, "users", currentUser.uid),
-        { theme: selected },
-        { merge: true }
-      );
-    } else {
-      // fallback si no está logueado
-      localStorage.setItem("app_theme", selected);
-    }
-
-    themeMenu.classList.remove("open");
-  });
+  openThemeModal();
 });
 
 function applyTheme(theme) {
   document.documentElement.classList.remove(...THEMES);
   document.documentElement.classList.add(theme);
-}
-
-function updateActiveThemeUI(){
-  themeOptions.forEach(option=>{
-    option.classList.toggle(
-      "active",
-      option.dataset.theme === currentTheme
-    );
-  });
 }
 
 window.addEventListener("beforeunload", function (e) {
@@ -1141,6 +1180,33 @@ sidebarToggle.addEventListener("click", () => {
   sidebarCollapsed = !sidebarCollapsed;
   sidebar.classList.toggle("collapsed", sidebarCollapsed);
   localStorage.setItem("sidebar_collapsed", sidebarCollapsed);
+});
+
+const mobileSidebarOpen = document.getElementById("mobileSidebarOpen");
+
+if (mobileSidebarOpen && sidebar) {
+  mobileSidebarOpen.addEventListener("click", (e) => {
+    e.stopPropagation();
+
+    // Abrir sidebar
+    sidebar.classList.remove("collapsed");
+
+    // 🔥 Cerrar corner container si está abierto
+    if (profileMenuOpen) {
+      closeCornerMenu();
+    }
+  });
+}
+
+// 🔒 Bloquear zoom en mobile
+document.addEventListener('touchmove', function (e) {
+  if (e.scale !== 1) {
+    e.preventDefault();
+  }
+}, { passive: false });
+
+document.addEventListener('gesturestart', function (e) {
+  e.preventDefault();
 });
 
 setInterval(() => {
