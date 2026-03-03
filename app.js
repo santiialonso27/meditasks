@@ -1,3 +1,4 @@
+let appReady = false;
 import confetti from "https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.module.mjs";
 // 🔥 Firebase
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -47,22 +48,20 @@ function updateGreeting(user) {
   if (!greetingEl) return;
 
   const hour = new Date().getHours();
-  let greetingText = "";
-
   let nameToShow = "Invitado";
 
   if (user && user.displayName) {
-    const parts = user.displayName.trim().split(" ");
+    const parts = user.displayName.trim().split(/\s+/);
 
-    if (parts.length > 1) {
-      parts.pop(); // eliminar SOLO el último (apellido)
-      nameToShow = parts.join(" ");
+    if (parts.length >= 2) {
+      // Tomar solo las primeras 2 palabras
+      nameToShow = parts.slice(0, 2).join(" ");
     } else {
       nameToShow = parts[0];
     }
   }
 
-  greetingText =
+  const greetingText =
     hour >= 6 && hour <= 19
       ? `Buen día, ${nameToShow}`
       : `Buenas noches, ${nameToShow}`;
@@ -101,10 +100,9 @@ function updateSubtitle(user) {
   subtitleEl.textContent = phrases[randomIndex];
 }
 
-onAuthStateChanged(auth, async (user) => {
+let hasRendered = false;
 
-  updateGreeting(user);
-  updateSubtitle(user);
+onAuthStateChanged(auth, async (user) => {
 
   if (user) {
 
@@ -133,9 +131,7 @@ onAuthStateChanged(auth, async (user) => {
     unsubscribe = onSnapshot(userRef, async (snapshot) => {
 
       if (snapshot.exists()) {
-
         const data = snapshot.data();
-
         tasks = data.tasks || {};
 
         // 🔥 cargar tema del usuario
@@ -149,18 +145,26 @@ onAuthStateChanged(auth, async (user) => {
         // Si no tenía en la nube → subir lo local
         const localTasks = JSON.parse(localStorage.getItem(storeKey)) || {};
         tasks = localTasks;
-
         await setDoc(userRef, { tasks }, { merge: true });
-
       }
 
       // Limpiar local para evitar duplicados
       localStorage.removeItem(storeKey);
 
       init();
+
+      if (!hasRendered) {
+          document.body.classList.remove("app-loading");
+          appReady = true;
+          hasRendered = true;
+        }
+
       statusText.textContent = "Tareas guardadas con éxito";
 
     });
+
+    updateGreeting(user);
+    updateSubtitle(user);
 
       } else {
 
@@ -187,6 +191,14 @@ onAuthStateChanged(auth, async (user) => {
         init();
 
         statusText.textContent = "Inicia sesión para guardar tus tareas";
+        updateGreeting(user);
+        updateSubtitle(user);
+
+        if (!hasRendered) {
+            document.body.classList.remove("app-loading");
+            appReady = true;
+            hasRendered = true;
+          }
       }
 
     });
@@ -220,7 +232,7 @@ function openCornerMenu() {
   // esperar a que termine la transición antes de mostrar iconos
   setTimeout(() => {
     cornerContainer.classList.remove("closing");
-  }, 550); // mismo tiempo que la transición CSS
+  }, 50); // tiempo que tarda en mostrar los iconos
 
   profileMenuOpen = true;
 }
@@ -801,7 +813,8 @@ function launchConfetti() {
 
 function showToast(message) {
 
-  // si ya existe uno, eliminarlo
+  if (!appReady || isFirstLoad) return;
+
   const existing = document.getElementById("appToast");
   if (existing) existing.remove();
 
@@ -812,12 +825,10 @@ function showToast(message) {
 
   document.body.appendChild(toast);
 
-  // animación entrada
   requestAnimationFrame(() => {
     toast.classList.add("show");
   });
 
-  // auto eliminar
   setTimeout(() => {
     toast.classList.remove("show");
     setTimeout(() => toast.remove(), 300);
@@ -1079,8 +1090,8 @@ function openThemeModal() {
         <span>Default</span>
       </div>
 
-      <div class="theme-card" data-theme="theme-violet-pink">
-        <div class="theme-big preview-violet-pink"></div>
+      <div class="theme-card" data-theme="theme-amatista">
+        <div class="theme-big preview-amatista"></div>
         <span>Amatista</span>
       </div>
 
@@ -1088,6 +1099,32 @@ function openThemeModal() {
         <div class="theme-big preview-lava"></div>
         <span>Lava</span>
       </div>
+
+      <div class="theme-card" data-theme="theme-zafiro">
+        <div class="theme-big preview-zafiro"></div>
+        <span>Zafiro</span>
+      </div>
+
+      <div class="theme-card" data-theme="theme-jade">
+        <div class="theme-big preview-jade"></div>
+        <span>Jade</span>
+      </div>
+
+      <div class="theme-card" data-theme="theme-atardecer">
+        <div class="theme-big preview-atardecer"></div>
+        <span>Atardecer</span>
+      </div>
+
+      <div class="theme-card" data-theme="theme-opalo">
+        <div class="theme-big preview-opalo"></div>
+        <span>Opalo</span>
+      </div>
+
+      <div class="theme-card" data-theme="theme-tulipan">
+        <div class="theme-big preview-tulipan"></div>
+        <span>Tulipan</span>
+      </div>
+
 
     </div>
   `;
@@ -1133,8 +1170,13 @@ const themeToggle = document.getElementById("themeToggleTop");
 
 const THEMES = [
   "theme-default",
-  "theme-violet-pink",
-  "theme-lava"
+  "theme-amatista",
+  "theme-lava",
+  "theme-zafiro",
+  "theme-jade",
+  "theme-atardecer",
+  "theme-opalo",
+  "theme-tulipan"
 ];
 
 let currentTheme = "theme-default";
@@ -1163,17 +1205,26 @@ window.addEventListener("beforeunload", function (e) {
 const sidebar = document.querySelector(".sidebar");
 const sidebarToggle = document.getElementById("sidebarToggle");
 const collapseToggle = document.getElementById("collapseToggle");
+let sidebarCollapsed = localStorage.getItem("sidebar_collapsed") === "true";
 
 collapseToggle.addEventListener("click", (e) => {
   e.stopPropagation();
+
   sidebarCollapsed = !sidebarCollapsed;
+
   sidebar.classList.toggle("collapsed", sidebarCollapsed);
+
+  // 🔥 Guardar estado
+  localStorage.setItem("sidebar_collapsed", sidebarCollapsed);
 });
 
-let sidebarCollapsed = localStorage.getItem("sidebar_collapsed") === "true";
-
 if (sidebarCollapsed) {
+  sidebar.classList.add("no-transition");
   sidebar.classList.add("collapsed");
+
+  requestAnimationFrame(() => {
+    sidebar.classList.remove("no-transition");
+  });
 }
 
 sidebarToggle.addEventListener("click", () => {
@@ -1213,4 +1264,4 @@ setInterval(() => {
   updateSubtitle(currentUser);
 }, 600000); // cada 10 minutos
 
-init();
+document.documentElement.classList.remove("pre-collapsed");
