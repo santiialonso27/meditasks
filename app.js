@@ -53,8 +53,17 @@ function updateGreeting(user) {
 
   // Obtener nombre
   let firstName = "Invitado";
+
   if (user && user.displayName) {
-    firstName = user.displayName.split(" ")[0];
+    const parts = user.displayName.trim().split(" ");
+
+    if (parts.length > 1) {
+      // quitar SOLO el último elemento (asumido como apellido)
+      parts.pop();
+      firstName = parts.join(" ");
+    } else {
+      firstName = parts[0];
+    }
   }
 
   if (hour >= 6 && hour <= 19) {
