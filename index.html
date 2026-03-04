@@ -1745,6 +1745,21 @@
             0 6px 18px rgba(0,0,0,.35);
       }
 
+      /* 👇 Separar saludo y nombre en mobile */
+      #greetingTitle {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.1;
+      }
+
+      #greetingTitle::first-line {
+        white-space: nowrap;
+      }
+
+      #greetingTitle span {
+        display: block;
+      }
+
     }
 
     /*CELULAR CIERRE*/
