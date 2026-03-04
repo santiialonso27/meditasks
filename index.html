@@ -32,7 +32,11 @@
       --gradient-from-soft:rgba(139,92,246,.35);
       --gradient-to-soft:rgba(0,255,170,.25);
       --app-gradient: linear-gradient(135deg,var(--gradient-from),var(--gradient-to));
-      --app-gradient-soft: linear-gradient(135deg,var(--gradient-from-soft),var(--gradient-to-soft));  
+      --app-gradient-soft: linear-gradient(135deg,var(--gradient-from-soft),var(--gradient-to-soft));
+      --task-bg: rgba(28,28,32,.95);
+      --task-bg-hover: rgba(32,32,38,1);
+      --task-other-bg: rgba(255,255,255,.02);
+      --task-other-bg-hover: rgba(255,255,255,.05);
     }
     /* THEME: DEFAULT */
     :root.theme-default {
@@ -162,17 +166,6 @@
       pointer-events: none;
     }
 
-    .sidebar.collapsed .logo{
-      justify-content:center;
-      align-items:center;
-    }
-
-    .sidebar.collapsed .brand{
-      width:100%;
-      justify-content:center;
-      gap:0;
-    }
-
     .sidebar.collapsed .app-logo-wrapper{
       transform:none;
     }
@@ -191,7 +184,7 @@
     }
 
     .sidebar-scroll{
-      flex:1;
+      flex:1 1 auto;
       min-height:0;
       overflow-y:auto;
       padding-right:4px;
@@ -206,7 +199,51 @@
       transition: none !important;
     }
 
-    .logo{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-shrink:0; }
+    .sidebar-calendar-btn {
+      display: none;
+      width: 40px;
+      height: 40px;
+      margin-top: 14px;
+      margin-bottom: 14px;
+
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.03);
+
+      color: var(--text);
+      cursor: pointer;
+
+      align-items: center;
+      justify-content: center;
+
+      transition: .2s ease;
+      flex-shrink: 0;
+    }
+
+    .sidebar-calendar-btn:hover {
+      background: var(--app-gradient-soft);
+      border-color: var(--gradient-to);
+    }
+
+    /* 👇 Solo cuando sidebar está colapsada en desktop */
+    .sidebar.collapsed .sidebar-calendar-btn {
+      display: flex;
+    }
+
+    /* 👇 Nunca mostrarlo en mobile */
+    @media (max-width: 900px) {
+      .sidebar-calendar-btn {
+        display: none !important;
+      }
+    }
+
+    .logo{ 
+      display:flex; 
+      align-items:center; 
+      justify-content:space-between; 
+      gap:10px; 
+      flex: 0 0 auto;
+    }
 
     .badge{
       width:36px;
@@ -331,12 +368,18 @@
       font-weight: 600;
       color: #fff;
       margin: 0;
+      text-shadow:
+          0 2px 6px rgba(0,0,0,.55),
+          0 6px 18px rgba(0,0,0,.35);
     }
 
     .board-subtitle{
       font-size: 18px;
       color: rgba(255,255,255,0.6);
       margin-top: 6px;
+      text-shadow:
+          0 2px 6px rgba(0,0,0,.55),
+          0 6px 18px rgba(0,0,0,.35);
     }
 
     .main-area{
@@ -471,7 +514,7 @@
     }
 
     .task{
-      background: rgba(18,18,20,.95);
+      background: var(--task-bg);
       border:1px solid var(--border);
       border-radius:14px;
       padding:12px;
@@ -482,10 +525,18 @@
       animation: slideIn .18s cubic-bezier(.16,1,.3,1);
     }
 
+    .col.not-today .task{
+      background: var(--task-other-bg);
+    }
+
+    .col.not-today .task:hover{
+      background: var(--task-other-bg-hover);
+    }
+
     .task:hover{ 
       transform: translateY(-2px); 
       border-color:#3b3b43; 
-      background: rgba(18,18,20,1); 
+      background: var(--task-bg-hover);
     }
 
     .task.drag-hover{
@@ -909,11 +960,12 @@
     .app-logo-wrapper{
       width:48px;
       height:48px;
-      transform: translateY(-3px);
       display:flex;
       align-items:center;
       justify-content:center;
       flex-shrink:0;
+      margin-left: -4px;
+      margin-top: -4px;
     }
 
     .app-logo{
@@ -921,6 +973,14 @@
       height:100%;
       object-fit:contain;
       display:block;
+      transition: transform .2s ease, filter .2s ease;
+    }
+
+    .app-logo-wrapper:hover .app-logo{
+      transform: translateY(-2px);
+      filter:
+        drop-shadow(0 0 8px var(--gradient-from))
+        drop-shadow(0 0 16px var(--gradient-to));
     }
 
     .theme-sphere{
@@ -1673,10 +1733,16 @@
 
       .board-title{
         font-size: 20px;
+        text-shadow:
+            0 2px 6px rgba(0,0,0,.55),
+            0 6px 18px rgba(0,0,0,.35);
       }
 
       .board-subtitle{
-        font-size: 14px;
+        font-size: 12px;
+        text-shadow:
+            0 2px 6px rgba(0,0,0,.55),
+            0 6px 18px rgba(0,0,0,.35);
       }
 
     }
@@ -1712,10 +1778,15 @@
         <path d="M7.96997 2V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         <path d="M14.97 9.43994L12.41 11.9999L14.97 14.5599" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-      </button>
-        
+      </button> 
+
+      </div>
     </div>
-    </div>
+    <button class="sidebar-calendar-btn" id="desktopCollapsedCalendar">
+      <svg width="18px" height="18px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M10 21H6.2C5.0799 21 4.51984 21 4.09202 20.782C3.71569 20.5903 3.40973 20.2843 3.21799 19.908C3 19.4802 3 18.9201 3 17.8V8.2C3 7.0799 3 6.51984 3.21799 6.09202C3.40973 5.71569 3.71569 5.40973 4.09202 5.21799C4.51984 5 5.0799 5 6.2 5H17.8C18.9201 5 19.4802 5 19.908 5.21799C20.2843 5.40973 20.5903 5.71569 20.782 6.09202C21 6.51984 21 7.0799 21 8.2V10M7 3V5M17 3V5M3 9H21M13.5 13.0001L7 13M10 17.0001L7 17M14 21L16.025 20.595C16.2015 20.5597 16.2898 20.542 16.3721 20.5097C16.4452 20.4811 16.5147 20.4439 16.579 20.399C16.6516 20.3484 16.7152 20.2848 16.8426 20.1574L21 16C21.5523 15.4477 21.5523 14.5523 21 14C20.4477 13.4477 19.5523 13.4477 19 14L14.8426 18.1574C14.7152 18.2848 14.6516 18.3484 14.601 18.421C14.5561 18.4853 14.5189 18.5548 14.4903 18.6279C14.458 18.7102 14.4403 18.7985 14.405 18.975L14 21Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+    </button>
 
     </div>
     <div class="sidebar-scroll">
@@ -1735,10 +1806,9 @@
       </h3>
       <div class="muted changelog">
         <ul>
-          <li>Se añadieron temas seleccionables</li>
+          <li>Nuevos temas seleccionables</li>
           <li>Click en el calendario para agregar tareas</li>
           <li>Doble click para editar tarea</li>
-          <li>Mejoras visuales</li>
         </ul>
       </div>
     </div>
