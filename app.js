@@ -705,6 +705,8 @@ function createDayColumn(date) {
 
         tasks[iso].splice(i,1);
 
+        updateDayModalTaskCount(iso);
+
         if (soundEnabled) {
           playDeleteTaskSound(); // 🔥 sonido al borrar
         }
@@ -751,6 +753,8 @@ function createDayColumn(date) {
       }
 
       tasks[iso].push({ text, done:false });
+
+      updateDayModalTaskCount(iso);
 
       if (soundEnabled) {
         playAddTaskSound();
@@ -1115,9 +1119,14 @@ function openDayModal(dateStr) {
   const [year, month, day] = dateStr.split("-").map(Number);
   const selectedDate = new Date(year, month - 1, day);
 
+  const taskCount = (tasks[dateStr] || []).length;
+  const label = taskCount === 1 ? "TAREA" : "TAREAS";
+
   modal.innerHTML = `
     <div class="mhead">
-      <strong>${selectedDate.toLocaleDateString()}</strong>
+      <strong>
+        <span class="task-count">${taskCount}</span> ${label} EN ESTE DÍA
+      </strong>
       <button class="btn" id="closeDayModal">Cerrar</button>
     </div>
     <div class="mbody" id="dayModalBody"></div>
@@ -1143,6 +1152,14 @@ function openDayModal(dateStr) {
       init(); // 🔥 refresca board
     }
   });
+}
+
+function updateDayModalTaskCount(dateStr){
+  const el = document.querySelector("#dayOverlay .task-count");
+  if(!el) return;
+
+  const count = (tasks[dateStr] || []).length;
+  el.textContent = count;
 }
 
 function openThemeModal() {
@@ -1290,12 +1307,23 @@ let sidebarCollapsed = localStorage.getItem("sidebar_collapsed") === "true";
 collapseToggle.addEventListener("click", (e) => {
   e.stopPropagation();
 
+  const wasCollapsed = sidebar.classList.contains("collapsed");
+
+  if (wasCollapsed) {
+    sidebar.classList.add("opening");
+  }
+
   sidebarCollapsed = !sidebarCollapsed;
 
   sidebar.classList.toggle("collapsed", sidebarCollapsed);
 
-  // 🔥 Guardar estado
   localStorage.setItem("sidebar_collapsed", sidebarCollapsed);
+
+  if (wasCollapsed) {
+    setTimeout(() => {
+      sidebar.classList.remove("opening");
+    }, 150); // mismo tiempo que la transición del CSS
+  }
 });
 
 if (sidebarCollapsed) {
@@ -1308,9 +1336,17 @@ if (sidebarCollapsed) {
 }
 
 sidebarToggle.addEventListener("click", () => {
+
+  sidebar.classList.add("opening"); // 👈 agregar
+
   sidebarCollapsed = !sidebarCollapsed;
   sidebar.classList.toggle("collapsed", sidebarCollapsed);
+
   localStorage.setItem("sidebar_collapsed", sidebarCollapsed);
+
+  setTimeout(() => {
+    sidebar.classList.remove("opening"); // 👈 quitar después
+  }, 230); // mismo tiempo que la animación CSS
 });
 
 const mobileSidebarOpen = document.getElementById("mobileSidebarOpen");
