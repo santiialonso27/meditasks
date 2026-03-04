@@ -66,7 +66,15 @@ function updateGreeting(user) {
       ? `Buen día, ${nameToShow}`
       : `Buenas noches, ${nameToShow}`;
 
-  greetingEl.textContent = greetingText;
+  if (window.innerWidth <= 900) {
+    const parts = greetingText.split(", ");
+    greetingEl.innerHTML = `
+      <span>${parts[0]},</span>
+      <span>${parts[1]}</span>
+    `;
+  } else {
+    greetingEl.textContent = greetingText;
+  }
 }
 
 function updateSubtitle(user) {
