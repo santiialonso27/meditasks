@@ -37,7 +37,7 @@ const confirmLogout = document.getElementById("confirmLogout");
 let currentUser = null;
 let unsubscribe = null;
 let currentCalendarDate = new Date();
-let hasCarriedOver = false;
+let lastCarryDate = null;
 
 let draggedElement = null;
 let currentTarget = null;
@@ -447,7 +447,7 @@ function createDayColumn(date) {
 
   function showIndicator(targetElement, position = "after") {
 
-    // 🔥 Si ya está en el mismo lugar, no hacer nada
+    // si ya está en el mismo lugar → no recalcular
     if (currentTarget === targetElement && currentPosition === position) {
       return;
     }
@@ -455,25 +455,38 @@ function createDayColumn(date) {
     currentTarget = targetElement;
     currentPosition = position;
 
-    removeIndicator(false); // no resetear estado todavía
+    removeIndicator(false);
 
     if(position === "before"){
+      if (dropIndicator.previousSibling === targetElement) return;
       targetElement.insertAdjacentElement("beforebegin", dropIndicator);
     } else {
+      if (dropIndicator.nextSibling === targetElement) return;
       targetElement.insertAdjacentElement("afterend", dropIndicator);
     }
 
     requestAnimationFrame(()=>{
       dropIndicator.classList.add("active");
     });
+
   }
 
   function showIndicatorAtEnd(){
-    removeIndicator();
+
+    // si ya está al final, no hacer nada
+    if (dropIndicator.parentNode === list &&
+        list.lastElementChild === dropIndicator) {
+      return;
+    }
+
+    removeIndicator(false);
+
     list.appendChild(dropIndicator);
+
     requestAnimationFrame(()=>{
       dropIndicator.classList.add("active");
     });
+
   }
 
   function removeIndicator(resetState = true){
@@ -761,13 +774,16 @@ function isToday(d) {
 
 function init() {
 
-  if (!hasCarriedOver) {
+  const todayStr = formatLocalDate(new Date());
+
+  if (lastCarryDate !== todayStr) {
     carryOverPendings();
-    hasCarriedOver = true;
+    lastCarryDate = todayStr;
   }
 
   board.innerHTML = "";
   const today = new Date();
+
   for (let i = 0; i < 7; i++) {
     const d = new Date();
     d.setDate(today.getDate() + i);
@@ -905,30 +921,42 @@ function updateSoundIcon() {
 }
 
 function carryOverPendings() {
-  const today = formatLocalDate(new Date());
 
-  // Obtener todas las fechas guardadas
+  const today = formatLocalDate(new Date());
   const dates = Object.keys(tasks);
 
   dates.forEach(dateKey => {
-    if (dateKey < today) { // fechas anteriores
+
+    // 🔒 evitar tocar el día actual
+    if (dateKey === today) return;
+
+    if (dateKey < today) {
+
       const pending = tasks[dateKey].filter(t => !t.done);
 
       if (pending.length > 0) {
+
         if (!tasks[today]) tasks[today] = [];
 
-        // agregar pendientes al día actual
+        // 🔥 mover pendientes a hoy
         tasks[today] = [
-          ...pending.map(t => ({ ...t, done: false })),
+          ...pending,
           ...tasks[today]
         ];
+
+        tasks[dateKey] = tasks[dateKey].filter(t => t.done);
       }
 
-      // eliminar el día viejo
-      delete tasks[dateKey];
+      // 🔥 si ya no quedan tareas en ese día → eliminar
+      if (tasks[dateKey].length === 0) {
+        delete tasks[dateKey];
+      }
+
     }
+
   });
-  save()
+
+  save();
 }
 
 function renderMiniCalendar() {
