@@ -337,6 +337,8 @@ function createDayColumn(date) {
   col.className = "col";
   if (isToday(date)) {
     col.classList.add("today-highlight");
+  } else {
+    col.classList.add("not-today");
   }
 
   col.innerHTML = `
@@ -644,38 +646,37 @@ function createDayColumn(date) {
       });
 
       el.querySelector(".cb").onclick = () => {
-        const wasDone = t.done;
 
+        const wasDone = t.done;
         t.done = !t.done;
+
+        const total = tasks[iso].length;
+        const completed = tasks[iso].filter(task => task.done).length;
+
+        // 🔊 SONIDO ANTES DEL RENDER
+        if (!wasDone && t.done && soundEnabled) {
+
+          if (total > 0 && completed === total) {
+            playDayCompleteSound();
+            launchConfetti();
+          } else {
+            playRewardSound();
+          }
+
+        }
+
+        // efecto visual reward (lo dejamos después)
+        setTimeout(() => {
+          const tasksEls = col.querySelectorAll(".task");
+          const last = tasksEls[i];
+          if (last) {
+            last.classList.add("reward");
+          }
+        }, 0);
+
         save();
         render();
         renderMiniCalendar();
-
-        // Si se acaba de completar (no desmarcar)
-        if (!wasDone && t.done) {
-
-          const total = tasks[iso].length;
-          const completed = tasks[iso].filter(task => task.done).length;
-
-          setTimeout(() => {
-            const tasksEls = col.querySelectorAll(".task");
-            const last = tasksEls[i];
-            if (last) {
-              last.classList.add("reward");
-            }
-          }, 0);
-
-          if (soundEnabled) {
-            if (total > 0 && completed === total) {
-              // 🎉 Día completo
-              playDayCompleteSound();
-              launchConfetti();
-            } else {
-              // ✔ Solo una tarea
-              playRewardSound();
-            }
-          }
-        }
       };
 
       el.querySelector("button").onclick = e => {
@@ -684,7 +685,7 @@ function createDayColumn(date) {
         tasks[iso].splice(i,1);
 
         if (soundEnabled) {
-          playRewardSound(); // 🔥 sonido al borrar
+          playDeleteTaskSound(); // 🔥 sonido al borrar
         }
 
         save();
@@ -720,7 +721,20 @@ function createDayColumn(date) {
 
   input.addEventListener("keydown", e => {
     if (e.key === "Enter" && input.value.trim()) {
-      tasks[iso].push({ text: input.value.trim(), done:false });
+
+      let text = input.value.trim();
+
+      // 🔥 Si el primer carácter es letra y está en minúscula → convertirlo
+      if (/^[a-záéíóúñ]/.test(text)) {
+        text = text.charAt(0).toUpperCase() + text.slice(1);
+      }
+
+      tasks[iso].push({ text, done:false });
+
+      if (soundEnabled) {
+        playAddTaskSound();
+      }
+
       input.value = "";
       save();
       render();
@@ -755,7 +769,7 @@ function init() {
   renderMiniCalendar();
 }
 
-const completeSound = new Audio("/sounds/task_complete.mp3");
+const completeSound = new Audio("/sounds/task_complete.wav");
 completeSound.volume = 0.6;
 completeSound.preload = "auto";
 completeSound.load();
@@ -765,6 +779,16 @@ dayCompleteSound.volume = 0.7;
 dayCompleteSound.preload = "auto";
 dayCompleteSound.load();
 
+const addTaskSound = new Audio("/sounds/add_task.wav");
+addTaskSound.volume = 0.6;
+addTaskSound.preload = "auto";
+addTaskSound.load();
+
+const deleteTaskSound = new Audio("/sounds/delete_task.wav");
+deleteTaskSound.volume = 0.6;
+deleteTaskSound.preload = "auto";
+deleteTaskSound.load();
+
 function playRewardSound() {
   completeSound.currentTime = 0;
   completeSound.play();
@@ -773,6 +797,16 @@ function playRewardSound() {
 function playDayCompleteSound() {
   dayCompleteSound.currentTime = 0;
   dayCompleteSound.play();
+}
+
+function playAddTaskSound() {
+  addTaskSound.currentTime = 0;
+  addTaskSound.play();
+}
+
+function playDeleteTaskSound() {
+  deleteTaskSound.currentTime = 0;
+  deleteTaskSound.play();
 }
 
 function launchConfetti() {
@@ -1234,6 +1268,15 @@ sidebarToggle.addEventListener("click", () => {
 });
 
 const mobileSidebarOpen = document.getElementById("mobileSidebarOpen");
+
+const desktopCollapsedCalendar = document.getElementById("desktopCollapsedCalendar");
+
+if (desktopCollapsedCalendar && sidebar) {
+  desktopCollapsedCalendar.addEventListener("click", (e) => {
+    e.stopPropagation();
+    sidebar.classList.remove("collapsed");
+  });
+}
 
 if (mobileSidebarOpen && sidebar) {
   mobileSidebarOpen.addEventListener("click", (e) => {
