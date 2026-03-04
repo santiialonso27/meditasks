@@ -1139,6 +1139,7 @@ function openDayModal(dateStr) {
 
   // 🔥 Reutilizamos tu función existente
   const column = createDayColumn(selectedDate);
+  column.querySelector(".col-head")?.remove();
   const head = column.querySelector(".col-head");
   if (head) head.remove();
   body.appendChild(column);
@@ -1158,10 +1159,13 @@ function openDayModal(dateStr) {
 
 function updateDayModalTaskCount(dateStr){
   const el = document.querySelector("#dayOverlay .task-count");
-  if(!el) return;
+  const strong = document.querySelector("#dayOverlay .mhead strong");
+  if(!el || !strong) return;
 
   const count = (tasks[dateStr] || []).length;
-  el.textContent = count;
+  const label = count === 1 ? "TAREA" : "TAREAS";
+
+  strong.innerHTML = `<span class="task-count">${count}</span> ${label} EN ESTE DÍA`;
 }
 
 function openThemeModal() {
