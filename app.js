@@ -1139,6 +1139,8 @@ function openDayModal(dateStr) {
 
   // 🔥 Reutilizamos tu función existente
   const column = createDayColumn(selectedDate);
+  const head = column.querySelector(".col-head");
+  if (head) head.remove();
   body.appendChild(column);
 
   modal.querySelector("#closeDayModal").addEventListener("click", () => {
