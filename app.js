@@ -1139,9 +1139,19 @@ function openDayModal(dateStr) {
 
   // 🔥 Reutilizamos tu función existente
   const column = createDayColumn(selectedDate);
-  column.querySelector(".col-head")?.remove();
-  const head = column.querySelector(".col-head");
-  if (head) head.remove();
+
+  const title = column.querySelector(".col-title")?.textContent || "";
+  const sub = column.querySelector(".col-sub")?.textContent || "";
+
+  const strong = modal.querySelector(".mhead strong");
+
+  strong.dataset.dateLabel = `${title} ${sub}`;
+
+  strong.innerHTML = `
+    <span class="task-count">${taskCount}</span> ${label} EN ESTE DÍA
+    <span>${title} ${sub}</span>
+  `;
+
   body.appendChild(column);
 
   modal.querySelector("#closeDayModal").addEventListener("click", () => {
@@ -1158,14 +1168,19 @@ function openDayModal(dateStr) {
 }
 
 function updateDayModalTaskCount(dateStr){
-  const el = document.querySelector("#dayOverlay .task-count");
+
   const strong = document.querySelector("#dayOverlay .mhead strong");
-  if(!el || !strong) return;
+  if(!strong) return;
 
   const count = (tasks[dateStr] || []).length;
   const label = count === 1 ? "TAREA" : "TAREAS";
 
-  strong.innerHTML = `<span class="task-count">${count}</span> ${label} EN ESTE DÍA`;
+  const dateLabel = strong.dataset.dateLabel || "";
+
+  strong.innerHTML = `
+    <span class="task-count">${count}</span> ${label} EN ESTE DÍA
+    <span>${dateLabel}</span>
+  `;
 }
 
 function openThemeModal() {
