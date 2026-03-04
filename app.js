@@ -924,6 +924,7 @@ function carryOverPendings() {
 
   const today = formatLocalDate(new Date());
   const dates = Object.keys(tasks);
+  let changed = false;
 
   dates.forEach(dateKey => {
 
@@ -939,10 +940,19 @@ function carryOverPendings() {
         if (!tasks[today]) tasks[today] = [];
 
         // 🔥 mover pendientes a hoy
-        tasks[today] = [
-          ...pending,
-          ...tasks[today]
-        ];
+        // 🔒 evitar duplicados en hoy
+        const existingTexts = new Set((tasks[today] || []).map(t => t.text));
+
+        const toMove = pending.filter(t => !existingTexts.has(t.text));
+
+        if (toMove.length > 0) {
+          tasks[today] = [
+            ...toMove,
+            ...(tasks[today] || [])
+          ];
+
+          changed = true;
+        }
 
         tasks[dateKey] = tasks[dateKey].filter(t => t.done);
       }
@@ -956,7 +966,7 @@ function carryOverPendings() {
 
   });
 
-  save();
+  if (changed) save();
 }
 
 function renderMiniCalendar() {
