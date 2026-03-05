@@ -152,6 +152,18 @@ onAuthStateChanged(auth, async (user) => {
           applyTheme(currentTheme);
         }
 
+        if (data.mode) {
+
+          if (data.mode === "light") {
+            document.documentElement.classList.add("light-mode");
+          } else {
+            document.documentElement.classList.remove("light-mode");
+          }
+
+          localStorage.setItem("mt_theme_mode", data.mode);
+          updateModeIcon();
+        }
+
       } else {
 
         // Si no tenía en la nube → subir lo local
@@ -1415,13 +1427,22 @@ setInterval(() => {
 const modeBtn = document.getElementById("modeToggle");
 updateModeIcon();
 
-modeBtn.addEventListener("click", () => {
+modeBtn.addEventListener("click", async () => {
 
   document.documentElement.classList.toggle("light-mode");
 
   const isLight = document.documentElement.classList.contains("light-mode");
+  const mode = isLight ? "light" : "dark";
 
-  localStorage.setItem("mt_theme_mode", isLight ? "light" : "dark");
+  localStorage.setItem("mt_theme_mode", mode);
+
+  if (currentUser) {
+    await setDoc(
+      doc(db, "users", currentUser.uid),
+      { mode },
+      { merge: true }
+    );
+  }
 
   updateModeIcon();
 });
