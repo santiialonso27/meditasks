@@ -8,7 +8,12 @@ import {
   doc, 
   setDoc, 
   getDoc,
-  onSnapshot
+  onSnapshot,
+  collection,
+  getDocs,
+  query,
+  orderBy,
+  limit
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -42,6 +47,14 @@ let lastCarryDate = null;
 let draggedElement = null;
 let currentTarget = null;
 let currentPosition = null;
+
+let player = JSON.parse(localStorage.getItem("mt_player")) || {
+  exp: 0,
+  level: 0,
+  todayExpTasks: 0,
+  lastExpDate: null,
+  dailyLimitShown: false
+};
 
 if(localStorage.getItem("mt_theme_mode")==="light"){
   document.documentElement.classList.add("light-mode");
@@ -139,12 +152,32 @@ onAuthStateChanged(auth, async (user) => {
 
     const userRef = doc(db, "users", user.uid);
 
+    await setDoc(
+      userRef,
+      {
+        name: user.displayName,
+        photo: user.photoURL
+      },
+      { merge: true }
+    );
+
     // 🔥 Listener en tiempo real
     unsubscribe = onSnapshot(userRef, async (snapshot) => {
 
       if (snapshot.exists()) {
         const data = snapshot.data();
         tasks = data.tasks || {};
+
+        if (data.player) {
+          player = data.player;
+        } else {
+          player = {
+            exp: 0,
+            level: 0,
+            todayExpTasks: 0,
+            lastExpDate: null
+          };
+        }
 
         // 🔥 cargar tema del usuario
         if (data.theme) {
@@ -176,6 +209,8 @@ onAuthStateChanged(auth, async (user) => {
       localStorage.removeItem(storeKey);
 
       init();
+
+      updateLevel();
 
       if (!hasRendered) {
           document.body.classList.remove("app-loading");
@@ -227,6 +262,101 @@ onAuthStateChanged(auth, async (user) => {
 
     });
 
+function showLeaderboardModal(users){
+
+  const existing = document.getElementById("leaderboardOverlay");
+  if(existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "overlay open";
+  overlay.id = "leaderboardOverlay";
+
+  const modal = document.createElement("div");
+  modal.className = "modal";
+
+  let html = `
+    <div class="mhead">
+      <strong>TABLA DE POSICIONES</strong>
+      <button class="btn" id="closeLeaderboard">Cerrar</button>
+    </div>
+    <div class="mbody leaderboard-list">
+  `;
+
+    if(users.length === 0){
+      html += `<div class="leaderboard-empty">Aún no hay jugadores</div>`;
+    }
+
+  users.forEach((u,i)=>{
+
+    let posDisplay;
+
+    if(i === 0) posDisplay = "🥇";
+    else if(i === 1) posDisplay = "🥈";
+    else if(i === 2) posDisplay = "🥉";
+    else posDisplay = `<span class="leader-rank-circle">${i+1}</span>`;
+
+    html += `
+      <div class="leaderboard-row ${currentUser && u.uid === currentUser.uid ? "leader-self" : ""}">
+
+        <div class="leader-pos">${posDisplay}</div>
+
+        <img 
+          class="leader-photo"
+          src="${u.photo}"
+          onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=random'"
+        >
+
+        <div class="leader-name">${u.name}</div>
+
+        <div class="leader-level">
+          Nivel ${u.level}
+        </div>
+
+        <div class="leader-exp">
+          ${u.exp} pts
+        </div>
+
+      </div>
+    `;
+
+  });
+
+  html += `</div>`;
+
+  modal.innerHTML = html;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  document
+    .getElementById("closeLeaderboard")
+    .onclick = ()=>{
+
+      overlay.remove();
+
+      if(leaderboardUnsub){
+        leaderboardUnsub();
+        leaderboardUnsub = null;
+      }
+
+  };
+
+  overlay.onclick = (e)=>{
+
+    if(e.target === overlay){
+
+      overlay.remove();
+
+      if(leaderboardUnsub){
+        leaderboardUnsub();
+        leaderboardUnsub = null;
+      }
+
+    }
+
+  };
+
+}
 
 let profileMenuOpen = false;
 const cornerContainer = document.getElementById("cornerContainer");
@@ -339,6 +469,18 @@ async function save() {
       { tasks },
       { merge: true }
     );
+
+    await setDoc(
+      doc(db, "leaderboard", currentUser.uid),
+      {
+        name: currentUser.displayName,
+        photo: currentUser.photoURL,
+        level: player.level,
+        exp: player.exp
+      },
+      { merge:true }
+    );
+
   } else {
     localStorage.setItem(storeKey, JSON.stringify(tasks));
   }
@@ -350,6 +492,57 @@ function formatLocalDate(date) {
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+function resetDailyExpIfNeeded(){
+
+  const today = formatLocalDate(new Date());
+
+  if(player.lastExpDate !== today){
+    player.todayExpTasks = 0;
+    player.lastExpDate = today;
+    player.dailyLimitShown = false;
+    savePlayer();
+  }
+
+}
+
+function rewardExp(){
+
+  resetDailyExpIfNeeded();
+
+  if(player.todayExpTasks >= 5){
+    return;
+  }
+
+  player.exp += 100;
+  player.todayExpTasks++;
+
+  updateLevel();
+  savePlayer();
+}
+
+function showExpGain(cbElement, amount = 100){
+
+  const rect = cbElement.getBoundingClientRect();
+
+  const el = document.createElement("div");
+  el.className = "exp-float";
+  el.textContent = `+${amount} EXP`;
+
+  el.style.left = rect.left + rect.width/2 + "px";
+  el.style.top = rect.top + "px";
+
+  document.body.appendChild(el);
+
+  requestAnimationFrame(()=>{
+    el.classList.add("show");
+  });
+
+  setTimeout(()=>{
+    el.remove();
+  },900);
+
 }
 
 function createDayColumn(date) {
@@ -682,15 +875,65 @@ function createDayColumn(date) {
         removeIndicator();
       });
 
+      el.querySelector(".icon.danger").onclick = () => {
+
+        if (soundEnabled) {
+          playDeleteTaskSound();
+        }
+
+        tasks[iso].splice(i,1);
+
+        save();
+        render();
+        renderMiniCalendar();
+
+        updateDayModalTaskCount(iso);
+
+      };
+
       el.querySelector(".cb").onclick = () => {
+
+        const cb = el.querySelector(".cb");
 
         const wasDone = t.done;
         t.done = !t.done;
 
+        let expShown = false;
+
+        if(!wasDone && t.done){
+
+          resetDailyExpIfNeeded();
+
+          if(!t.expGiven){
+
+            if(player.todayExpTasks < 5){
+
+              rewardExp();
+              t.expGiven = true;
+              expShown = true;
+
+              showExpGain(cb,100);
+
+            }else{
+
+              if(!player.dailyLimitShown){
+
+                player.dailyLimitShown = true;
+                savePlayer();
+
+                showToast("Límite diario de EXP alcanzado");
+              }
+
+            }
+
+          }
+
+        }
+
+
         const total = tasks[iso].length;
         const completed = tasks[iso].filter(task => task.done).length;
 
-        // 🔊 SONIDO ANTES DEL RENDER
         if (!wasDone && t.done && soundEnabled) {
 
           if (total > 0 && completed === total) {
@@ -702,34 +945,43 @@ function createDayColumn(date) {
 
         }
 
-        // efecto visual reward (lo dejamos después)
-        setTimeout(() => {
-          const tasksEls = col.querySelectorAll(".task");
-          const last = tasksEls[i];
-          if (last) {
-            last.classList.add("reward");
+        el.classList.toggle("done", t.done);
+
+
+        if (!wasDone && t.done) {
+
+          const index = tasks[iso].indexOf(t);
+          const isLast = index === tasks[iso].length - 1;
+
+          if(!isLast){
+
+            const delay = expShown ? 900 : 0;
+
+            setTimeout(()=>{
+
+              const idx = tasks[iso].indexOf(t);
+
+              if(idx !== -1){
+                const task = tasks[iso].splice(idx,1)[0];
+                tasks[iso].push(task);
+              }
+
+              save();
+              render();
+              renderMiniCalendar();
+
+            },delay);
+
+          }else{
+            save();
+            render();
+            renderMiniCalendar();
           }
-        }, 0);
 
-        save();
-        render();
-        renderMiniCalendar();
-      };
-
-      el.querySelector("button").onclick = e => {
-        e.stopPropagation();
-
-        tasks[iso].splice(i,1);
-
-        updateDayModalTaskCount(iso);
-
-        if (soundEnabled) {
-          playDeleteTaskSound(); // 🔥 sonido al borrar
+        }else{
+          render();
         }
 
-        save();
-        render();
-        renderMiniCalendar();
       };
 
       list.appendChild(el);
@@ -768,7 +1020,15 @@ function createDayColumn(date) {
         text = text.charAt(0).toUpperCase() + text.slice(1);
       }
 
-      tasks[iso].push({ text, done:false });
+      const newTask = { text, done:false, expGiven:false };
+
+      const firstDoneIndex = tasks[iso].findIndex(t => t.done);
+
+      if(firstDoneIndex === -1){
+        tasks[iso].push(newTask);
+      }else{
+        tasks[iso].splice(firstDoneIndex, 0, newTask);
+      }
 
       updateDayModalTaskCount(iso);
 
@@ -794,6 +1054,8 @@ function isToday(d) {
 
 function init() {
 
+  resetDailyExpIfNeeded();
+
   const todayStr = formatLocalDate(new Date());
 
   if (lastCarryDate !== todayStr) {
@@ -811,6 +1073,7 @@ function init() {
   }
 
   renderMiniCalendar();
+  updateLevel();
 }
 
 const completeSound = new Audio("/sounds/task_complete.wav");
@@ -1590,5 +1853,213 @@ function updateModeIcon() {
   }
 
 }
+
+function updateLevelButton(level, progress){
+
+  const circle = document.querySelector(".level-ring-progress");
+  const number = document.getElementById("levelNumber");
+  if(!circle || !number) return;
+
+  const arcLength = circle.getTotalLength();
+
+  circle.style.strokeDasharray = arcLength;
+  circle.style.strokeDashoffset =
+      arcLength - (progress * arcLength);
+
+  number.textContent = level;
+}
+
+function updateLevel(){
+
+  let level = 0;
+  let expRemaining = player.exp;
+
+  while(true){
+
+    const needed = getExpForLevel(level);
+
+    if(expRemaining >= needed){
+      expRemaining -= needed;
+      level++;
+    }else{
+      break;
+    }
+
+  }
+
+  if(level > player.level){
+
+    player.level = level;
+
+    const number = document.getElementById("levelNumber");
+
+    if(number){
+      number.classList.add("level-pop");
+
+      setTimeout(()=>{
+        number.classList.remove("level-pop");
+      },400);
+    }
+
+    launchConfetti();
+    savePlayer();
+  }
+
+  const needed = getExpForLevel(level);
+  const progress = expRemaining / needed;
+
+  updateLevelButton(level, progress);
+
+}
+
+async function savePlayer(){
+
+  if(currentUser){
+    await setDoc(
+      doc(db, "users", currentUser.uid),
+      { player },
+      { merge: true }
+    );
+
+    await setDoc(
+      doc(db, "leaderboard", currentUser.uid),
+      {
+        name: currentUser.displayName,
+        photo: currentUser.photoURL,
+        level: player.level,
+        exp: player.exp
+      },
+      { merge:true }
+    );
+
+  }else{
+    localStorage.setItem("mt_player", JSON.stringify(player));
+  }
+
+}
+
+let leaderboardUnsub = null;
+
+function openLeaderboard(){
+
+  if(leaderboardUnsub){
+    leaderboardUnsub();
+  }
+
+  const q = query(
+    collection(db, "leaderboard"),
+    orderBy("level", "desc"),
+    orderBy("exp", "desc"),
+    orderBy("name", "asc"),
+    limit(30)
+  );
+
+  leaderboardUnsub = onSnapshot(q, (snapshot)=>{
+
+    let users = [];
+
+    snapshot.forEach(docSnap => {
+
+      const data = docSnap.data();
+
+      users.push({
+        uid: docSnap.id,
+        name: data.name || "Usuario",
+        photo: data.photo || "",
+        level: data.level || 0,
+        exp: data.exp || 0
+      });
+
+    });
+
+    showLeaderboardModal(users);
+
+  });
+
+}
+
+function getExpForLevel(level){
+
+  const base = 1000;
+  const increment = 120;
+
+  const value = base + (level * increment);
+
+  // redondear a múltiplos de 50
+  return Math.round(value / 50) * 50;
+
+}
+
+const levelButton = document.getElementById("levelButton");
+const levelMenu = document.getElementById("levelMenu");
+
+document.body.appendChild(levelMenu);
+
+levelButton.addEventListener("click", (e)=>{
+
+  e.stopPropagation();
+
+  const rect = levelButton.getBoundingClientRect();
+
+  levelMenu.style.top = rect.bottom + 12 + "px";
+  levelMenu.style.left = rect.left - 170 + "px";
+
+  levelMenu.classList.toggle("open");
+
+  updateLevelMenu();
+
+});
+
+document.addEventListener("click", ()=>{
+  levelMenu.classList.remove("open");
+});
+
+function updateLevelMenu(){
+
+  let level = 0;
+  let expRemaining = player.exp;
+
+  while(true){
+
+    const needed = getExpForLevel(level);
+
+    if(expRemaining >= needed){
+      expRemaining -= needed;
+      level++;
+    }else{
+      break;
+    }
+
+  }
+
+  const needed = getExpForLevel(level);
+
+  const percent = (expRemaining / needed) * 100;
+
+  document.getElementById("levelProgressFill").style.width =
+      percent + "%";
+
+  document.getElementById("levelProgressText").textContent =
+      `${expRemaining} / ${needed} EXP`;
+
+}
+
+const leaderboardFromLevelBtn =
+  document.getElementById("openLeaderboardFromLevel");
+
+if(leaderboardFromLevelBtn){
+
+  leaderboardFromLevelBtn.addEventListener("click",(e)=>{
+
+    e.stopPropagation();
+
+    levelMenu.classList.remove("open");
+
+    openLeaderboard();
+
+  });
+
+}
+
 
 document.documentElement.classList.remove("pre-collapsed");
