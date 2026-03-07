@@ -47,6 +47,14 @@ let lastCarryDate = null;
 let draggedElement = null;
 let currentTarget = null;
 let currentPosition = null;
+// LONG PRESS MOBILE
+let longPressTimer = null;
+let longPressTriggered = false;
+// REORDER MODE MOBILE
+let reorderMode = false;
+let reorderTaskElement = null;
+let reorderTaskData = null;
+let reorderRender = null;
 
 let player = JSON.parse(localStorage.getItem("mt_player")) || {
   exp: 0,
@@ -811,6 +819,41 @@ function createDayColumn(date) {
       `;
       const textDiv = el.querySelector(".ttext");
 
+      // LONG PRESS MOBILE
+      if(window.innerWidth <= 900){
+
+        el.addEventListener("touchstart", ()=>{
+
+          longPressTriggered = false;
+
+          longPressTimer = setTimeout(()=>{
+
+            longPressTriggered = true;
+
+            showTaskMobileMenu(el, t, render);
+
+          },1000);
+
+        });
+
+        el.addEventListener("touchend", (e)=>{
+
+          clearTimeout(longPressTimer);
+
+          if(longPressTriggered){
+            e.preventDefault();
+            e.stopPropagation();
+          }
+
+        });
+
+        el.addEventListener("touchmove", ()=>{
+          clearTimeout(longPressTimer);
+          longPressTriggered = false;
+        });
+
+      }
+
       textDiv.addEventListener("dblclick", () => {
         const oldText = t.text;
 
@@ -1183,6 +1226,218 @@ function showToast(message) {
     toast.classList.remove("show");
     setTimeout(() => toast.remove(), 300);
   }, 2500);
+}
+
+function showTaskMobileMenu(taskElement, taskData, render){
+
+  const existing = document.getElementById("taskMobileMenu");
+  if(existing) existing.remove();
+
+  const rect = taskElement.getBoundingClientRect();
+
+  const menu = document.createElement("div");
+  menu.id = "taskMobileMenu";
+
+  menu.style.position = "fixed";
+  menu.style.left = rect.left + rect.width/2 + "px";
+  menu.style.top = rect.top - 10 + "px";
+  menu.style.transform = "translate(-50%, -100%)";
+
+  menu.style.padding = "8px 12px";
+  menu.style.borderRadius = "10px";
+
+  menu.style.background = "rgba(20,20,25,.9)";
+  menu.style.backdropFilter = "blur(10px)";
+  menu.style.border = "1px solid rgba(255,255,255,.1)";
+
+  menu.style.fontSize = "13px";
+  menu.style.fontWeight = "600";
+
+  menu.style.display = "flex";
+  menu.style.gap = "10px";
+
+  menu.style.zIndex = "9999";
+
+  menu.innerHTML = `
+    <span id="taskEditBtn" style="cursor:pointer;">Editar</span>
+    <span style="opacity:.5;">|</span>
+    <span id="taskReorderBtn" style="cursor:pointer;">Reordenar</span>
+  `;
+
+  document.body.appendChild(menu);
+
+  // EDITAR
+  menu.querySelector("#taskEditBtn").onclick = ()=>{
+
+    menu.remove();
+
+    const textDiv = taskElement.querySelector(".ttext");
+
+    const oldText = taskData.text;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = oldText;
+    input.className = "edit-input";
+
+    textDiv.replaceWith(input);
+
+    input.focus();
+    input.select();
+
+    function saveEdit(){
+      const newValue = input.value.trim();
+
+      if(newValue){
+        taskData.text = newValue;
+        save();
+      }
+
+      render();
+      renderMiniCalendar();
+    }
+
+    input.addEventListener("keydown", e=>{
+      if(e.key === "Enter") saveEdit();
+      if(e.key === "Escape") render();
+    });
+
+    input.addEventListener("blur", saveEdit);
+
+  };
+
+  // REORDENAR
+  menu.querySelector("#taskReorderBtn").onclick = ()=>{
+
+    menu.remove();
+
+    reorderMode = true;
+    reorderTaskElement = taskElement;
+    reorderTaskData = taskData;
+    reorderRender = render;
+
+    showReorderControls(taskElement, taskData, render);
+
+  };
+
+  // cerrar si tocás afuera
+  setTimeout(()=>{
+    document.addEventListener("click", ()=>{
+      menu.remove();
+    },{once:true});
+  },50);
+
+}
+
+function showReorderControls(taskElement, taskData, render){
+
+  const existing = document.getElementById("reorderControls");
+  if(existing) existing.remove();
+
+  const upBtn = document.createElement("div");
+  const downBtn = document.createElement("div");
+
+  upBtn.id = "reorderControls";
+  upBtn.className = "reorder-btn up";
+  downBtn.className = "reorder-btn down";
+
+  upBtn.innerHTML = "↑";
+  downBtn.innerHTML = "↓";
+
+  const rect = taskElement.getBoundingClientRect();
+
+  upBtn.style.position = "fixed";
+  downBtn.style.position = "fixed";
+
+  upBtn.style.left = rect.right - 30 + "px";
+  downBtn.style.left = rect.right - 30 + "px";
+
+  upBtn.style.top = rect.top - 10 + "px";
+  downBtn.style.top = rect.bottom - 10 + "px";
+
+  upBtn.style.zIndex = 9999;
+  downBtn.style.zIndex = 9999;
+
+  upBtn.style.background = "var(--accent)";
+  downBtn.style.background = "var(--accent)";
+
+  upBtn.style.color = "#fff";
+  downBtn.style.color = "#fff";
+
+  upBtn.style.borderRadius = "8px";
+  downBtn.style.borderRadius = "8px";
+
+  upBtn.style.padding = "6px 10px";
+  downBtn.style.padding = "6px 10px";
+
+  document.body.appendChild(upBtn);
+  document.body.appendChild(downBtn);
+
+  const date = taskElement.dataset.date;
+  const index = parseInt(taskElement.dataset.index);
+  const list = tasks[date];
+
+  const firstDoneIndex = list.findIndex(t => t.done);
+  const lastActiveIndex = firstDoneIndex === -1 ? list.length-1 : firstDoneIndex-1;
+
+  if(index === 0){
+    upBtn.style.display = "none";
+  }
+
+  if(index >= lastActiveIndex){
+    downBtn.style.display = "none";
+  }
+
+  upBtn.onclick = (e)=>{
+
+    e.stopPropagation();
+
+    if(index > 0){
+
+      const temp = list[index];
+      list[index] = list[index-1];
+      list[index-1] = temp;
+
+      save();
+      render();
+      renderMiniCalendar();
+    }
+
+  };
+
+  downBtn.onclick = (e)=>{
+
+    e.stopPropagation();
+
+    if(index < lastActiveIndex){
+
+      const temp = list[index];
+      list[index] = list[index+1];
+      list[index+1] = temp;
+
+      save();
+      render();
+      renderMiniCalendar();
+    }
+
+  };
+
+  setTimeout(()=>{
+    document.addEventListener("click", closeReorderMode, {once:true});
+  },50);
+
+}
+
+function closeReorderMode(){
+
+  reorderMode = false;
+
+  const btn = document.getElementById("reorderControls");
+  if(btn) btn.remove();
+
+  const downs = document.querySelectorAll(".reorder-btn");
+  downs.forEach(b => b.remove());
+
 }
 
 const soundToggle = document.getElementById("soundToggleTop");
