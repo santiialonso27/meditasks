@@ -744,7 +744,7 @@ function createDayColumn(date) {
     tasks[iso].forEach((t, i) => {
       const el = document.createElement("div");
       el.className = "task" + (t.done ? " done" : "");
-      el.draggable = true;
+      el.draggable = !("ontouchstart" in window);
       //FUNCION DE DROP//
       el.addEventListener("drop", e => {
         e.preventDefault();
