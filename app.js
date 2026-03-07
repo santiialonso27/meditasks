@@ -50,6 +50,8 @@ let currentPosition = null;
 // LONG PRESS MOBILE
 let longPressTimer = null;
 let longPressTriggered = false;
+let touchStartX = 0;
+let touchStartY = 0;
 // REORDER MODE MOBILE
 let reorderMode = false;
 let reorderTaskElement = null;
@@ -822,13 +824,20 @@ function createDayColumn(date) {
       // LONG PRESS MOBILE
       if(window.innerWidth <= 900){
 
-        el.addEventListener("touchstart", ()=>{
+        el.addEventListener("touchstart", (e)=>{
+
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
 
           longPressTriggered = false;
 
           longPressTimer = setTimeout(()=>{
 
             longPressTriggered = true;
+
+            if(navigator.vibrate){
+              navigator.vibrate(10);
+            }
 
             showTaskMobileMenu(el, t, render);
 
@@ -847,9 +856,16 @@ function createDayColumn(date) {
 
         });
 
-        el.addEventListener("touchmove", ()=>{
-          clearTimeout(longPressTimer);
-          longPressTriggered = false;
+        el.addEventListener("touchmove", (e)=>{
+
+          const dx = Math.abs(e.touches[0].clientX - touchStartX);
+          const dy = Math.abs(e.touches[0].clientY - touchStartY);
+
+          if(dx > 10 || dy > 10){
+            clearTimeout(longPressTimer);
+            longPressTriggered = false;
+          }
+
         });
 
       }
@@ -1322,7 +1338,7 @@ function showTaskMobileMenu(taskElement, taskData, render){
 
   // cerrar si tocás afuera
   setTimeout(()=>{
-    document.addEventListener("click", ()=>{
+    document.addEventListener("touchstart", ()=>{
       menu.remove();
     },{once:true});
   },50);
