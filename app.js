@@ -1357,13 +1357,9 @@ function showReorderControls(taskElement, taskData, render){
 
   taskElement.classList.add("reorder-active");
 
-  const existing = document.getElementById("reorderControls");
-  if(existing) existing.remove();
-
   const upBtn = document.createElement("div");
   const downBtn = document.createElement("div");
 
-  upBtn.className = "reorder-btn up";
   upBtn.className = "reorder-btn up";
   downBtn.className = "reorder-btn down";
 
@@ -1402,8 +1398,13 @@ function showReorderControls(taskElement, taskData, render){
   const date = taskElement.dataset.date;
 
   function getIndex(){
+    const el = document.querySelector(
+      `.task[data-date="${date}"][data-index="${taskElement.dataset.index}"]`
+    );
+    if(el) taskElement = el;
     return parseInt(taskElement.dataset.index);
   }
+
   const list = tasks[date];
 
   const firstDoneIndex = list.findIndex(t => t.done);
@@ -1430,15 +1431,15 @@ function showReorderControls(taskElement, taskData, render){
 
     if(rect.top < margin){
       window.scrollBy({
-        top:-150,
-        behavior:"smooth"
+        top:150,
+        behavior:"instant"
       });
     }
 
     if(rect.bottom > window.innerHeight - margin){
       window.scrollBy({
         top:150,
-        behavior:"smooth"
+        behavior:"instant"
       });
     }
 
@@ -1464,13 +1465,25 @@ function showReorderControls(taskElement, taskData, render){
       list[index] = list[index-1];
       list[index-1] = temp;
 
+      updateButtonPosition();  
+      keepTaskVisible();       
+
       save();
       render();
       renderMiniCalendar();
 
       requestAnimationFrame(()=>{
-        updateButtonPosition();
-        keepTaskVisible();
+
+        const newEl = document.querySelector(
+          `.task[data-date="${date}"][data-index="${getIndex()}"]`
+        );
+
+        if(newEl){
+          taskElement = newEl;
+          updateButtonPosition();
+          keepTaskVisible();
+        }
+
       });
     }
 
@@ -1488,13 +1501,25 @@ function showReorderControls(taskElement, taskData, render){
       list[index] = list[index+1];
       list[index+1] = temp;
 
+      updateButtonPosition();  
+      keepTaskVisible();       
+
       save();
       render();
       renderMiniCalendar();
 
       requestAnimationFrame(()=>{
-        updateButtonPosition();
-        keepTaskVisible();
+
+        const newEl = document.querySelector(
+          `.task[data-date="${date}"][data-index="${getIndex()}"]`
+        );
+
+        if(newEl){
+          taskElement = newEl;
+          updateButtonPosition();
+          keepTaskVisible();
+        }
+
       });
     }
 
@@ -1503,6 +1528,9 @@ function showReorderControls(taskElement, taskData, render){
   setTimeout(()=>{
     document.addEventListener("click", closeReorderMode, {once:true});
   },50);
+
+  updateButtonPosition();
+  keepTaskVisible();
 
 }
 
