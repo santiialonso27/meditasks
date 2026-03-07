@@ -841,7 +841,7 @@ function createDayColumn(date) {
 
             showTaskMobileMenu(el, t, render);
 
-          },1000);
+          },150);
 
         });
 
@@ -1282,6 +1282,8 @@ function showTaskMobileMenu(taskElement, taskData, render){
 
   document.body.appendChild(menu);
 
+  menu.addEventListener("touchstart", e => e.stopPropagation());
+
   // EDITAR
   menu.querySelector("#taskEditBtn").onclick = ()=>{
 
@@ -1338,9 +1340,15 @@ function showTaskMobileMenu(taskElement, taskData, render){
 
   // cerrar si tocás afuera
   setTimeout(()=>{
-    document.addEventListener("touchstart", ()=>{
-      menu.remove();
+
+    document.addEventListener("touchstart", (e)=>{
+
+      if(!menu.contains(e.target)){
+        menu.remove();
+      }
+
     },{once:true});
+
   },50);
 
 }
@@ -1390,11 +1398,15 @@ function showReorderControls(taskElement, taskData, render){
   document.body.appendChild(downBtn);
 
   const date = taskElement.dataset.date;
-  const index = parseInt(taskElement.dataset.index);
+
+  function getIndex(){
+    return parseInt(taskElement.dataset.index);
+  }
   const list = tasks[date];
 
   const firstDoneIndex = list.findIndex(t => t.done);
   const lastActiveIndex = firstDoneIndex === -1 ? list.length-1 : firstDoneIndex-1;
+  const index = getIndex();
 
   if(index === 0){
     upBtn.style.display = "none";
@@ -1407,6 +1419,8 @@ function showReorderControls(taskElement, taskData, render){
   upBtn.onclick = (e)=>{
 
     e.stopPropagation();
+
+    const index = getIndex();
 
     if(index > 0){
 
@@ -1424,6 +1438,8 @@ function showReorderControls(taskElement, taskData, render){
   downBtn.onclick = (e)=>{
 
     e.stopPropagation();
+
+    const index = getIndex();
 
     if(index < lastActiveIndex){
 
