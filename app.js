@@ -1250,7 +1250,7 @@ function showTaskMobileMenu(taskElement, taskData, render){
   if(existing) existing.remove();
 
   const rect = taskElement.getBoundingClientRect();
-
+  
   const menu = document.createElement("div");
   menu.id = "taskMobileMenu";
 
@@ -1355,13 +1355,15 @@ function showTaskMobileMenu(taskElement, taskData, render){
 
 function showReorderControls(taskElement, taskData, render){
 
+  taskElement.classList.add("reorder-active");
+
   const existing = document.getElementById("reorderControls");
   if(existing) existing.remove();
 
   const upBtn = document.createElement("div");
   const downBtn = document.createElement("div");
 
-  upBtn.id = "reorderControls";
+  upBtn.className = "reorder-btn up";
   upBtn.className = "reorder-btn up";
   downBtn.className = "reorder-btn down";
 
@@ -1408,6 +1410,40 @@ function showReorderControls(taskElement, taskData, render){
   const lastActiveIndex = firstDoneIndex === -1 ? list.length-1 : firstDoneIndex-1;
   const index = getIndex();
 
+  function updateButtonPosition(){
+
+    const rect = taskElement.getBoundingClientRect();
+
+    upBtn.style.left = rect.right - 30 + "px";
+    downBtn.style.left = rect.right - 30 + "px";
+
+    upBtn.style.top = rect.top - 10 + "px";
+    downBtn.style.top = rect.bottom - 10 + "px";
+
+  }
+
+  function keepTaskVisible(){
+
+    const rect = taskElement.getBoundingClientRect();
+
+    const margin = 120;
+
+    if(rect.top < margin){
+      window.scrollBy({
+        top:-150,
+        behavior:"smooth"
+      });
+    }
+
+    if(rect.bottom > window.innerHeight - margin){
+      window.scrollBy({
+        top:150,
+        behavior:"smooth"
+      });
+    }
+
+  }
+
   if(index === 0){
     upBtn.style.display = "none";
   }
@@ -1431,6 +1467,11 @@ function showReorderControls(taskElement, taskData, render){
       save();
       render();
       renderMiniCalendar();
+
+      requestAnimationFrame(()=>{
+        updateButtonPosition();
+        keepTaskVisible();
+      });
     }
 
   };
@@ -1450,6 +1491,11 @@ function showReorderControls(taskElement, taskData, render){
       save();
       render();
       renderMiniCalendar();
+
+      requestAnimationFrame(()=>{
+        updateButtonPosition();
+        keepTaskVisible();
+      });
     }
 
   };
@@ -1469,6 +1515,10 @@ function closeReorderMode(){
 
   const downs = document.querySelectorAll(".reorder-btn");
   downs.forEach(b => b.remove());
+
+  document
+    .querySelectorAll(".reorder-active")
+    .forEach(el => el.classList.remove("reorder-active"));
 
 }
 
