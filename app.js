@@ -893,6 +893,9 @@ function createDayColumn(date) {
 
       el.querySelector(".cb").onclick = () => {
 
+        if (el.classList.contains("processing")) return;
+        el.classList.add("processing");
+
         const cb = el.querySelector(".cb");
 
         const wasDone = t.done;
@@ -969,6 +972,8 @@ function createDayColumn(date) {
               save();
               render();
               renderMiniCalendar();
+              
+              el.classList.remove("processing");
 
             },delay);
 
@@ -982,6 +987,8 @@ function createDayColumn(date) {
           save();
           render();
           renderMiniCalendar();
+
+          el.classList.remove("processing");
         }
 
       };
