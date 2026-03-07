@@ -47,11 +47,6 @@ let lastCarryDate = null;
 let draggedElement = null;
 let currentTarget = null;
 let currentPosition = null;
-// LONG PRESS MOBILE
-let longPressTimer = null;
-let longPressTriggered = false;
-let touchStartX = 0;
-let touchStartY = 0;
 
 let player = JSON.parse(localStorage.getItem("mt_player")) || {
   exp: 0,
@@ -816,56 +811,9 @@ function createDayColumn(date) {
       `;
       const textDiv = el.querySelector(".ttext");
 
-      // LONG PRESS MOBILE
-      if(window.innerWidth <= 900){
-
-        el.addEventListener("touchstart", (e)=>{
-
-          touchStartX = e.touches[0].clientX;
-          touchStartY = e.touches[0].clientY;
-
-          longPressTriggered = false;
-
-          longPressTimer = setTimeout(()=>{
-
-            longPressTriggered = true;
-
-            if(navigator.vibrate){
-              navigator.vibrate(10);
-            }
-
-            showTaskMobileMenu(el, t, render);
-
-          },350);
-
-        });
-
-        el.addEventListener("touchend", (e)=>{
-
-          clearTimeout(longPressTimer);
-
-          if(longPressTriggered){
-            e.preventDefault();
-            e.stopPropagation();
-          }
-
-        });
-
-        el.addEventListener("touchmove", (e)=>{
-
-          const dx = Math.abs(e.touches[0].clientX - touchStartX);
-          const dy = Math.abs(e.touches[0].clientY - touchStartY);
-
-          if(dx > 10 || dy > 10){
-            clearTimeout(longPressTimer);
-            longPressTriggered = false;
-          }
-
-        });
-
-      }
-
+      // DESKTOP
       textDiv.addEventListener("dblclick", () => {
+
         const oldText = t.text;
 
         const input = document.createElement("input");
@@ -893,16 +841,37 @@ function createDayColumn(date) {
         }
 
         input.addEventListener("keydown", e => {
-          if (e.key === "Enter") {
-            saveEdit();
-          }
-          if (e.key === "Escape") {
-            cancelEdit();
-          }
+          if (e.key === "Enter") saveEdit();
+          if (e.key === "Escape") cancelEdit();
         });
 
         input.addEventListener("blur", saveEdit);
+
       });
+
+
+      // MOBILE DOUBLE TAP
+      el.addEventListener("touchend", (e) => {
+
+        const now = Date.now();
+
+        if(!el.dataset.lastTap){
+          el.dataset.lastTap = now;
+          return;
+        }
+
+        const delta = now - el.dataset.lastTap;
+        el.dataset.lastTap = now;
+
+        if(delta < 300){
+
+          e.preventDefault();
+          showTaskMobileMenu(el, t, render);
+
+        }
+
+      });
+
       el.addEventListener("dragstart", e => {
 
         draggedElement = el;
