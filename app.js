@@ -1463,10 +1463,7 @@ function showReorderControls(taskElement, taskData, render){
 
       const temp = list[index];
       list[index] = list[index-1];
-      list[index-1] = temp;
-
-      updateButtonPosition();  
-      keepTaskVisible();       
+      list[index-1] = temp;   
 
       save();
       render();
@@ -1474,9 +1471,8 @@ function showReorderControls(taskElement, taskData, render){
 
       requestAnimationFrame(()=>{
 
-        const newEl = document.querySelector(
-          `.task[data-date="${date}"][data-index="${getIndex()}"]`
-        );
+        const newEl = [...document.querySelectorAll(`.task[data-date="${date}"]`)]
+          .find(el => el.querySelector(".ttext")?.textContent === taskData.text);
 
         if(newEl){
           taskElement = newEl;
@@ -1499,10 +1495,7 @@ function showReorderControls(taskElement, taskData, render){
 
       const temp = list[index];
       list[index] = list[index+1];
-      list[index+1] = temp;
-
-      updateButtonPosition();  
-      keepTaskVisible();       
+      list[index+1] = temp;    
 
       save();
       render();
@@ -1510,9 +1503,8 @@ function showReorderControls(taskElement, taskData, render){
 
       requestAnimationFrame(()=>{
 
-        const newEl = document.querySelector(
-          `.task[data-date="${date}"][data-index="${getIndex()}"]`
-        );
+        const newEl = [...document.querySelectorAll(`.task[data-date="${date}"]`)]
+          .find(el => el.querySelector(".ttext")?.textContent === taskData.text);
 
         if(newEl){
           taskElement = newEl;
