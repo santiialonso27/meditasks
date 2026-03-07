@@ -979,7 +979,9 @@ function createDayColumn(date) {
           }
 
         }else{
+          save();
           render();
+          renderMiniCalendar();
         }
 
       };
