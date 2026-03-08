@@ -368,6 +368,12 @@
       background: #e9ecef;
     }
 
+    :root.light-mode #modeToggleMobile{
+      background:rgba(0,0,0,0.05);
+      border:1px solid rgba(0,0,0,0.08);
+      color:#111;
+    }
+
     /*FIN DE MODO CLARO*/
 
 
@@ -2297,6 +2303,9 @@
       display:flex;
       flex-direction:column;
       gap:8px;
+      overflow-x: auto;
+      overflow-y: auto;
+      max-height: 60vh;
     }
 
     .leaderboard-row{
@@ -2311,6 +2320,8 @@
       border:1px solid var(--border);
 
       transition:.15s;
+
+      min-width:390px;
     }
 
     .leaderboard-row:hover{
@@ -2577,6 +2588,60 @@
       pointer-events:none;
     }
 
+    .mode-toggle-mobile{
+      display:none;
+
+      width:100%;
+      margin-top:10px;
+
+      padding:12px;
+      border-radius:12px;
+
+      border:1px solid var(--border);
+      background:rgba(255,255,255,.04);
+      color:var(--text);
+
+      font-weight:600;
+      cursor:pointer;
+
+      transition:.2s ease;
+    }
+
+    .mode-toggle-mobile:hover{
+      background:rgba(255,255,255,.08);
+    }
+
+    #modeToggleMobile{
+      width:42px;
+      height:42px;
+      border-radius:12px;
+
+      display:flex;
+      align-items:center;
+      justify-content:center;
+
+      background:rgba(255,255,255,0.08);
+      
+
+      backdrop-filter:blur(10px);
+
+      font-size:18px;
+      cursor:pointer;
+
+      transition:all .15s ease;
+      color:white;
+    }
+
+    #modeToggleMobile:active{
+      transform:scale(.95);
+    }
+
+    #modeToggleMobile{
+      display:none;
+    }
+
+
+
 
 
 
@@ -2674,12 +2739,51 @@
       #greetingTitle span {
         display: block;
       }
+
       /*NO MOSTRAR EL BOTON DE CLARO/OSCURO*/
       #modeToggle{
           display:none;
-        }
+      }
 
+      .mode-toggle-mobile{
+          display:block;
+      }
+
+      #modeToggleMobile{
+        display:flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #modeToggleMobile{
+          display:flex;
+
+          width:42px;
+          height:42px;
+          border-radius:12px;
+
+          align-items:center;
+          justify-content:center;
+
+          background:rgba(255,255,255,0.08);
+          border:1px solid rgba(255,255,255,0.12);
+
+          backdrop-filter:blur(10px);
+
+          font-size:18px;
+          cursor:pointer;
+
+          transition:all .15s ease;
     }
+
+    #modeIconMobile svg{
+      width:20px;
+      height:20px;
+      display:block;
+    }
+
+
+
 
     /*CELULAR CIERRE*/
 
@@ -2700,7 +2804,7 @@
         </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
-          <span class="version">v1.3</span>
+          <span class="version">v1.4</span>
         </div>
       </div>
 
@@ -2733,10 +2837,15 @@
       <h3>INFORMACIÓN</h3>
       <div class="muted" id="statusText">Cargando…</div>
     </div>
+
+    <button id="modeToggleMobile">
+      <span id="modeIconMobile"></span>
+    </button>
+
     <div class="panel">
       <h3 class="changelog-title">
         NOTAS DE VERSIÓN
-        <span class="changelog-version">v1.3</span>
+        <span class="changelog-version">v1.4</span>
       </h3>
       <div class="muted changelog">
         <ul>
