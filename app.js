@@ -48,6 +48,8 @@ let draggedElement = null;
 let currentTarget = null;
 let currentPosition = null;
 
+const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
 let player = JSON.parse(localStorage.getItem("mt_player")) || {
   exp: 0,
   level: 0,
@@ -746,7 +748,7 @@ function createDayColumn(date) {
     tasks[iso].forEach((t, i) => {
       const el = document.createElement("div");
       el.className = "task" + (t.done ? " done" : "");
-      el.draggable = true;
+      el.draggable = !isTouchDevice;
       //FUNCION DE DROP//
       el.addEventListener("drop", e => {
         e.preventDefault();
@@ -914,6 +916,71 @@ function createDayColumn(date) {
         draggedElement = null;
         removeIndicator();
       });
+
+      if (isTouchDevice) {
+
+        let startY = 0;
+
+        el.addEventListener("touchstart", (e) => {
+
+          e.stopPropagation();
+
+          startY = e.touches[0].clientY;
+          draggedElement = el;
+
+          el.classList.add("dragging-touch");
+
+        });
+
+        el.addEventListener("touchmove", (e) => {
+
+          e.preventDefault();
+
+          if (!draggedElement) return;
+
+          const touch = e.touches[0];
+          const y = touch.clientY;
+
+          const elementBelow = document.elementFromPoint(touch.clientX, y);
+
+          const taskBelow = elementBelow?.closest(".task");
+
+          if (taskBelow && taskBelow !== draggedElement) {
+
+            const rect = taskBelow.getBoundingClientRect();
+            const percent = (y - rect.top) / rect.height;
+
+            if (percent < 0.5) {
+              showIndicator(taskBelow, "before");
+            } else {
+              showIndicator(taskBelow, "after");
+            }
+
+          }
+
+        });
+
+        el.addEventListener("touchend", () => {
+
+          const indicator = list.querySelector(".drop-indicator");
+
+          if (indicator && draggedElement) {
+            indicator.parentNode.insertBefore(draggedElement, indicator);
+          }
+
+          draggedElement?.classList.remove("dragging-touch");
+
+          if (draggedElement) {
+            draggedElement.style.opacity = "";
+          }
+
+          draggedElement = null;
+
+          removeIndicator();
+          save();
+        });
+
+      }
 
       el.querySelector(".icon.danger").onclick = () => {
 
