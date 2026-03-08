@@ -621,21 +621,22 @@ function createDayColumn(date) {
     const movedTask = originList[data.index];
     if (!movedTask) return;
 
-    originList.splice(data.index, 1);
-
     // 🔥 usar el indicator SIEMPRE
     const indicator = list.querySelector(".drop-indicator");
+
+    // 🔒 evitar drop sin preview
+    if (!indicator) {
+      if (draggedElement) draggedElement.style.opacity = "";
+      return;
+    }
+
+    originList.splice(data.index, 1);
 
     let insertIndex = tasks[iso].length;
 
     if (indicator) {
       const children = Array.from(list.children);
       insertIndex = children.indexOf(indicator);
-    }
-
-    // 🔥 ajuste cuando se mueve dentro de la misma lista
-    if (data.fromDate === iso && data.index < insertIndex) {
-      insertIndex--;
     }
 
     // 🔥 AJUSTE CLAVE
@@ -769,11 +770,17 @@ function createDayColumn(date) {
         const movedTask = originList[data.index];
         if (!movedTask) return;
 
-        // eliminar del origen
-        originList.splice(data.index, 1);
-
         // 🔥 buscar la posición REAL del indicator en el DOM
         const indicator = list.querySelector(".drop-indicator");
+
+        // 🔒 Si no hay indicator → cancelar drop
+        if (!indicator) {
+          if (draggedElement) draggedElement.style.opacity = "";
+          return;
+        }
+
+        // eliminar del origen
+        originList.splice(data.index, 1);
 
         let insertIndex = tasks[iso].length;
 
