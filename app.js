@@ -640,7 +640,7 @@ function createDayColumn(date) {
 
     if (indicator && draggedElement) {
       list.insertBefore(draggedElement, indicator);
-      draggedElement.style.display = "";
+      draggedElement.style.opacity = "";
     }
 
     removeIndicator();
@@ -656,7 +656,7 @@ function createDayColumn(date) {
 
   function showIndicator(targetElement, position = "after") {
 
-    // si ya está en el mismo lugar → no recalcular
+    // si ya estamos en el mismo target y misma posición → no hacer nada
     if (currentTarget === targetElement && currentPosition === position) {
       return;
     }
@@ -664,20 +664,32 @@ function createDayColumn(date) {
     currentTarget = targetElement;
     currentPosition = position;
 
-    removeIndicator(false);
+    const parent = targetElement.parentNode;
 
-    if(position === "before"){
-      if (dropIndicator.previousSibling === targetElement) return;
-      targetElement.insertAdjacentElement("beforebegin", dropIndicator);
+    if (position === "before") {
+
+      if (dropIndicator.parentNode === parent &&
+          dropIndicator.nextSibling === targetElement) {
+        return;
+      }
+
+      removeIndicator(false);
+      parent.insertBefore(dropIndicator, targetElement);
+
     } else {
-      if (dropIndicator.nextSibling === targetElement) return;
-      targetElement.insertAdjacentElement("afterend", dropIndicator);
+
+      if (dropIndicator.parentNode === parent &&
+          targetElement.nextSibling === dropIndicator) {
+        return;
+      }
+
+      removeIndicator(false);
+      parent.insertBefore(dropIndicator, targetElement.nextSibling);
     }
 
-    requestAnimationFrame(()=>{
+    requestAnimationFrame(() => {
       dropIndicator.classList.add("active");
     });
-
   }
 
   function showIndicatorAtEnd(){
@@ -767,7 +779,7 @@ function createDayColumn(date) {
 
         if (indicator && draggedElement) {
           list.insertBefore(draggedElement, indicator);
-          draggedElement.style.display = "";
+          draggedElement.style.opacity = "";
         }
 
         removeIndicator();
@@ -888,7 +900,7 @@ function createDayColumn(date) {
 
         // 🔥 ocultar visualmente la tarea original
         setTimeout(() => {
-          el.style.display = "none";
+          el.style.opacity = "0";
         }, 0);
 
       });
@@ -896,7 +908,7 @@ function createDayColumn(date) {
       el.addEventListener("dragend", () => {
 
         if (draggedElement) {
-          draggedElement.style.display = "";
+          draggedElement.style.opacity = "";
         }
 
         draggedElement = null;
