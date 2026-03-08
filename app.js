@@ -588,7 +588,6 @@ function createDayColumn(date) {
   `;
 
   const list = col.querySelector(".list");
-  list.dataset.date = iso;
 
   // DRAG OVER LIST
   list.addEventListener("dragover", e => {
@@ -955,77 +954,27 @@ function createDayColumn(date) {
 
       if (isTouchDevice) {
 
+        let startY = 0;
+
         el.addEventListener("touchstart", (e) => {
-
-          const rect = el.getBoundingClientRect();
-          const touch = e.touches[0];
-
-          el._dragOffsetX = touch.clientX - rect.left;
-          el._dragOffsetY = touch.clientY - rect.top;
 
           e.stopPropagation();
 
+          startY = e.touches[0].clientY;
           draggedElement = el;
 
-          el._startX = e.touches[0].clientX;
-          el._startY = e.touches[0].clientY;
-
-          el._dragStarted = false;
+          el.classList.add("dragging-touch");
 
         });
 
         el.addEventListener("touchmove", (e) => {
 
-          if (draggedElement._dragStarted) e.preventDefault();
+          e.preventDefault();
 
           if (!draggedElement) return;
 
           const touch = e.touches[0];
-          const x = touch.clientX;
           const y = touch.clientY;
-
-          if (!draggedElement._dragStarted) {
-
-            const dx = Math.abs(x - draggedElement._startX);
-            const dy = Math.abs(y - draggedElement._startY);
-
-            if (dx < 8 && dy < 8) return;
-
-            draggedElement._dragStarted = true;
-
-            const rect = draggedElement.getBoundingClientRect();
-            draggedElement._dragOffsetX = x - rect.left;
-            draggedElement._dragOffsetY = y - rect.top;
-
-            draggedElement.style.left = (x - draggedElement._dragOffsetX) + "px";
-            draggedElement.style.top = (y - draggedElement._dragOffsetY) + "px";
-
-            draggedElement.classList.add("dragging-touch");
-            draggedElement.style.position = "fixed";
-            draggedElement.style.zIndex = "9999";
-            draggedElement.style.pointerEvents = "none";
-            draggedElement.style.width = draggedElement.offsetWidth + "px";
-
-          }
-
-          if (!draggedElement._raf) {
-            draggedElement._raf = requestAnimationFrame(() => {
-
-              if (!draggedElement._raf) {
-                draggedElement._raf = requestAnimationFrame(() => {
-
-                  draggedElement.style.left = (x - draggedElement._dragOffsetX) + "px";
-                  draggedElement.style.top = (y - draggedElement._dragOffsetY) + "px";
-
-                  draggedElement._raf = null;
-
-                });
-              }
-
-              draggedElement._raf = null;
-
-            });
-          }
 
           const elementBelow = document.elementFromPoint(touch.clientX, y);
 
@@ -1036,84 +985,25 @@ function createDayColumn(date) {
             const rect = taskBelow.getBoundingClientRect();
             const percent = (y - rect.top) / rect.height;
 
-            const targetIndex = parseInt(taskBelow.dataset.index);
-
             if (percent < 0.5) {
-              previewInsertIndex = targetIndex;
               showIndicator(taskBelow, "before");
             } else {
-              previewInsertIndex = targetIndex + 1;
               showIndicator(taskBelow, "after");
             }
 
-          }else {
-            const listBelow = elementBelow?.closest(".list");
-            if (listBelow) {
-              previewInsertIndex = listBelow.querySelectorAll(".task").length;
-                showIndicatorAtEnd();
-            }
           }
 
         });
 
         el.addEventListener("touchend", () => {
 
-          const indicator = document.querySelector(".drop-indicator");
+          const indicator = list.querySelector(".drop-indicator");
 
           if (indicator && draggedElement) {
-
-            const targetList = indicator.closest(".list");
-            const targetDate = targetList.dataset.date;
-
-            const fromDate = draggedElement.dataset.date;
-            const fromIndex = parseInt(draggedElement.dataset.index);
-
-            if (tasks[fromDate]) {
-
-              const task = tasks[fromDate][fromIndex];
-
-              if (task) {
-
-                // sacar del origen
-                tasks[fromDate].splice(fromIndex,1);
-
-                // crear lista destino si no existe
-                if (!tasks[targetDate]) {
-                  tasks[targetDate] = [];
-                }
-
-                let insertIndex = previewInsertIndex;
-
-                if (insertIndex === null) {
-                  insertIndex = tasks[targetDate].length;
-                }
-
-                // 🔥 ajuste cuando se mueve dentro del mismo día
-                if (fromDate === targetDate && fromIndex < insertIndex) {
-                  insertIndex--;
-                }
-
-                tasks[targetDate].splice(insertIndex, 0, task);
-
-              }
-
-            }
-
+            indicator.parentNode.insertBefore(draggedElement, indicator);
           }
 
           draggedElement?.classList.remove("dragging-touch");
-
-          if (draggedElement) {
-            draggedElement.style.position = "";
-            draggedElement.style.left = "";
-            draggedElement.style.top = "";
-            draggedElement.style.zIndex = "";
-            draggedElement.style.pointerEvents = "";
-            draggedElement.style.width = "";
-            draggedElement._raf = null;
-            draggedElement._dragOffsetX = null;
-            draggedElement._dragOffsetY = null;
-          }
 
           if (draggedElement) {
             draggedElement.style.opacity = "";
@@ -1121,12 +1011,8 @@ function createDayColumn(date) {
 
           draggedElement = null;
 
-          previewInsertIndex = null;
-
           removeIndicator();
           save();
-          init();
-
         });
 
       }
