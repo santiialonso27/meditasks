@@ -752,6 +752,7 @@ function createDayColumn(date) {
     list.innerHTML = "";
     tasks[iso] = tasks[iso].filter(Boolean);
     tasks[iso].forEach((t, i) => {
+      if (t.expGiven === undefined) t.expGiven = false;
       const el = document.createElement("div");
       el.className = "task" + (t.done ? " done" : "");
       el.draggable = !isTouchDevice;
