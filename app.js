@@ -967,17 +967,16 @@ function createDayColumn(date) {
 
           draggedElement = el;
 
-          el.classList.add("dragging-touch");
-          el.style.position = "fixed";
-          el.style.zIndex = "9999";
-          el.style.pointerEvents = "none";
-          el.style.width = el.offsetWidth + "px";
+          el._startX = e.touches[0].clientX;
+          el._startY = e.touches[0].clientY;
+
+          el._dragStarted = false;
 
         });
 
         el.addEventListener("touchmove", (e) => {
 
-          e.preventDefault();
+          if (draggedElement._dragStarted) e.preventDefault();
 
           if (!draggedElement) return;
 
@@ -985,11 +984,43 @@ function createDayColumn(date) {
           const x = touch.clientX;
           const y = touch.clientY;
 
+          if (!draggedElement._dragStarted) {
+
+            const dx = Math.abs(x - draggedElement._startX);
+            const dy = Math.abs(y - draggedElement._startY);
+
+            if (dx < 8 && dy < 8) return;
+
+            draggedElement._dragStarted = true;
+
+            const rect = draggedElement.getBoundingClientRect();
+            draggedElement._dragOffsetX = x - rect.left;
+            draggedElement._dragOffsetY = y - rect.top;
+
+            draggedElement.style.left = (x - draggedElement._dragOffsetX) + "px";
+            draggedElement.style.top = (y - draggedElement._dragOffsetY) + "px";
+
+            draggedElement.classList.add("dragging-touch");
+            draggedElement.style.position = "fixed";
+            draggedElement.style.zIndex = "9999";
+            draggedElement.style.pointerEvents = "none";
+            draggedElement.style.width = draggedElement.offsetWidth + "px";
+
+          }
+
           if (!draggedElement._raf) {
             draggedElement._raf = requestAnimationFrame(() => {
 
-              draggedElement.style.left = (x - draggedElement._dragOffsetX) + "px";
-              draggedElement.style.top = (y - draggedElement._dragOffsetY) + "px";
+              if (!draggedElement._raf) {
+                draggedElement._raf = requestAnimationFrame(() => {
+
+                  draggedElement.style.left = (x - draggedElement._dragOffsetX) + "px";
+                  draggedElement.style.top = (y - draggedElement._dragOffsetY) + "px";
+
+                  draggedElement._raf = null;
+
+                });
+              }
 
               draggedElement._raf = null;
 
