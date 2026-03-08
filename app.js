@@ -955,16 +955,17 @@ function createDayColumn(date) {
 
       if (isTouchDevice) {
 
-        let startY = 0;
-
         el.addEventListener("touchstart", (e) => {
 
           e.stopPropagation();
-
-          startY = e.touches[0].clientY;
+          
           draggedElement = el;
 
           el.classList.add("dragging-touch");
+          el.style.position = "fixed";
+          el.style.zIndex = "9999";
+          el.style.pointerEvents = "none";
+          el.style.width = el.offsetWidth + "px";
 
         });
 
@@ -975,7 +976,19 @@ function createDayColumn(date) {
           if (!draggedElement) return;
 
           const touch = e.touches[0];
+          const x = touch.clientX;
           const y = touch.clientY;
+
+          if (!draggedElement._raf) {
+            draggedElement._raf = requestAnimationFrame(() => {
+
+              draggedElement.style.left = (x - draggedElement.offsetWidth/2) + "px";
+              draggedElement.style.top = (y - draggedElement.offsetHeight/2) + "px";
+
+              draggedElement._raf = null;
+
+            });
+          }
 
           const elementBelow = document.elementFromPoint(touch.clientX, y);
 
@@ -1012,7 +1025,7 @@ function createDayColumn(date) {
 
           if (indicator && draggedElement) {
 
-            const targetList = indicator.parentNode;
+            const targetList = indicator.closest(".list");
             const targetDate = targetList.dataset.date;
 
             const fromDate = draggedElement.dataset.date;
@@ -1052,6 +1065,16 @@ function createDayColumn(date) {
           }
 
           draggedElement?.classList.remove("dragging-touch");
+
+          if (draggedElement) {
+            draggedElement.style.position = "";
+            draggedElement.style.left = "";
+            draggedElement.style.top = "";
+            draggedElement.style.zIndex = "";
+            draggedElement.style.pointerEvents = "";
+            draggedElement.style.width = "";
+            draggedElement._raf = null;
+          }
 
           if (draggedElement) {
             draggedElement.style.opacity = "";
