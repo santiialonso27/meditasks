@@ -1089,7 +1089,7 @@ function createDayColumn(date) {
 
         }
 
-        el.classList.toggle("done", t.done);
+        t.done ? el.classList.add("done") : el.classList.remove("done");
 
 
         if (!wasDone && t.done) {
@@ -1113,8 +1113,6 @@ function createDayColumn(date) {
               save();
               render();
               renderMiniCalendar();
-              
-              el.classList.remove("processing");
 
             },delay);
 
@@ -1128,8 +1126,6 @@ function createDayColumn(date) {
           save();
           render();
           renderMiniCalendar();
-
-          el.classList.remove("processing");
         }
 
       };
