@@ -808,8 +808,20 @@ function createDayColumn(date) {
         const draggedIndex = parseInt(draggedElement.dataset.index);
         const targetIndex = parseInt(el.dataset.index);
 
-        // 🔥 evitar preview inútil (mismo lugar)
-        if (targetIndex === draggedIndex + 1 && percent < DEAD_ZONE_TOP) {
+        let insertIndex = targetIndex;
+
+        if (percent > DEAD_ZONE_BOTTOM) {
+          insertIndex = targetIndex + 1;
+        }
+
+        // 🔥 ajuste cuando se mueve dentro de la misma lista
+        if (draggedElement.dataset.date === el.dataset.date && draggedIndex < insertIndex) {
+          insertIndex--;
+        }
+
+        // 🔥 si no cambia posición → no mostrar preview
+        if (insertIndex === draggedIndex) {
+          removeIndicator();
           return;
         }
 
