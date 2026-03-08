@@ -633,6 +633,11 @@ function createDayColumn(date) {
       insertIndex = children.indexOf(indicator);
     }
 
+    // 🔥 ajuste cuando se mueve dentro de la misma lista
+    if (data.fromDate === iso && data.index < insertIndex) {
+      insertIndex--;
+    }
+
     // 🔥 AJUSTE CLAVE
     if (data.fromDate === iso && data.index < insertIndex) {
       insertIndex--;
