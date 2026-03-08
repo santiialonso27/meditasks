@@ -912,7 +912,22 @@
       -webkit-touch-callout: none;
       }
     }
-    .task.done .ttext{ text-decoration: line-through; color:var(--muted); opacity:.95; }
+
+    .task.done .ttext{ 
+      text-decoration: line-through; 
+      color:var(--muted); 
+      opacity:.95; 
+    }
+
+    .task.done .ttext{
+      text-decoration: line-through;
+      opacity: 0.55;
+    }
+
+    .task.done{
+      filter: grayscale(.15);
+    }
+
     .tmeta{ font-size:12px; color:var(--muted); }
 
     .drop-indicator{
