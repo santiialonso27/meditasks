@@ -47,6 +47,7 @@ let lastCarryDate = null;
 let draggedElement = null;
 let currentTarget = null;
 let currentPosition = null;
+let previewInsertIndex = null;
 
 const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
@@ -632,11 +633,10 @@ function createDayColumn(date) {
 
     originList.splice(data.index, 1);
 
-    let insertIndex = tasks[iso].length;
+    let insertIndex = previewInsertIndex;
 
-    if (indicator) {
-      const children = Array.from(list.children);
-      insertIndex = children.indexOf(indicator);
+    if (insertIndex === null) {
+      insertIndex = tasks[iso].length;
     }
 
     // 🔥 AJUSTE CLAVE
@@ -782,11 +782,10 @@ function createDayColumn(date) {
         // eliminar del origen
         originList.splice(data.index, 1);
 
-        let insertIndex = tasks[iso].length;
+        let insertIndex = previewInsertIndex;
 
-        if (indicator) {
-          const children = Array.from(list.children);
-          insertIndex = children.indexOf(indicator);
+        if (insertIndex === null) {
+          insertIndex = tasks[iso].length;
         }
 
         tasks[iso].splice(insertIndex, 0, movedTask);
@@ -838,9 +837,11 @@ function createDayColumn(date) {
         }
 
         if (percent < DEAD_ZONE_TOP) {
+          previewInsertIndex = targetIndex;
           showIndicator(el, "before");
         } 
         else if (percent > DEAD_ZONE_BOTTOM) {
+          previewInsertIndex = targetIndex + 1;
           showIndicator(el, "after");
         }
       });
@@ -944,6 +945,9 @@ function createDayColumn(date) {
         }
 
         draggedElement = null;
+
+        previewInsertIndex = null;
+
         removeIndicator();
       });
 
