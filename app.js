@@ -782,18 +782,23 @@ function createDayColumn(date) {
       el.addEventListener("dragover", e => {
         e.preventDefault();
 
-        // 🔥 NO permitir interactuar con la misma tarea
         if (el === draggedElement) return;
 
         const rect = el.getBoundingClientRect();
         const offset = e.clientY - rect.top;
-        const middle = rect.height / 2;
+        const percent = offset / rect.height;
 
-        if(offset < middle){
+        // 🔥 zona muerta estilo Trello / Notion
+        const DEAD_ZONE_TOP = 0.4;
+        const DEAD_ZONE_BOTTOM = 0.6;
+
+        if (percent < DEAD_ZONE_TOP) {
           showIndicator(el, "before");
-        } else {
+        } 
+        else if (percent > DEAD_ZONE_BOTTOM) {
           showIndicator(el, "after");
         }
+        // entre 40% y 60% → no cambia nada (evita titileo)
       });
 
       el.dataset.index = i;
