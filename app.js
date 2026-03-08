@@ -957,8 +957,14 @@ function createDayColumn(date) {
 
         el.addEventListener("touchstart", (e) => {
 
+          const rect = el.getBoundingClientRect();
+          const touch = e.touches[0];
+
+          el._dragOffsetX = touch.clientX - rect.left;
+          el._dragOffsetY = touch.clientY - rect.top;
+
           e.stopPropagation();
-          
+
           draggedElement = el;
 
           el.classList.add("dragging-touch");
@@ -982,8 +988,8 @@ function createDayColumn(date) {
           if (!draggedElement._raf) {
             draggedElement._raf = requestAnimationFrame(() => {
 
-              draggedElement.style.left = (x - draggedElement.offsetWidth/2) + "px";
-              draggedElement.style.top = (y - draggedElement.offsetHeight/2) + "px";
+              draggedElement.style.left = (x - draggedElement._dragOffsetX) + "px";
+              draggedElement.style.top = (y - draggedElement._dragOffsetY) + "px";
 
               draggedElement._raf = null;
 
@@ -1074,6 +1080,8 @@ function createDayColumn(date) {
             draggedElement.style.pointerEvents = "";
             draggedElement.style.width = "";
             draggedElement._raf = null;
+            draggedElement._dragOffsetX = null;
+            draggedElement._dragOffsetY = null;
           }
 
           if (draggedElement) {
