@@ -802,9 +802,16 @@ function createDayColumn(date) {
         const offset = e.clientY - rect.top;
         const percent = offset / rect.height;
 
-        // 🔥 zona muerta estilo Trello / Notion
         const DEAD_ZONE_TOP = 0.4;
         const DEAD_ZONE_BOTTOM = 0.6;
+
+        const draggedIndex = parseInt(draggedElement.dataset.index);
+        const targetIndex = parseInt(el.dataset.index);
+
+        // 🔥 evitar preview inútil (mismo lugar)
+        if (targetIndex === draggedIndex + 1 && percent < DEAD_ZONE_TOP) {
+          return;
+        }
 
         if (percent < DEAD_ZONE_TOP) {
           showIndicator(el, "before");
@@ -812,7 +819,6 @@ function createDayColumn(date) {
         else if (percent > DEAD_ZONE_BOTTOM) {
           showIndicator(el, "after");
         }
-        // entre 40% y 60% → no cambia nada (evita titileo)
       });
 
       el.dataset.index = i;
