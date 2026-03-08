@@ -588,6 +588,7 @@ function createDayColumn(date) {
   `;
 
   const list = col.querySelector(".list");
+  list.dataset.date = iso;
 
   // DRAG OVER LIST
   list.addEventListener("dragover", e => {
@@ -985,22 +986,69 @@ function createDayColumn(date) {
             const rect = taskBelow.getBoundingClientRect();
             const percent = (y - rect.top) / rect.height;
 
+            const targetIndex = parseInt(taskBelow.dataset.index);
+
             if (percent < 0.5) {
+              previewInsertIndex = targetIndex;
               showIndicator(taskBelow, "before");
             } else {
+              previewInsertIndex = targetIndex + 1;
               showIndicator(taskBelow, "after");
             }
 
+          }else {
+            const listBelow = elementBelow?.closest(".list");
+            if (listBelow) {
+              previewInsertIndex = listBelow.querySelectorAll(".task").length;
+                showIndicatorAtEnd();
+            }
           }
 
         });
 
         el.addEventListener("touchend", () => {
 
-          const indicator = list.querySelector(".drop-indicator");
+          const indicator = document.querySelector(".drop-indicator");
 
           if (indicator && draggedElement) {
-            indicator.parentNode.insertBefore(draggedElement, indicator);
+
+            const targetList = indicator.parentNode;
+            const targetDate = targetList.dataset.date;
+
+            const fromDate = draggedElement.dataset.date;
+            const fromIndex = parseInt(draggedElement.dataset.index);
+
+            if (tasks[fromDate]) {
+
+              const task = tasks[fromDate][fromIndex];
+
+              if (task) {
+
+                // sacar del origen
+                tasks[fromDate].splice(fromIndex,1);
+
+                // crear lista destino si no existe
+                if (!tasks[targetDate]) {
+                  tasks[targetDate] = [];
+                }
+
+                let insertIndex = previewInsertIndex;
+
+                if (insertIndex === null) {
+                  insertIndex = tasks[targetDate].length;
+                }
+
+                // 🔥 ajuste cuando se mueve dentro del mismo día
+                if (fromDate === targetDate && fromIndex < insertIndex) {
+                  insertIndex--;
+                }
+
+                tasks[targetDate].splice(insertIndex, 0, task);
+
+              }
+
+            }
+
           }
 
           draggedElement?.classList.remove("dragging-touch");
@@ -1011,8 +1059,12 @@ function createDayColumn(date) {
 
           draggedElement = null;
 
+          previewInsertIndex = null;
+
           removeIndicator();
           save();
+          init();
+
         });
 
       }
