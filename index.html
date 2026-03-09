@@ -2661,9 +2661,7 @@
     }
 
     .project-col{
-      min-width:260px;
-      max-width:260px;
-      flex-shrink:0;
+      flex:1 1 320px;
     }
 
     .projects-container::-webkit-scrollbar{
@@ -2917,6 +2915,18 @@
       width:20px;
       height:20px;
       display:block;
+    }
+
+    .projects-container{
+      display:flex;
+      flex-direction:column;
+
+      gap:20px;
+      padding:20px;
+    }
+
+    .project-col{
+      width:100%;
     }
 
 
