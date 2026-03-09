@@ -854,11 +854,9 @@
 
     .list{
       padding:12px;
-      overflow:auto;
       display:flex;
       flex-direction:column;
       gap:10px;
-      flex:1;
     }
 
     .task{
@@ -2662,6 +2660,18 @@
 
     .project-col{
       flex:1 1 320px;
+      height: auto;
+    }
+
+    .project-col .list{
+      overflow:visible;
+      flex:none;
+      max-height: none;
+    }
+
+    .project-col,
+    .day-col{
+      height:auto;
     }
 
     .projects-container::-webkit-scrollbar{
@@ -2774,6 +2784,10 @@
 
       z-index:1;
     }
+
+
+
+
 
 
 
@@ -2909,26 +2923,29 @@
           cursor:pointer;
 
           transition:all .15s ease;
-    }
+      }
 
-    #modeIconMobile svg{
-      width:20px;
-      height:20px;
-      display:block;
-    }
+      #modeIconMobile svg{
+        width:20px;
+        height:20px;
+        display:block;
+      }
 
-    .projects-container{
-      display:flex;
-      flex-direction:column;
+      .projects-container{
+        display:block;
+        padding:20px;
+      }
 
-      gap:20px;
-      padding:20px;
-    }
+      .projects-container .col{
+        width:100%;
+        min-width:0;
+        margin-bottom:20px;
+      }
 
-    .project-col{
-      width:100%;
-    }
-
+      .project-add-card{
+          width:100%;
+          max-width:100%;
+      }
 
 
 
