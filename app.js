@@ -170,6 +170,11 @@ onAuthStateChanged(auth, async (user) => {
       if (snapshot.exists()) {
         const data = snapshot.data();
         tasks = data.tasks || {};
+        projects = data.projects || {};
+        if (data.viewMode) {
+          currentViewMode = data.viewMode;
+          localStorage.setItem("mt_view_mode", currentViewMode);
+        }
 
         if (data.player) {
           player = data.player;
@@ -459,7 +464,61 @@ settingsBtn.addEventListener("click", (e) => {
 const DAYS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
 const storeKey = "meditasks_tasks";
 
-let tasks = JSON.parse(localStorage.getItem(storeKey)) || {};
+const savedData = JSON.parse(localStorage.getItem(storeKey)) || {};
+
+let tasks = savedData.tasks || {};
+let projects = savedData.projects || {};
+
+let currentViewMode = localStorage.getItem("mt_view_mode") || "tasks"; // tasks | projects
+
+const tasksViewBtn = document.getElementById("tasksViewBtn");
+const projectsViewBtn = document.getElementById("projectsViewBtn");
+
+function updateViewButtons(){
+
+  if(!tasksViewBtn || !projectsViewBtn) return;
+
+  const bubble = document.getElementById("toggleBubble");
+
+  if(currentViewMode === "tasks"){
+
+    tasksViewBtn.classList.add("active");
+    projectsViewBtn.classList.remove("active");
+
+    if(bubble) bubble.style.transform = "translateX(0%)";
+
+  }else{
+
+    tasksViewBtn.classList.remove("active");
+    projectsViewBtn.classList.add("active");
+
+    if(bubble) bubble.style.transform = "translateX(100%)";
+
+  }
+
+}
+
+if(tasksViewBtn){
+  tasksViewBtn.onclick = ()=>{
+
+    currentViewMode = "tasks";
+    localStorage.setItem("mt_view_mode", currentViewMode);
+
+    updateViewButtons();
+    init();
+  };
+}
+
+if(projectsViewBtn){
+  projectsViewBtn.onclick = ()=>{
+
+    currentViewMode = "projects";
+    localStorage.setItem("mt_view_mode", currentViewMode);
+
+    updateViewButtons();
+    init();
+  };
+}
 
 let soundEnabled = JSON.parse(localStorage.getItem("soundEnabled"));
 if (soundEnabled === null) soundEnabled = true;
@@ -469,7 +528,11 @@ async function save() {
   if (currentUser) {
     await setDoc(
       doc(db, "users", currentUser.uid),
-      { tasks },
+      { 
+        tasks,
+        projects,
+        viewMode: currentViewMode
+      },
       { merge: true }
     );
 
@@ -485,7 +548,10 @@ async function save() {
     );
 
   } else {
-    localStorage.setItem(storeKey, JSON.stringify(tasks));
+    localStorage.setItem(storeKey, JSON.stringify({
+      tasks,
+      projects
+    }));
   }
 
 }
@@ -548,14 +614,37 @@ function showExpGain(cbElement, amount = 100){
 
 }
 
-function createDayColumn(date) {
-  const dayIndex = date.getDay();
-  const iso = formatLocalDate(date);
-  if (!tasks[iso]) tasks[iso] = [];
+function isToday(d) {
+  if (!d) return false;
+  const t = new Date();
+  return d.toDateString() === t.toDateString();
+}
+
+function createDayColumn(date, externalTasks = null, projectId = null) {
+  const dayIndex = date ? date.getDay() : null;
+  const iso = date ? formatLocalDate(date) : undefined;
+
+  const isProject = projectId !== null;
+  let dayTasks;
+
+  if (isProject) {
+
+    if (!projects[projectId].tasks) {
+      projects[projectId].tasks = [];
+    }
+
+    dayTasks = projects[projectId].tasks;
+
+  } else {
+
+    if (!tasks[iso]) tasks[iso] = [];
+    dayTasks = tasks[iso];
+
+  }
 
   const col = document.createElement("div");
   col.className = "col";
-  if (isToday(date)) {
+  if (date && isToday(date)) {
     col.classList.add("today-highlight");
   } else {
     col.classList.add("not-today");
@@ -565,7 +654,7 @@ function createDayColumn(date) {
     <div class="col-head">
       <div>
         <div class="col-title">${DAYS[dayIndex]}</div>
-        <div class="col-sub">${date.toLocaleDateString()}</div>
+        <div class="col-sub">${date ? date.toLocaleDateString() : ""}</div>
 
         <div class="progress-wrapper">
           <div class="progress">
@@ -575,7 +664,7 @@ function createDayColumn(date) {
         </div>
       </div>
 
-      ${isToday(date) ? `
+      ${date && isToday(date) ? `
         <span class="pill today">Hoy</span>
       ` : ""}
     </div>
@@ -616,9 +705,19 @@ function createDayColumn(date) {
     if (!raw) return;
 
     const data = JSON.parse(raw);
-    if (!tasks[data.fromDate]) return;
+    let originList;
 
-    const originList = tasks[data.fromDate];
+    if (data.fromProject) {
+
+      if(!projects[data.fromProject]) return;
+      originList = projects[data.fromProject].tasks;
+
+    }else{
+
+      if (!tasks[data.fromDate]) return;
+      originList = tasks[data.fromDate];
+
+    }
     const movedTask = originList[data.index];
     if (!movedTask) return;
 
@@ -636,15 +735,18 @@ function createDayColumn(date) {
     let insertIndex = previewInsertIndex;
 
     if (insertIndex === null) {
-      insertIndex = tasks[iso].length;
+      insertIndex = dayTasks.length;
     }
 
-    // 🔥 AJUSTE CLAVE
-    if (data.fromDate === iso && data.index < insertIndex) {
+    
+    if (
+      (!isProject && data.fromDate === iso && data.index < insertIndex) ||
+      (isProject && data.fromProject === projectId && data.index < insertIndex)
+    ) {
       insertIndex--;
     }
 
-    tasks[iso].splice(insertIndex, 0, movedTask);
+    dayTasks.splice(insertIndex, 0, movedTask);
 
     if (indicator && draggedElement) {
       list.insertBefore(draggedElement, indicator);
@@ -750,12 +852,23 @@ function createDayColumn(date) {
 
   function render() {
     list.innerHTML = "";
-    tasks[iso] = tasks[iso].filter(Boolean);
-    tasks[iso].forEach((t, i) => {
+    for (let i = dayTasks.length - 1; i >= 0; i--) {
+      if (!dayTasks[i]) dayTasks.splice(i, 1);
+    }
+    dayTasks.forEach((t, i) => {
       if (t.expGiven === undefined) t.expGiven = false;
       const el = document.createElement("div");
       el.className = "task" + (t.done ? " done" : "");
       el.draggable = !isTouchDevice;
+
+      el.dataset.index = i;
+
+      if (projectId !== null) {
+        el.dataset.project = projectId;
+      } else {
+        el.dataset.date = iso;
+      }
+
       //FUNCION DE DROP//
       el.addEventListener("drop", e => {
         e.preventDefault();
@@ -765,9 +878,15 @@ function createDayColumn(date) {
         if (!raw) return;
 
         const data = JSON.parse(raw);
-        if (!tasks[data.fromDate]) return;
+        let originList;
 
-        const originList = tasks[data.fromDate];
+        if (data.fromProject) {
+          if (!projects[data.fromProject]) return;
+          originList = projects[data.fromProject].tasks;
+        } else {
+          if (!tasks[data.fromDate]) return;
+          originList = tasks[data.fromDate];
+        }
         const movedTask = originList[data.index];
         if (!movedTask) return;
 
@@ -786,10 +905,20 @@ function createDayColumn(date) {
         let insertIndex = previewInsertIndex;
 
         if (insertIndex === null) {
-          insertIndex = tasks[iso].length;
+          insertIndex = dayTasks.length;
         }
 
-        tasks[iso].splice(insertIndex, 0, movedTask);
+        // ajuste cuando se mueve dentro de la misma lista
+        if (
+          (data.fromProject && data.fromProject === projectId) ||
+          (!data.fromProject && data.fromDate === iso)
+        ) {
+          if (data.index < insertIndex) {
+            insertIndex--;
+          }
+        }
+
+        dayTasks.splice(insertIndex, 0, movedTask);
 
         if (indicator && draggedElement) {
           list.insertBefore(draggedElement, indicator);
@@ -827,7 +956,7 @@ function createDayColumn(date) {
         }
 
         // 🔥 ajuste cuando se mueve dentro de la misma lista
-        if (draggedElement.dataset.date === el.dataset.date && draggedIndex < insertIndex) {
+        if (draggedIndex < insertIndex) {
           insertIndex--;
         }
 
@@ -848,7 +977,8 @@ function createDayColumn(date) {
       });
 
       el.dataset.index = i;
-      el.dataset.date = iso;      el.innerHTML = `
+      
+      el.innerHTML = `
         <div class="cb"></div>
         <div class="tmain">
           <div class="ttext">${t.text}</div>
@@ -929,6 +1059,7 @@ function createDayColumn(date) {
 
         e.dataTransfer.setData("text/plain", JSON.stringify({
           fromDate: iso,
+          fromProject: projectId,
           index: i
         }));
 
@@ -1023,7 +1154,7 @@ function createDayColumn(date) {
           playDeleteTaskSound();
         }
 
-        tasks[iso].splice(i,1);
+        dayTasks.splice(i,1);
 
         save();
         render();
@@ -1038,34 +1169,34 @@ function createDayColumn(date) {
         const cb = el.querySelector(".cb");
 
         const wasDone = t.done;
-        t.done = !t.done;
+
+        if(t.done) return;
+        t.done = true;
 
         let expShown = false;
 
-        if(!wasDone && t.done){
+        resetDailyExpIfNeeded();
 
-          resetDailyExpIfNeeded();
+        if(!t.expGiven){
 
-          if(!t.expGiven){
+          t.expGiven = true;
+          save(); // 🔒 guardar inmediatamente para evitar exploits
 
-            if(player.todayExpTasks < 5){
+          if(player.todayExpTasks < 5){
 
-              rewardExp();
-              t.expGiven = true;
-              expShown = true;
+            rewardExp();
+            expShown = true;
 
-              showExpGain(cb,100);
+            showExpGain(cb,100);
 
-            }else{
+          }else{
 
-              if(!player.dailyLimitShown){
+            if(!player.dailyLimitShown){
 
-                player.dailyLimitShown = true;
-                savePlayer();
+              player.dailyLimitShown = true;
+              savePlayer();
 
-                showToast("Límite diario de EXP alcanzado");
-              }
-
+              showToast("Límite diario de EXP alcanzado");
             }
 
           }
@@ -1073,8 +1204,8 @@ function createDayColumn(date) {
         }
 
 
-        const total = tasks[iso].length;
-        const completed = tasks[iso].filter(task => task.done).length;
+        const total = dayTasks.length;
+        const completed = dayTasks.filter(task => task.done).length;
 
         if (!wasDone && t.done && soundEnabled) {
 
@@ -1092,8 +1223,8 @@ function createDayColumn(date) {
 
         if (!wasDone && t.done) {
 
-          const index = tasks[iso].indexOf(t);
-          const isLast = index === tasks[iso].length - 1;
+          const index = dayTasks.indexOf(t);
+          const isLast = index === dayTasks.length - 1;
 
           if(!isLast){
 
@@ -1101,11 +1232,9 @@ function createDayColumn(date) {
 
             setTimeout(()=>{
 
-              const idx = tasks[iso].indexOf(t);
-
-              if(idx !== -1){
-                const task = tasks[iso].splice(idx,1)[0];
-                tasks[iso].push(task);
+              if(index !== -1 && index < dayTasks.length){
+                const task = dayTasks.splice(index,1)[0];
+                dayTasks.push(task);
               }
 
               save();
@@ -1132,8 +1261,8 @@ function createDayColumn(date) {
     });
 
 
-    const total = tasks[iso].length;
-    const completed = tasks[iso].filter(t => t.done).length;
+    const total = dayTasks.length;
+    const completed = dayTasks.filter(t => t.done).length;
 
     let percent = 0;
     if (total > 0) {
@@ -1155,6 +1284,11 @@ function createDayColumn(date) {
   }
 
   input.addEventListener("keydown", e => {
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+    }
+
     if (e.key === "Enter" && input.value.trim()) {
 
       let text = input.value.trim();
@@ -1166,15 +1300,17 @@ function createDayColumn(date) {
 
       const newTask = { text, done:false, expGiven:false };
 
-      const firstDoneIndex = tasks[iso].findIndex(t => t.done);
+      const firstDoneIndex = dayTasks.findIndex(t => t.done);
 
       if(firstDoneIndex === -1){
-        tasks[iso].push(newTask);
+        dayTasks.push(newTask);
       }else{
-        tasks[iso].splice(firstDoneIndex, 0, newTask);
+        dayTasks.splice(firstDoneIndex, 0, newTask);
       }
 
-      updateDayModalTaskCount(iso);
+      if (iso) {
+        updateDayModalTaskCount(iso);
+      }
 
       if (soundEnabled) {
         playAddTaskSound();
@@ -1191,10 +1327,196 @@ function createDayColumn(date) {
 
 }
 
-function isToday(d) {
-  const t = new Date();
-  return d.toDateString() === t.toDateString();
+function createProjectColumn(projectId){
+
+  const project = projects[projectId];
+  if(!project) return document.createElement("div");
+
+  const col = createDayColumn(
+    null,
+    null,
+    projectId
+  );
+
+  col.classList.add("today-highlight");
+
+  col.classList.add("project-col");
+
+  const title = col.querySelector(".col-title");
+  const sub = col.querySelector(".col-sub");
+
+  if(title) title.textContent = project.title;
+  if(sub) sub.textContent = "Proyecto";
+
+  return col;
+
 }
+
+function renderProjectsView(){
+
+  board.innerHTML = "";
+
+  const container = document.createElement("div");
+  container.className = "projects-container";
+
+  // BOTON AGREGAR
+  const addCard = document.createElement("div");
+  addCard.className = "project-add-card";
+
+  addCard.innerHTML = `
+    <div class="project-add-inner">
+      <svg width="36" height="36" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      <span>Agregar proyecto</span>
+    </div>
+  `;
+
+  addCard.onclick = async ()=>{
+
+    const title = prompt("Nombre del proyecto");
+
+    if(!title) return;
+
+    const id = "p_" + Date.now();
+
+    projects[id] = {
+      title,
+      tasks: [],
+      createdAt: Date.now()
+    };
+
+    await save();
+
+    renderProjectsView();
+
+  };
+
+
+  // RENDER PROYECTOS
+  Object.entries(projects)
+    .sort((a,b)=> (a[1].createdAt || 0) - (b[1].createdAt || 0))
+    .forEach(([id,project])=>{
+
+    const column = createProjectColumn(id);
+
+    // cambiar título
+    const title = column.querySelector(".col-title");
+    const sub = column.querySelector(".col-sub");
+
+    if(title) title.textContent = project.title;
+    if(sub) sub.textContent = "Proyecto";
+
+    if(title){
+
+      title.addEventListener("dblclick", ()=>{
+
+        const oldTitle = project.title;
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = oldTitle;
+        input.className = "edit-input";
+
+        title.replaceWith(input);
+
+        input.focus();
+        input.select();
+
+        function saveEdit(){
+
+          const newValue = input.value.trim();
+
+          if(newValue){
+            projects[id].title = newValue;
+            save();
+          }
+
+          renderProjectsView();
+        }
+
+        function cancelEdit(){
+          renderProjectsView();
+        }
+
+        input.addEventListener("keydown", e=>{
+          if(e.key === "Enter") saveEdit();
+          if(e.key === "Escape") cancelEdit();
+        });
+
+        input.addEventListener("blur", saveEdit);
+
+      });
+
+
+      // MOBILE DOUBLE TAP
+      title.addEventListener("touchend", (e)=>{
+
+        const now = Date.now();
+
+        if(!title.dataset.lastTap){
+          title.dataset.lastTap = now;
+          return;
+        }
+
+        const delta = now - title.dataset.lastTap;
+        title.dataset.lastTap = now;
+
+        if(delta < 300){
+          e.preventDefault();
+          title.dispatchEvent(new Event("dblclick"));
+        }
+
+      });
+
+    }
+
+    const titleRow = column.querySelector(".col-title");
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "icon danger project-delete";
+
+    deleteBtn.innerHTML = `
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="3 6 5 6 21 6"/>
+      <path d="M19 6l-1 14H6L5 6"/>
+      <path d="M10 11v6"/>
+      <path d="M14 11v6"/>
+      <path d="M9 6V4h6v2"/>
+    </svg>
+    `;
+
+    titleRow.appendChild(deleteBtn);
+
+    deleteBtn.onclick = async ()=>{
+
+      draggedElement = null;
+      previewInsertIndex = null;
+
+      const confirmDelete = confirm("¿Eliminar proyecto?");
+
+      if(!confirmDelete) return;
+
+      delete projects[id];
+
+      await save();
+
+      renderProjectsView();
+
+    };
+
+    container.appendChild(column);
+
+  });
+
+  container.appendChild(addCard);
+
+  board.appendChild(container);
+
+}
+
+
 
 function init() {
 
@@ -1208,6 +1530,14 @@ function init() {
   }
 
   board.innerHTML = "";
+  updateViewButtons();
+
+  if(currentViewMode === "projects"){
+    renderProjectsView();
+    renderMiniCalendar();
+    return;
+  }
+
   const today = new Date();
 
   for (let i = 0; i < 7; i++) {
@@ -1378,6 +1708,7 @@ function showTaskMobileMenu(taskElement, taskData, render){
     input.select();
 
     function saveEdit(){
+
       const newValue = input.value.trim();
 
       if(newValue){
@@ -1386,7 +1717,6 @@ function showTaskMobileMenu(taskElement, taskData, render){
       }
 
       render();
-      renderMiniCalendar();
     }
 
     input.addEventListener("keydown", e=>{
@@ -1548,7 +1878,10 @@ function renderMiniCalendar() {
     const dateObj = new Date(year, month, d);
     const dateStr = formatLocalDate(dateObj);
 
+    const todayStr = formatLocalDate(new Date());
+
     const hasTasks =
+      dateStr >= todayStr &&
       tasks[dateStr] &&
       tasks[dateStr].some(t => !t.done);
 
@@ -2451,6 +2784,42 @@ if(leaderboardFromLevelBtn){
   });
 
 }
+
+window.mt = {
+
+  async projects(){
+
+    currentViewMode = "projects";
+    localStorage.setItem("mt_view_mode", currentViewMode);
+
+    if (currentUser) {
+      await setDoc(
+        doc(db, "users", currentUser.uid),
+        { viewMode: currentViewMode },
+        { merge: true }
+      );
+    }
+
+    init();
+  },
+
+  async tasks(){
+
+    currentViewMode = "tasks";
+    localStorage.setItem("mt_view_mode", currentViewMode);
+
+    if (currentUser) {
+      await setDoc(
+        doc(db, "users", currentUser.uid),
+        { viewMode: currentViewMode },
+        { merge: true }
+      );
+    }
+
+    init();
+  }
+
+};
 
 
 document.documentElement.classList.remove("pre-collapsed");

@@ -776,7 +776,14 @@
       flex:1;
       min-width:0;
     }
-    .col-title{ font-weight:900; letter-spacing:-.2px; }
+    .col-title{ 
+      font-weight:900; 
+      letter-spacing:-.2px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap:8px; 
+    }
     .col-sub{ font-size:12px; color:var(--muted); margin-top:4px; }
     .progress{
       height:6px;
@@ -2640,6 +2647,115 @@
       display:none;
     }
 
+    .projects-container{
+      display:flex;
+      gap:20px;
+      padding:20px;
+      align-items: start;
+    }
+
+    .project-add-card{
+      width:260px;
+      height:200px;
+      border-radius:18px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+
+      backdrop-filter: blur(20px);
+      background: rgba(255,255,255,0.04);
+      border:1px solid rgba(255,255,255,0.1);
+
+      transition:.2s;
+    }
+
+    .project-add-card:hover{
+      transform:scale(1.03);
+    }
+
+    .project-add-inner{
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:10px;
+      font-weight:600;
+      opacity:.8;
+    }
+
+    .view-toggle{
+      display:flex;
+      gap:6px;
+      margin:10px 0 16px 0;
+    }
+
+    .view-toggle button{
+      padding:6px 14px;
+      border-radius:8px;
+      
+      background:transparent;
+      color:inherit;
+      font-weight:600;
+      cursor:pointer;
+      opacity:.6;
+    }
+
+    .view-toggle button.active{
+      opacity:1;
+    }
+
+    .view-toggle{
+      position:relative;
+      display:flex;
+      width:290px;
+      height:44px;
+      border-radius:22px;
+      backdrop-filter: blur(16px);
+      background: rgba(255,255,255,0.08);
+      border:1px solid rgba(255,255,255,0.15);
+      overflow:hidden;
+      padding:4px;
+    }
+
+    .toggle-btn{
+      flex:1;
+      border:none;
+      background:transparent;
+      color:white;
+      font-weight:600;
+      font-size:14px;
+      cursor:pointer;
+      z-index:2;
+      white-space:nowrap;
+
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      text-align:center;
+    }
+
+    .toggle-bubble{
+      position:absolute;
+      top:4px;
+      left:4px;
+      width:calc(50% - 4px);
+      height:calc(100% - 8px);
+      border-radius:999px;
+
+      background: rgba(255,255,255,0.18);
+      backdrop-filter: blur(20px);
+
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.4),
+        0 4px 20px rgba(0,0,0,0.25);
+
+      transition:
+        transform 0.35s cubic-bezier(.25,.8,.25,1),
+        width .25s;
+
+      z-index:1;
+    }
+
 
 
 
@@ -2804,7 +2920,7 @@
         </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
-          <span class="version">v1.4</span>
+          <span class="version">v1.5</span>
         </div>
       </div>
 
@@ -2845,15 +2961,15 @@
     <div class="panel">
       <h3 class="changelog-title">
         NOTAS DE VERSIÓN
-        <span class="changelog-version">v1.4</span>
+        <span class="changelog-version">v1.5</span>
       </h3>
       <div class="muted changelog">
         <ul>
-          <li>Doble toque para editar tareas desde celular</li>
-          <li>Sistema de niveles</li>
-          <li>Completar tareas sube tu nivel</li>
-          <li>Tabla de posiciones segun puntos</li>
-          <li>Al completar una tarea, se envia al final del dia</li>
+          <li>Nuevo modo: Usa el modo proyectos para crear tareas que no dependan de una fecha concreta.</li>
+          <li>Doble toque para editar tareas desde celular.</li>
+          <li>Nuevo sistema de niveles.</li>
+          <li>Completar tareas sube tu nivel.</li>
+          <li>Tabla de posiciones segun puntos de nivel.</li>
         </ul>
       </div>
     </div>
@@ -2996,6 +3112,20 @@
       <div class="board-header">
         <h1 class="board-title" id="greetingTitle"></h1>
         <p class="board-subtitle" id="dynamicSubtitle"></p>
+      </div>
+
+      <div class="view-toggle" id="viewToggle">
+        
+        <div class="toggle-bubble" id="toggleBubble"></div>
+
+        <button id="tasksViewBtn" class="toggle-btn active">
+          TAREAS DIARIAS
+        </button>
+
+        <button id="projectsViewBtn" class="toggle-btn">
+          PROYECTOS
+        </button>
+
       </div>
 
       <div class="board-scroll">
