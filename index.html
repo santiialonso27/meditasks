@@ -2651,7 +2651,28 @@
       display:flex;
       gap:20px;
       padding:20px;
-      align-items: start;
+
+      align-items:start;
+
+      overflow-x:auto;
+      overflow-y:hidden;
+
+      -webkit-overflow-scrolling:touch;
+    }
+
+    .project-col{
+      min-width:260px;
+      max-width:260px;
+      flex-shrink:0;
+    }
+
+    .projects-container::-webkit-scrollbar{
+      height:6px;
+    }
+
+    .projects-container::-webkit-scrollbar-thumb{
+      background:rgba(255,255,255,.15);
+      border-radius:10px;
     }
 
     .project-add-card{
