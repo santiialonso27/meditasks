@@ -2810,6 +2810,34 @@
       to{ transform:rotate(360deg); }
     }
 
+    .save-status{
+      position:absolute;
+      top:105px;
+      right:35px;
+      font-size:14px;
+      font-weight:600;
+      color:#9c9c9c;
+    }
+
+    .save-status-bar{
+      width:100%;
+      display:flex;
+      justify-content:center;
+      margin-top:6px;
+    }
+
+    #statusText{
+      font-size:14px;
+      font-weight:600;
+      color:#9c9c9c;
+      letter-spacing:.3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap:8px;
+      text-shadow: 0 2px 6px rgba(0,0,0,0.35);
+    }
+
 
 
 
@@ -2996,7 +3024,7 @@
         </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
-          <span class="version">v1.6</span>
+          <span class="version">v1.7</span>
         </div>
       </div>
 
@@ -3025,11 +3053,6 @@
       <div class="mini-calendar" id="miniCalendar"></div>
     </div>
 
-    <div class="panel">
-      <h3>INFORMACIÓN</h3>
-      <div class="muted" id="statusText">Cargando…</div>
-    </div>
-
     <button id="modeToggleMobile">
       <span id="modeIconMobile"></span>
     </button>
@@ -3037,10 +3060,11 @@
     <div class="panel">
       <h3 class="changelog-title">
         NOTAS DE VERSIÓN
-        <span class="changelog-version">v1.6</span>
+        <span class="changelog-version">v1.7</span>
       </h3>
       <div class="muted changelog">
         <ul>
+          <li>Indicador de guardado.</li>
           <li>Nuevo modo: Usa el modo proyectos para crear tareas que no dependan de una fecha concreta.</li>
           <li>Arreglo de errores.</li>
           <li>Nuevo sistema de niveles.</li>
@@ -3180,8 +3204,11 @@
           GUARDAR TUS TAREAS
         </div>
 
-
     </div>
+
+     <div class="save-status">
+         <span id="statusText"></span>
+     </div>
 
     <main class="board-wrapper">
 

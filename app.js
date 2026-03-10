@@ -143,6 +143,44 @@ function updateSubtitle(user) {
   subtitleEl.textContent = phrases[randomIndex];
 }
 
+function setStatusSaving(){
+  statusText.innerHTML = `
+    <svg width="18px" height="18px" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none">
+    <g fill="currentColor">
+    <path d="M8 1.5A6.5 6.5 0 001.5 8 .75.75 0 010 8a8 8 0 0113.5-5.81v-.94a.75.75 0 011.5 0v3a.75.75 0 01-.75.75h-3a.75.75 0 010-1.5h1.44A6.479 6.479 0 008 1.5zM15.25 7.25A.75.75 0 0116 8a8 8 0 01-13.5 5.81v.94a.75.75 0 01-1.5 0v-3a.75.75 0 01.75-.75h3a.75.75 0 010 1.5H3.31A6.5 6.5 0 0014.5 8a.75.75 0 01.75-.75z"/>
+    </g>
+    </svg>
+    Guardando Datos
+  `;
+}
+
+function setStatusSaved(){
+  statusText.innerHTML = `
+      <svg fill="currentColor" width="22px" height="22px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path fill-rule="evenodd" d="M23,14 C23,16.7614237 20.7614237,19 18,19 L7,19 C3.6862915,19 1,16.3137085 1,13 C1,9.95876977 3.26703071,7.43346119 6.21989093,7.05027488 C7.50901474,5.16507238 9.65343535,4 12,4 C15.1586186,4 17.8750012,6.1056212 18.7254431,9.0522437 C21.1430685,9.40362782 23,11.4849591 23,14 Z M18,17 C19.6568542,17 21,15.6568542 21,14 C21,12.3431458 19.6568542,11 18,11 C17.9686786,11.0001061 17.9686786,11.0001061 17.9374883,11.0006341 L17.0737589,11.0181765 L16.9309417,10.1661557 C16.5303438,7.77626335 14.4511274,6 12,6 C10.1923998,6 8.55429829,6.96642863 7.6664163,8.50398349 L7.39066076,8.98151234 L6.83965518,9.0031404 C4.69934052,9.08715198 3,10.8504451 3,13 C3,15.209139 4.790861,17 7,17 L18,17 Z M10,12.5857864 L13.2928932,9.29289322 L14.7071068,10.7071068 L10,15.4142136 L7.29289322,12.7071068 L8.70710678,11.2928932 L10,12.5857864 Z"/>
+      </svg>
+      Datos Guardados
+    `;
+}
+
+function setStatusLocal(){
+  statusText.innerHTML = `
+      <svg fill="currentColor" width="22px" height="22px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path fill-rule="evenodd" d="M17.5857864,19 L7,19 C3.6862915,19 1,16.3137085 1,13 C1,10.1320517 3.01605065,7.72290805 5.72212244,7.136336 L1.29289322,2.70710678 L2.70710678,1.29289322 L22.7071068,21.2928932 L21.2928932,22.7071068 L17.5857864,19 Z M7.45532281,8.86953637 L7.39066076,8.98151234 L6.83965518,9.0031404 C4.69934052,9.08715198 3,10.8504451 3,13 C3,15.209139 4.790861,17 7,17 L15.5857864,17 L7.45532281,8.86953637 Z M21.641028,17.4268145 L20.2257382,16.0115247 C20.7069401,15.4794096 21,14.7739287 21,14 C21,12.3431458 19.6568542,11 18,11 C17.9686786,11.0001061 17.9686786,11.0001061 17.9374883,11.0006341 L17.0737589,11.0181765 L16.9309417,10.1661557 C16.5303438,7.77626335 14.4511274,6 12,6 C11.4659176,6 10.9466324,6.08436874 10.4571233,6.24290982 L8.92460896,4.71039545 C9.86234872,4.25169049 10.9093398,4 12,4 C15.1586186,4 17.8750012,6.1056212 18.7254431,9.0522437 C21.1430685,9.40362782 23,11.4849591 23,14 C23,15.3262254 22.4836544,16.5318518 21.641028,17.4268145 Z"/>
+      </svg>
+      Modo Sin Conexión
+    `;
+}
+
+function setStatusPending(){
+  statusText.innerHTML = `
+    <svg fill="currentColor" width="22px" height="22px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path fill-rule="evenodd" d="M17.5857864,19 L7,19 C3.6862915,19 1,16.3137085 1,13 C1,10.1320517 3.01605065,7.72290805 5.72212244,7.136336 L1.29289322,2.70710678 L2.70710678,1.29289322 L22.7071068,21.2928932 L21.2928932,22.7071068 L17.5857864,19 Z M7.45532281,8.86953637 L7.39066076,8.98151234 L6.83965518,9.0031404 C4.69934052,9.08715198 3,10.8504451 3,13 C3,15.209139 4.790861,17 7,17 L15.5857864,17 L7.45532281,8.86953637 Z M21.641028,17.4268145 L20.2257382,16.0115247 C20.7069401,15.4794096 21,14.7739287 21,14 C21,12.3431458 19.6568542,11 18,11 C17.9686786,11.0001061 17.9686786,11.0001061 17.9374883,11.0006341 L17.0737589,11.0181765 L16.9309417,10.1661557 C16.5303438,7.77626335 14.4511274,6 12,6 C11.4659176,6 10.9466324,6.08436874 10.4571233,6.24290982 L8.92460896,4.71039545 C9.86234872,4.25169049 10.9093398,4 12,4 C15.1586186,4 17.8750012,6.1056212 18.7254431,9.0522437 C21.1430685,9.40362782 23,11.4849591 23,14 C23,15.3262254 22.4836544,16.5318518 21.641028,17.4268145 Z"/>
+    </svg>
+    Modo Sin Conexión: Cambios pendientes
+  `;
+}
+
 let hasRendered = false;
 
 onAuthStateChanged(auth, async (user) => {
@@ -179,15 +217,57 @@ onAuthStateChanged(auth, async (user) => {
       { merge: true }
     );
 
-    // 🔥 Listener en tiempo real
+    // 🔥 Listener en tiempo real ONSNAPSHOT
     unsubscribe = onSnapshot(userRef, async (snapshot) => {
 
       if (!snapshot.exists()) return;   // 🔥 salir si el documento no existe
 
       if (snapshot.exists()) {
         const data = snapshot.data();
-        tasks = data.tasks || {};
-        projects = data.projects || {};
+        const cloudTasks = data.tasks || {};
+        const cloudProjects = data.projects || {};
+
+        const localData = JSON.parse(localStorage.getItem(storeKey)) || {};
+        const localTasks = localData.tasks || {};
+        const localProjects = localData.projects || {};
+
+        // 🔥 fusionar tareas
+        tasks = { ...cloudTasks };
+
+        Object.entries(localTasks).forEach(([date, localList]) => {
+
+          if(!tasks[date]) tasks[date] = [];
+
+          const existingTexts = new Set(tasks[date].map(t => t.text));
+
+          localList.forEach(t => {
+            if(!existingTexts.has(t.text)){
+              tasks[date].push(t);
+            }
+          });
+
+        });
+
+        // 🔥 fusionar proyectos
+        projects = { ...cloudProjects };
+
+        Object.entries(localProjects).forEach(([id, proj]) => {
+
+          if(!projects[id]){
+            projects[id] = proj;
+          }
+
+        });
+
+        const hasLocalTasks = Object.keys(localTasks).length > 0;
+        const hasLocalProjects = Object.keys(localProjects).length > 0;
+
+        if(hasLocalTasks || hasLocalProjects){
+          await setDoc(userRef,{
+            tasks,
+            projects
+          },{ merge:true });
+        }
 
         if (data.viewMode) {
           currentViewMode = data.viewMode;
@@ -245,7 +325,7 @@ onAuthStateChanged(auth, async (user) => {
           hasRendered = true;
         }
 
-      statusText.textContent = "Tareas guardadas con éxito";
+      setStatusSaved();
 
     });
 
@@ -273,10 +353,13 @@ onAuthStateChanged(auth, async (user) => {
         `;
         loginCircleBtn.classList.remove("logged-in");
 
-        tasks = JSON.parse(localStorage.getItem(storeKey)) || {};
+        const localData = JSON.parse(localStorage.getItem(storeKey)) || {};
+
+        tasks = localData.tasks || {};
+        projects = localData.projects || {};
         init();
 
-        statusText.textContent = "Inicia sesión para guardar tus tareas";
+        setStatusLocal();
         updateGreeting(user);
         updateSubtitle(user);
 
@@ -519,34 +602,61 @@ if(projectsViewBtn){
 let soundEnabled = JSON.parse(localStorage.getItem("soundEnabled"));
 if (soundEnabled === null) soundEnabled = true;
 
-async function save() {
+async function save(){
 
-  if (currentUser) {
-    await updateDoc(
-      doc(db, "users", currentUser.uid),
-      { 
-        tasks: tasks,
-        projects: projects,
-        viewMode: currentViewMode
-      }
-    );
+  // 🔴 si no hay internet → guardar directo en local
+  if(!navigator.onLine){
 
-    await setDoc(
-      doc(db, "leaderboard", currentUser.uid),
-      {
-        name: currentUser.displayName,
-        photo: currentUser.photoURL,
-        level: player.level,
-        exp: player.exp
-      },
-      { merge:true }
-    );
-
-  } else {
     localStorage.setItem(storeKey, JSON.stringify({
       tasks,
       projects
     }));
+
+    setStatusPending();
+    return;
+  }
+
+  // 🟡 si hay usuario → intentar guardar en firebase
+  if(currentUser){
+
+    setStatusSaving();
+
+    try{
+
+      await updateDoc(
+        doc(db,"users",currentUser.uid),
+        {
+          tasks: tasks,
+          projects: projects,
+          viewMode: currentViewMode
+        }
+      );
+
+      await setDoc(
+        doc(db,"leaderboard",currentUser.uid),
+        {
+          name: currentUser.displayName,
+          photo: currentUser.photoURL,
+          level: player.level,
+          exp: player.exp
+        },
+        { merge:true }
+      );
+
+      setStatusSaved();
+
+    }catch(err){
+
+      // fallback local
+      localStorage.setItem(storeKey, JSON.stringify({
+        tasks,
+        projects
+      }));
+
+      setStatusPending();
+
+    }
+
   }
 
 }
@@ -2861,5 +2971,108 @@ function updateViewButtons(){
 
 }
 
+async function syncLocalData(){
+
+  if(!currentUser) return;
+
+  const localData = JSON.parse(localStorage.getItem(storeKey));
+
+  if(!localData){
+    return;
+  }
+
+  const localTasks = localData.tasks || {};
+  const localProjects = localData.projects || {};
+
+  try{
+
+    const userRef = doc(db,"users",currentUser.uid);
+    const snap = await getDoc(userRef);
+
+    const data = snap.data() || {};
+
+    const cloudTasks = data.tasks || {};
+    const cloudProjects = data.projects || {};
+
+    // merge tareas
+    const mergedTasks = { ...cloudTasks };
+
+    Object.entries(localTasks).forEach(([date,list])=>{
+
+      if(!mergedTasks[date]) mergedTasks[date] = [];
+
+      const existing = new Set(mergedTasks[date].map(t=>t.text));
+
+      list.forEach(t=>{
+        if(!existing.has(t.text)){
+          mergedTasks[date].push(t);
+        }
+      });
+
+    });
+
+    // merge proyectos
+    const mergedProjects = { ...cloudProjects };
+
+    Object.entries(localProjects).forEach(([id,proj])=>{
+      if(!mergedProjects[id]){
+        mergedProjects[id] = proj;
+      }
+    });
+
+    await setDoc(userRef,{
+      tasks: mergedTasks,
+      projects: mergedProjects
+    },{ merge:true });
+
+    // limpiar localStorage
+    localStorage.removeItem(storeKey);
+
+    if(navigator.onLine){
+
+      const localData = localStorage.getItem(storeKey);
+
+      if(localData){
+        setStatusPending();
+      }else{
+        setStatusSaved();
+      }
+
+    }else{
+      setStatusPending();
+    }
+
+    console.log("Sincronización completada");
+
+  }catch(err){
+
+    console.log("Sincronización falló",err);
+
+  }
+
+}
+
+
+if(!navigator.onLine){
+  setStatusLocal();
+}
+
+window.addEventListener("online", () => {
+
+  console.log("Internet restaurado, sincronizando...");
+
+  setStatusSaving();   // 👈 mostrar SAVING
+
+  syncLocalData();
+
+});
+
+window.addEventListener("offline", () => {
+
+  console.log("Sin internet, usando almacenamiento local");
+
+  setStatusLocal();
+
+});
 
 document.documentElement.classList.remove("pre-collapsed");
