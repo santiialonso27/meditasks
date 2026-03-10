@@ -464,49 +464,19 @@ settingsBtn.addEventListener("click", (e) => {
   showToast("Ajustes aún no está disponible");
 });
 
-//CODIGO ANTIGUO
-const DAYS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
-const storeKey = "meditasks_tasks";
-
-const savedData = JSON.parse(localStorage.getItem(storeKey)) || {};
-
-let tasks = savedData.tasks || {};
-let projects = savedData.projects || {};
-
-let currentViewMode = localStorage.getItem("mt_view_mode") || "tasks"; // tasks | projects
-
-const tasksViewBtn = document.getElementById("tasksViewBtn");
-const projectsViewBtn = document.getElementById("projectsViewBtn");
-
-function updateViewButtons(){
-
-  if(!tasksViewBtn || !projectsViewBtn) return;
-
-  const bubble = document.getElementById("toggleBubble");
-
-  if(currentViewMode === "tasks"){
-
-    tasksViewBtn.classList.add("active");
-    projectsViewBtn.classList.remove("active");
-
-    if(bubble) bubble.style.transform = "translateX(0%)";
-
-  }else{
-
-    tasksViewBtn.classList.remove("active");
-    projectsViewBtn.classList.add("active");
-
-    if(bubble) bubble.style.transform = "translateX(100%)";
-
-  }
-
-}
 
 if(tasksViewBtn){
-  tasksViewBtn.onclick = ()=>{
+  tasksViewBtn.onclick = async ()=>{
 
     currentViewMode = "tasks";
-    localStorage.setItem("mt_view_mode", currentViewMode);
+
+    if(currentUser){
+      await setDoc(
+        doc(db,"users",currentUser.uid),
+        { viewMode: currentViewMode },
+        { merge:true }
+      );
+    }
 
     updateViewButtons();
     init();
@@ -514,10 +484,17 @@ if(tasksViewBtn){
 }
 
 if(projectsViewBtn){
-  projectsViewBtn.onclick = ()=>{
+  projectsViewBtn.onclick = async ()=>{
 
     currentViewMode = "projects";
-    localStorage.setItem("mt_view_mode", currentViewMode);
+
+    if(currentUser){
+      await setDoc(
+        doc(db,"users",currentUser.uid),
+        { viewMode: currentViewMode },
+        { merge:true }
+      );
+    }
 
     updateViewButtons();
     init();
