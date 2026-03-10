@@ -64,7 +64,7 @@ let currentTarget = null;
 let currentPosition = null;
 let previewInsertIndex = null;
 
-const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
 
 let player = JSON.parse(localStorage.getItem("mt_player")) || {
   exp: 0,
