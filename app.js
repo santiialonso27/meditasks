@@ -44,6 +44,20 @@ let currentUser = null;
 let unsubscribe = null;
 let currentCalendarDate = new Date();
 let lastCarryDate = null;
+let tasks = {};
+let projects = {};
+let currentViewMode = localStorage.getItem("mt_view_mode") || "tasks";
+const storeKey = "mt_tasks_local";
+const DAYS = [
+  "Domingo",
+  "Lunes",
+  "Martes",
+  "Miércoles",
+  "Jueves",
+  "Viernes",
+  "Sábado"
+];
+
 
 let draggedElement = null;
 let currentTarget = null;
@@ -226,6 +240,7 @@ onAuthStateChanged(auth, async (user) => {
 
       if (!hasRendered) {
           document.body.classList.remove("app-loading");
+          document.getElementById("loadingScreen")?.remove();
           appReady = true;
           hasRendered = true;
         }
@@ -2823,6 +2838,28 @@ window.mt = {
   }
 
 };
+
+function updateViewButtons(){
+
+  const tasksBtn = document.getElementById("tasksViewBtn");
+  const projectsBtn = document.getElementById("projectsViewBtn");
+  const bubble = document.getElementById("toggleBubble");
+
+  if(!tasksBtn || !projectsBtn || !bubble) return;
+
+  if(currentViewMode === "tasks"){
+    tasksBtn.classList.add("active");
+    projectsBtn.classList.remove("active");
+
+    bubble.style.transform = "translateX(0)";
+  }else{
+    projectsBtn.classList.add("active");
+    tasksBtn.classList.remove("active");
+
+    bubble.style.transform = "translateX(100%)";
+  }
+
+}
 
 
 document.documentElement.classList.remove("pre-collapsed");
