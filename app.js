@@ -13,7 +13,8 @@ import {
   getDocs,
   query,
   orderBy,
-  limit
+  limit,
+  updateDoc
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -167,10 +168,13 @@ onAuthStateChanged(auth, async (user) => {
     // 🔥 Listener en tiempo real
     unsubscribe = onSnapshot(userRef, async (snapshot) => {
 
+      if (!snapshot.exists()) return;   // 🔥 salir si el documento no existe
+
       if (snapshot.exists()) {
         const data = snapshot.data();
         tasks = data.tasks || {};
         projects = data.projects || {};
+
         if (data.viewMode) {
           currentViewMode = data.viewMode;
           localStorage.setItem("mt_view_mode", currentViewMode);
@@ -526,14 +530,13 @@ if (soundEnabled === null) soundEnabled = true;
 async function save() {
 
   if (currentUser) {
-    await setDoc(
+    await updateDoc(
       doc(db, "users", currentUser.uid),
       { 
-        tasks,
-        projects,
+        tasks: tasks,
+        projects: projects,
         viewMode: currentViewMode
-      },
-      { merge: true }
+      }
     );
 
     await setDoc(
@@ -1826,14 +1829,20 @@ function carryOverPendings() {
 function cleanPastDays() {
 
   const today = formatLocalDate(new Date());
+  let changed = false;
 
   Object.keys(tasks).forEach(dateKey => {
 
     if (dateKey < today) {
       delete tasks[dateKey];
+      changed = true;
     }
 
   });
+
+  if (changed) {
+    save();
+  }
 
 }
 
