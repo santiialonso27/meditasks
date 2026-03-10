@@ -1148,7 +1148,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
       }
 
-      el.querySelector(".icon.danger").onclick = () => {
+      el.querySelector(".icon.danger").onclick = async () => {
 
         if (soundEnabled) {
           playDeleteTaskSound();
@@ -1156,7 +1156,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
         dayTasks.splice(i,1);
 
-        save();
+        await save();
         render();
         renderMiniCalendar();
 
@@ -1170,14 +1170,13 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
         const wasDone = t.done;
 
-        if(t.done) return;
-        t.done = true;
+        t.done = !t.done;
 
         let expShown = false;
 
         resetDailyExpIfNeeded();
 
-        if(!t.expGiven){
+        if(t.done && !t.expGiven){
 
           t.expGiven = true;
           save(); // 🔒 guardar inmediatamente para evitar exploits
@@ -1525,7 +1524,11 @@ function init() {
   const todayStr = formatLocalDate(new Date());
 
   if (lastCarryDate !== todayStr) {
-    carryOverPendings();
+
+    carryOverPendings();   // mover pendientes
+    cleanPastDays();       // 🔥 borrar días pasados
+    save();                // 🔥 guardar en Firebase
+
     lastCarryDate = todayStr;
   }
 
@@ -1818,6 +1821,20 @@ function carryOverPendings() {
   });
 
   if (changed) save();
+}
+
+function cleanPastDays() {
+
+  const today = formatLocalDate(new Date());
+
+  Object.keys(tasks).forEach(dateKey => {
+
+    if (dateKey < today) {
+      delete tasks[dateKey];
+    }
+
+  });
+
 }
 
 function renderMiniCalendar() {
