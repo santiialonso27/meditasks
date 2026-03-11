@@ -365,9 +365,10 @@ onAuthStateChanged(auth, async (user) => {
 
         if (!hasRendered) {
             document.body.classList.remove("app-loading");
+            document.getElementById("loadingScreen")?.remove();
             appReady = true;
             hasRendered = true;
-          }
+        }
       }
 
     });
