@@ -64,6 +64,12 @@ let currentTarget = null;
 let currentPosition = null;
 let previewInsertIndex = null;
 
+let officeModeEnabled = false;
+let officeModeTimeoutSeconds = 60;
+let inactivityTimer = null;
+let isLocked = false;
+let deviceCredentialId = null;
+
 const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
 
 let player = JSON.parse(localStorage.getItem("mt_player")) || {
@@ -197,6 +203,8 @@ onAuthStateChanged(auth, async (user) => {
   if (user) {
 
     currentUser = user;
+    updateSettingsProfile(user);
+    syncOfficeModeControls();
     // 🔥 Ocultar tooltip si estaba visible
     loginTooltip.classList.remove("show");
     clearTimeout(tooltipTimeout);
@@ -233,6 +241,22 @@ onAuthStateChanged(auth, async (user) => {
 
       if (snapshot.exists()) {
         const data = snapshot.data();
+
+        officeModeEnabled = data.officeModeEnabled ?? data.securityPinEnabled ?? false;
+        officeModeTimeoutSeconds = normalizeOfficeModeTimeout(
+          data.officeModeTimeoutSeconds
+        );
+        deviceCredentialId = data.deviceCredentialId || null;
+
+        updateSettingsProfile(user);
+        syncOfficeModeControls();
+
+        if(officeModeEnabled){
+          resetInactivityTimer();
+        }else{
+          clearTimeout(inactivityTimer);
+        }
+
         const cloudTasks = data.tasks || {};
         const cloudProjects = data.projects || {};
 
@@ -353,6 +377,12 @@ onAuthStateChanged(auth, async (user) => {
         }
 
         currentUser = null;
+        officeModeEnabled = false;
+        officeModeTimeoutSeconds = 60;
+        deviceCredentialId = null;
+        clearTimeout(inactivityTimer);
+        updateSettingsProfile(null);
+        syncOfficeModeControls();
 
         loginCircleBtn.innerHTML = `
           <svg viewBox="0 0 24 24" fill="none">
@@ -566,10 +596,142 @@ logoutOverlay.addEventListener("click", (e) => {
 });
 
 const settingsBtn = document.getElementById("settingsBtn");
+const settingsOverlay = document.getElementById("settingsOverlay");
+const settingsCloseBtn = document.getElementById("settingsCloseBtn");
+const officeModeToggle = document.getElementById("officeModeToggle");
+const officeModeTimeoutSelect = document.getElementById("officeModeTimeoutSelect");
+const settingsAuthNote = document.getElementById("settingsAuthNote");
+const settingsProfileName = document.getElementById("settingsProfileName");
+const settingsProfileAvatar = document.getElementById("settingsProfileAvatar");
+const settingsNavItems = Array.from(document.querySelectorAll(".settings-nav-item"));
+const settingsPanels = {
+  general: document.getElementById("settingsPanelGeneral"),
+  security: document.getElementById("settingsPanelSecurity")
+};
+
+const OFFICE_MODE_TIMEOUT_OPTIONS = [30, 60, 120, 300];
+
+function normalizeOfficeModeTimeout(value){
+  const parsed = Number(value);
+  return OFFICE_MODE_TIMEOUT_OPTIONS.includes(parsed) ? parsed : 60;
+}
+
+function updateSettingsProfile(user = currentUser){
+  if(settingsProfileName){
+    settingsProfileName.textContent = user?.displayName || "Invitado";
+  }
+
+  if(settingsProfileAvatar){
+    settingsProfileAvatar.src = user?.photoURL || "/flav-icon.png";
+  }
+}
+
+function syncOfficeModeControls(){
+  if(officeModeToggle){
+    officeModeToggle.checked = officeModeEnabled;
+    officeModeToggle.disabled = !currentUser;
+  }
+
+  if(officeModeTimeoutSelect){
+    officeModeTimeoutSelect.value = String(officeModeTimeoutSeconds);
+    officeModeTimeoutSelect.disabled = !currentUser;
+  }
+
+  if(settingsAuthNote){
+    settingsAuthNote.classList.toggle("show", !currentUser);
+  }
+}
+
+function openSettingsPanel(panelName = "security"){
+  settingsNavItems.forEach(item => {
+    item.classList.toggle("active", item.dataset.settingsPanel === panelName);
+  });
+
+  Object.entries(settingsPanels).forEach(([name, panel]) => {
+    if(panel){
+      panel.classList.toggle("active", name === panelName);
+    }
+  });
+}
+
+function openSettingsOverlay(panelName = "security"){
+  updateSettingsProfile();
+  syncOfficeModeControls();
+  openSettingsPanel(panelName);
+  settingsOverlay.classList.add("open");
+}
+
+function closeSettingsOverlay(){
+  settingsOverlay.classList.remove("open");
+}
+
+async function saveOfficeModePreferences(updates){
+  if(!currentUser) return;
+
+  await setDoc(
+    doc(db,"users",currentUser.uid),
+    updates,
+    { merge:true }
+  );
+}
 
 settingsBtn.addEventListener("click", (e) => {
   e.stopPropagation();
-  showToast("Ajustes aún no está disponible");
+  openSettingsOverlay("security");
+});
+
+settingsCloseBtn?.addEventListener("click", closeSettingsOverlay);
+
+settingsOverlay?.addEventListener("click", e=>{
+  if(e.target === settingsOverlay){
+    closeSettingsOverlay();
+  }
+});
+
+settingsNavItems.forEach(item=>{
+  item.addEventListener("click", ()=>{
+    openSettingsPanel(item.dataset.settingsPanel);
+  });
+});
+
+officeModeToggle?.addEventListener("change", async ()=>{
+  try{
+    if(officeModeToggle.checked){
+      await enableOfficeMode();
+    }else{
+      await disableOfficeMode();
+    }
+  }catch(err){
+    console.error(err);
+    showToast("No se pudo actualizar el Modo Oficina");
+    syncOfficeModeControls();
+  }
+});
+
+officeModeTimeoutSelect?.addEventListener("change", async ()=>{
+  officeModeTimeoutSeconds = normalizeOfficeModeTimeout(officeModeTimeoutSelect.value);
+  syncOfficeModeControls();
+
+  if(!currentUser) return;
+
+  try{
+    await saveOfficeModePreferences({
+      officeModeTimeoutSeconds
+    });
+
+    if(officeModeEnabled){
+      resetInactivityTimer();
+    }
+  }catch(err){
+    console.error(err);
+    showToast("No se pudo guardar el tiempo de bloqueo");
+  }
+});
+
+document.addEventListener("keydown", e=>{
+  if(e.key === "Escape" && settingsOverlay?.classList.contains("open")){
+    closeSettingsOverlay();
+  }
 });
 
 
@@ -681,13 +843,16 @@ function formatLocalDate(date) {
 function resetDailyExpIfNeeded(){
 
   const today = formatLocalDate(new Date());
+  let changed = false;
 
   if(player.lastExpDate !== today){
     player.todayExpTasks = 0;
     player.lastExpDate = today;
     player.dailyLimitShown = false;
-    savePlayer();
+    changed = true;
   }
+
+  return changed;
 
 }
 
@@ -696,14 +861,14 @@ function rewardExp(){
   resetDailyExpIfNeeded();
 
   if(player.todayExpTasks >= 5){
-    return;
+    return false;
   }
 
   player.exp += 100;
   player.todayExpTasks++;
 
   updateLevel();
-  savePlayer();
+  return true;
 }
 
 function showExpGain(cbElement, amount = 100){
@@ -1279,36 +1444,39 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
       };
 
-      el.querySelector(".cb").onclick = () => {
+      el.querySelector(".cb").onclick = async () => {
 
         const cb = el.querySelector(".cb");
 
         const wasDone = t.done;
+        let shouldSavePlayer = false;
 
         t.done = !t.done;
 
         let expShown = false;
 
-        resetDailyExpIfNeeded();
+        shouldSavePlayer = resetDailyExpIfNeeded() || shouldSavePlayer;
 
         if(t.done && !t.expGiven){
 
           t.expGiven = true;
-          save(); // 🔒 guardar inmediatamente para evitar exploits
 
           if(player.todayExpTasks < 5){
 
-            rewardExp();
-            expShown = true;
+            const rewarded = rewardExp();
 
-            showExpGain(cb,100);
+            if(rewarded){
+              shouldSavePlayer = true;
+              expShown = true;
+              showExpGain(cb,100);
+            }
 
           }else{
 
             if(!player.dailyLimitShown){
 
               player.dailyLimitShown = true;
-              savePlayer();
+              shouldSavePlayer = true;
 
               showToast("Límite diario de EXP alcanzado");
             }
@@ -1337,34 +1505,37 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
         if (!wasDone && t.done) {
 
-          const index = dayTasks.indexOf(t);
-          const isLast = index === dayTasks.length - 1;
+          const currentIndex = dayTasks.indexOf(t);
+          const isLast = currentIndex === dayTasks.length - 1;
+
+          if(currentIndex !== -1 && !isLast){
+            const taskToMove = dayTasks.splice(currentIndex,1)[0];
+            dayTasks.push(taskToMove);
+          }
 
           if(!isLast){
 
             const delay = expShown ? 900 : 0;
 
-            setTimeout(()=>{
+            setTimeout(async ()=>{
 
-              if(index !== -1 && index < dayTasks.length){
-                const task = dayTasks.splice(index,1)[0];
-                dayTasks.push(task);
-              }
-
-              save();
+              await save();
+              if(shouldSavePlayer) await savePlayer();
               render();
               renderMiniCalendar();
 
             },delay);
 
           }else{
-            save();
+            await save();
+            if(shouldSavePlayer) await savePlayer();
             render();
             renderMiniCalendar();
           }
 
         }else{
-          save();
+          await save();
+          if(shouldSavePlayer) await savePlayer();
           render();
           renderMiniCalendar();
         }
@@ -3085,4 +3256,285 @@ window.addEventListener("offline", () => {
 
 });
 
+function resetInactivityTimer(){
+
+  if(!officeModeEnabled) return;
+  if(isLocked) return;
+
+  clearTimeout(inactivityTimer);
+
+  inactivityTimer = setTimeout(()=>{
+    lockApp();
+  },officeModeTimeoutSeconds * 1000);
+
+}
+
+function clearLockFeedback(){
+  const pinInput = document.getElementById("pinInput");
+  const pinError = document.getElementById("pinError");
+
+  if(pinInput){
+    pinInput.value = "";
+  }
+
+  if(pinError){
+    pinError.textContent = "";
+  }
+}
+
+function finishUnlock(){
+  const lockScreen = document.getElementById("lockScreen");
+
+  lockScreen.classList.remove("active");
+
+  clearLockFeedback();
+  isLocked = false;
+  resetInactivityTimer();
+}
+
+async function platformAuthenticatorAvailable(){
+  if(!window.PublicKeyCredential) return false;
+  if(typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable !== "function"){
+    return false;
+  }
+
+  try{
+    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  }catch(err){
+    console.error("No se pudo verificar biometría del dispositivo", err);
+    return false;
+  }
+}
+
+function credentialToBase64(credential){
+  return btoa(String.fromCharCode(...new Uint8Array(credential.rawId)));
+}
+
+async function registerDeviceCredential(){
+  if(!(await platformAuthenticatorAvailable())){
+    alert("Este dispositivo no soporta desbloqueo biométrico compatible.");
+    return null;
+  }
+
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const userId = crypto.getRandomValues(new Uint8Array(16));
+
+  const credential = await navigator.credentials.create({
+    publicKey:{
+      challenge,
+      rp:{ name:"MultiTareas" },
+      user:{
+        id:userId,
+        name:currentUser.email,
+        displayName:currentUser.displayName || currentUser.email
+      },
+      pubKeyCredParams:[
+        { type:"public-key", alg:-7 },
+        { type:"public-key", alg:-257 }
+      ],
+      authenticatorSelection:{
+        authenticatorAttachment:"platform",
+        userVerification:"required"
+      },
+      timeout:60000,
+      attestation:"none"
+    }
+  });
+
+  return credential;
+}
+
+async function unlockWithDevice(){
+  if(!isLocked) return false;
+  if(!deviceCredentialId) return false;
+
+  const pinError = document.getElementById("pinError");
+
+  if(pinError){
+    pinError.textContent = "";
+  }
+
+  try{
+    const credentialId = Uint8Array.from(
+      atob(deviceCredentialId),
+      c => c.charCodeAt(0)
+    );
+
+    await navigator.credentials.get({
+      publicKey:{
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        allowCredentials:[
+          {
+            type:"public-key",
+            id:credentialId
+          }
+        ],
+        userVerification:"required",
+        timeout:60000
+      }
+    });
+
+    finishUnlock();
+    return true;
+  }catch(err){
+    console.error("La verificación biométrica falló o fue cancelada", err);
+
+    if(pinError){
+      pinError.textContent = "No se pudo verificar la huella. Intenta nuevamente.";
+    }
+
+    return false;
+  }
+}
+
+async function promptForNewSecurityPin(){
+  const firstPin = window.prompt("Crea un PIN de seguridad de 4 a 6 números");
+
+  if(firstPin === null) return null;
+
+  const normalizedPin = firstPin.trim();
+
+  if(!/^\d{4,6}$/.test(normalizedPin)){
+    alert("El PIN debe tener entre 4 y 6 números.");
+    return null;
+  }
+
+  const confirmPin = window.prompt("Confirma tu nuevo PIN de seguridad");
+
+  if(confirmPin === null) return null;
+
+  if(normalizedPin !== confirmPin.trim()){
+    alert("Los PIN no coinciden.");
+    return null;
+  }
+
+  return normalizedPin;
+}
+
+async function enableOfficeMode(){
+  if(!currentUser){
+    showToast("Inicia sesión para guardar esta configuración");
+    syncOfficeModeControls();
+    return false;
+  }
+
+  if(!(await platformAuthenticatorAvailable())){
+    alert("Necesitas un dispositivo con huella o biometría compatible para usar Modo Oficina.");
+    syncOfficeModeControls();
+    return false;
+  }
+
+  const userRef = doc(db,"users",currentUser.uid);
+  const snap = await getDoc(userRef);
+  const data = snap.data() || {};
+  const updates = {};
+
+  let securityPin = data.securityPin || "";
+
+  if(!securityPin){
+    securityPin = await promptForNewSecurityPin();
+
+    if(!securityPin){
+      syncOfficeModeControls();
+      return false;
+    }
+
+    updates.securityPin = securityPin;
+  }
+
+  let credentialId = data.deviceCredentialId || null;
+
+  if(!credentialId){
+    try{
+      const credential = await registerDeviceCredential();
+
+      if(!credential){
+        syncOfficeModeControls();
+        return false;
+      }
+
+      credentialId = credentialToBase64(credential);
+      updates.deviceCredentialId = credentialId;
+    }catch(err){
+      console.error(err);
+      alert("No se pudo crear la llave biométrica del dispositivo.");
+      syncOfficeModeControls();
+      return false;
+    }
+  }
+
+  updates.officeModeEnabled = true;
+  updates.securityPinEnabled = true;
+  updates.officeModeTimeoutSeconds = officeModeTimeoutSeconds;
+
+  await saveOfficeModePreferences(updates);
+
+  officeModeEnabled = true;
+  deviceCredentialId = credentialId;
+  syncOfficeModeControls();
+  resetInactivityTimer();
+  return true;
+}
+
+async function disableOfficeMode(){
+  if(!currentUser){
+    syncOfficeModeControls();
+    return false;
+  }
+
+  await saveOfficeModePreferences({
+    officeModeEnabled: false,
+    securityPinEnabled: false,
+    officeModeTimeoutSeconds
+  });
+
+  officeModeEnabled = false;
+  clearTimeout(inactivityTimer);
+  syncOfficeModeControls();
+  return true;
+}
+
+function lockApp(){
+
+  if(isLocked) return;
+
+  const lock = document.getElementById("lockScreen");
+
+  lock.classList.add("active");
+  clearLockFeedback();
+
+  isLocked = true;
+  unlockWithDevice();
+
+}
+
+const unlockBtn = document.getElementById("unlockBtn");
+unlockBtn.addEventListener("click", unlockWithDevice);
+
+const forgotBtn = document.getElementById("forgotPinBtn");
+
+forgotBtn.addEventListener("click", async ()=>{
+
+  const confirmLogout = confirm(
+    "La app cerrará tu sesión, pero la seguridad seguirá activa para esta cuenta.\n\n¿Continuar?"
+  );
+
+  if(!confirmLogout) return;
+
+  try{
+    await signOut(auth);
+
+  }catch(err){
+
+    console.error(err);
+    alert("Error al cerrar sesión");
+
+  }
+
+});
+
 document.documentElement.classList.remove("pre-collapsed");
+
+["mousemove","keydown","mousedown","touchstart"].forEach(event=>{
+  document.addEventListener(event, resetInactivityTimer);
+});

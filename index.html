@@ -1846,6 +1846,563 @@
       letter-spacing:-.2px;
     }
 
+    .settings-overlay{
+      position:fixed;
+      inset:0;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:28px;
+      background:
+        radial-gradient(900px 500px at 10% 10%, rgba(43,94,255,.18), transparent 60%),
+        rgba(5,10,20,.58);
+      backdrop-filter: blur(16px);
+      z-index:1200;
+    }
+
+    .settings-overlay.open{
+      display:flex;
+    }
+
+    .settings-shell{
+      width:min(1060px, calc(100vw - 56px));
+      height:min(680px, calc(100vh - 72px));
+      display:grid;
+      grid-template-columns:320px minmax(0,1fr);
+      overflow:hidden;
+      border-radius:34px;
+      border:1px solid rgba(107,139,255,.26);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.015)),
+        linear-gradient(135deg, rgba(12,21,42,.96), rgba(17,25,37,.94));
+      box-shadow:
+        0 40px 100px rgba(0,0,0,.48),
+        inset 0 1px 0 rgba(255,255,255,.06);
+    }
+
+    .settings-sidebar{
+      padding:24px 18px 22px;
+      background:
+        radial-gradient(700px 520px at 0% 100%, rgba(15,125,255,.20), transparent 62%),
+        linear-gradient(180deg, rgba(12,22,48,.96), rgba(10,24,46,.88));
+      border-right:1px solid rgba(255,255,255,.07);
+      display:flex;
+      flex-direction:column;
+      gap:18px;
+    }
+
+    .settings-profile{
+      display:flex;
+      align-items:center;
+      gap:14px;
+      padding:2px 4px 2px;
+    }
+
+    .settings-profile-avatar{
+      width:54px;
+      height:54px;
+      border-radius:50%;
+      object-fit:cover;
+      background:rgba(255,255,255,.10);
+      border:1px solid rgba(255,255,255,.10);
+      box-shadow:0 14px 28px rgba(0,0,0,.28);
+    }
+
+    .settings-profile-name{
+      font-size:15px;
+      font-weight:700;
+      letter-spacing:-.03em;
+    }
+
+    .settings-profile-subtitle{
+      margin-top:4px;
+      color:rgba(255,255,255,.56);
+      font-size:13px;
+      font-weight:600;
+    }
+
+    .settings-nav{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      margin-top:6px;
+    }
+
+    .settings-nav-item{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      width:100%;
+      padding:12px 14px;
+      border:none;
+      border-radius:18px;
+      background:transparent;
+      color:rgba(255,255,255,.88);
+      font-size:15px;
+      font-weight:650;
+      letter-spacing:-.02em;
+      cursor:pointer;
+      text-align:left;
+      transition:transform .18s ease, background .18s ease, box-shadow .18s ease;
+    }
+
+    .settings-nav-item:hover{
+      background:rgba(255,255,255,.08);
+      transform:translateY(-1px);
+    }
+
+    .settings-nav-item.active{
+      background:linear-gradient(135deg, #0b66ff, #1674ff);
+      box-shadow:0 18px 35px rgba(11,102,255,.25);
+    }
+
+    .settings-nav-icon{
+      width:38px;
+      height:38px;
+      border-radius:12px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:rgba(12,15,20,.42);
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+      flex:0 0 auto;
+    }
+
+    .settings-nav-item.active .settings-nav-icon{
+      background:rgba(10,18,34,.32);
+      border-color:rgba(255,255,255,.14);
+    }
+
+    .settings-nav-icon svg{
+      width:18px;
+      height:18px;
+    }
+
+    .settings-main{
+      position:relative;
+      padding:22px;
+      background:
+        radial-gradient(800px 400px at 80% 0%, rgba(255,255,255,.05), transparent 60%),
+        linear-gradient(180deg, rgba(255,255,255,.015), rgba(255,255,255,.01));
+    }
+
+    .settings-close{
+      position:absolute;
+      top:18px;
+      right:18px;
+      width:48px;
+      height:48px;
+      border:none;
+      border-radius:999px;
+      background:rgba(255,255,255,.07);
+      color:rgba(255,255,255,.86);
+      border:1px solid rgba(255,255,255,.08);
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      transition:background .18s ease, transform .18s ease;
+    }
+
+    .settings-close:hover{
+      background:rgba(255,255,255,.11);
+      transform:translateY(-1px);
+    }
+
+    .settings-panel{
+      display:none;
+      height:100%;
+      overflow:auto;
+      padding-right:8px;
+    }
+
+    .settings-panel.active{
+      display:block;
+    }
+
+    .settings-hero{
+      margin-top:72px;
+      padding:24px 24px 20px;
+      border-radius:24px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)),
+        rgba(35,44,59,.58);
+      border:1px solid rgba(255,255,255,.06);
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+      text-align:center;
+    }
+
+    .settings-hero-icon{
+      width:68px;
+      height:68px;
+      margin:0 auto 14px;
+      border-radius:22px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.12)),
+        rgba(20,25,35,.94);
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.08),
+        0 16px 34px rgba(0,0,0,.32);
+    }
+
+    .settings-hero h2{
+      margin:0;
+      font-size:38px;
+      line-height:1;
+      letter-spacing:-.05em;
+    }
+
+    .settings-hero p{
+      margin:10px auto 0;
+      max-width:620px;
+      color:rgba(255,255,255,.62);
+      font-size:14px;
+      line-height:1.45;
+      font-weight:550;
+    }
+
+    .settings-card{
+      margin-top:16px;
+      padding:8px;
+      border-radius:24px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.02)),
+        rgba(24,31,43,.76);
+      border:1px solid rgba(255,255,255,.06);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.04),
+        0 20px 40px rgba(0,0,0,.18);
+    }
+
+    .settings-row{
+      display:flex;
+      align-items:flex-start;
+      gap:18px;
+      padding:16px 14px;
+      border-radius:18px;
+    }
+
+    .settings-row + .settings-row{
+      border-top:1px solid rgba(255,255,255,.06);
+    }
+
+    .settings-row-icon{
+      width:38px;
+      height:38px;
+      border-radius:12px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.10);
+      color:#f2f5ff;
+      flex:0 0 auto;
+    }
+
+    .settings-row-body{
+      flex:1;
+      min-width:0;
+    }
+
+    .settings-row-head{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:16px;
+    }
+
+    .settings-row-title{
+      font-size:20px;
+      font-weight:720;
+      letter-spacing:-.04em;
+    }
+
+    .settings-row-desc{
+      margin-top:6px;
+      color:rgba(255,255,255,.60);
+      font-size:13px;
+      line-height:1.45;
+      max-width:620px;
+    }
+
+    .ios-switch{
+      position:relative;
+      width:64px;
+      height:36px;
+      flex:0 0 auto;
+    }
+
+    .ios-switch input{
+      position:absolute;
+      inset:0;
+      opacity:0;
+      cursor:pointer;
+      margin:0;
+    }
+
+    .ios-switch-track{
+      position:absolute;
+      inset:0;
+      border-radius:999px;
+      background:rgba(255,255,255,.16);
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow:inset 0 1px 2px rgba(0,0,0,.24);
+      transition:background .2s ease, border-color .2s ease, box-shadow .2s ease;
+    }
+
+    .ios-switch-thumb{
+      position:absolute;
+      top:3px;
+      left:3px;
+      width:28px;
+      height:28px;
+      border-radius:50%;
+      background:linear-gradient(180deg, rgba(255,255,255,.96), rgba(230,235,245,.96));
+      box-shadow:
+        0 8px 18px rgba(0,0,0,.22),
+        inset 0 1px 0 rgba(255,255,255,.88);
+      transition:transform .2s cubic-bezier(.34,1.2,.64,1), background .2s ease;
+    }
+
+    .ios-switch input:checked + .ios-switch-track{
+      background:linear-gradient(135deg, #44d36b, #27c95d);
+      border-color:rgba(102,255,168,.45);
+      box-shadow:
+        inset 0 1px 2px rgba(0,0,0,.14),
+        0 0 22px rgba(50,220,107,.22);
+    }
+
+    .ios-switch input:checked + .ios-switch-track .ios-switch-thumb{
+      transform:translateX(28px);
+    }
+
+    .office-mode-timer{
+      margin-top:14px;
+      display:flex;
+      align-items:center;
+      gap:14px;
+      flex-wrap:wrap;
+    }
+
+    .office-mode-timer label{
+      color:rgba(255,255,255,.72);
+      font-size:13px;
+      font-weight:650;
+    }
+
+    .office-mode-timer select{
+      min-width:180px;
+      padding:10px 38px 10px 14px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.10);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)),
+        rgba(255,255,255,.04);
+      color:var(--text);
+      font-size:13px;
+      font-weight:650;
+      appearance:none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, rgba(255,255,255,.72) 50%),
+        linear-gradient(135deg, rgba(255,255,255,.72) 50%, transparent 50%);
+      background-position:
+        calc(100% - 18px) calc(50% - 3px),
+        calc(100% - 12px) calc(50% - 3px);
+      background-size:6px 6px, 6px 6px;
+      background-repeat:no-repeat;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.04);
+    }
+
+    .office-mode-timer select:disabled{
+      opacity:.45;
+      cursor:not-allowed;
+    }
+
+    .settings-footnote{
+      margin-top:10px;
+      color:rgba(255,255,255,.48);
+      font-size:12px;
+      line-height:1.45;
+    }
+
+    .settings-empty{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      min-height:100%;
+      text-align:center;
+      color:rgba(255,255,255,.60);
+      font-size:18px;
+      font-weight:600;
+      padding:30px;
+    }
+
+    .settings-auth-note{
+      margin-top:18px;
+      padding:14px 16px;
+      border-radius:16px;
+      background:rgba(255,186,88,.10);
+      border:1px solid rgba(255,186,88,.18);
+      color:rgba(255,235,202,.88);
+      font-size:14px;
+      line-height:1.45;
+      display:none;
+    }
+
+    .settings-auth-note.show{
+      display:block;
+    }
+
+    :root.light-mode .settings-shell{
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.9), rgba(247,250,255,.96)),
+        #edf3ff;
+      border-color:rgba(89,116,186,.18);
+      box-shadow:
+        0 30px 80px rgba(20,40,80,.18),
+        inset 0 1px 0 rgba(255,255,255,.72);
+    }
+
+    :root.light-mode .settings-sidebar{
+      background:
+        radial-gradient(700px 520px at 0% 100%, rgba(48,125,255,.14), transparent 62%),
+        linear-gradient(180deg, rgba(239,245,255,.95), rgba(231,241,255,.92));
+      border-right-color:rgba(60,85,130,.08);
+    }
+
+    :root.light-mode .settings-profile-subtitle,
+    :root.light-mode .settings-row-desc,
+    :root.light-mode .settings-empty,
+    :root.light-mode .settings-footnote{
+      color:rgba(20,30,45,.60);
+    }
+
+    :root.light-mode .settings-nav-item{
+      color:#172033;
+    }
+
+    :root.light-mode .settings-nav-item:hover{
+      background:rgba(33,65,125,.07);
+    }
+
+    :root.light-mode .settings-nav-item.active{
+      color:#fff;
+    }
+
+    :root.light-mode .settings-nav-icon{
+      background:rgba(255,255,255,.70);
+      border-color:rgba(33,65,125,.08);
+    }
+
+    :root.light-mode .settings-main{
+      background:
+        radial-gradient(800px 400px at 80% 0%, rgba(68,102,170,.08), transparent 60%),
+        linear-gradient(180deg, rgba(255,255,255,.68), rgba(255,255,255,.48));
+    }
+
+    :root.light-mode .settings-close,
+    :root.light-mode .settings-card,
+    :root.light-mode .settings-hero,
+    :root.light-mode .office-mode-timer select{
+      border-color:rgba(33,65,125,.08);
+    }
+
+    :root.light-mode .settings-close,
+    :root.light-mode .settings-card,
+    :root.light-mode .settings-row-icon,
+    :root.light-mode .office-mode-timer select{
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.92), rgba(245,248,255,.88)),
+        rgba(255,255,255,.82);
+      color:#172033;
+    }
+
+    :root.light-mode .settings-hero{
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.95), rgba(245,248,255,.86)),
+        rgba(255,255,255,.88);
+    }
+
+    :root.light-mode .settings-hero-icon{
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.98), rgba(236,242,252,.96)),
+        #fff;
+      border-color:rgba(33,65,125,.10);
+    }
+
+    :root.light-mode .settings-auth-note{
+      background:rgba(255,200,107,.18);
+      border-color:rgba(255,186,88,.28);
+      color:#664100;
+    }
+
+    @media (max-width: 980px){
+      .settings-shell{
+        width:min(100vw - 20px, 900px);
+        height:min(100vh - 20px, 880px);
+        grid-template-columns:1fr;
+      }
+
+      .settings-sidebar{
+        border-right:none;
+        border-bottom:1px solid rgba(255,255,255,.07);
+      }
+
+      .settings-main{
+        padding:16px;
+      }
+
+      .settings-hero h2{
+        font-size:32px;
+      }
+    }
+
+    @media (max-width: 640px){
+      .settings-overlay{
+        padding:10px;
+      }
+
+      .settings-shell{
+        width:100%;
+        height:100%;
+        border-radius:24px;
+      }
+
+      .settings-sidebar{
+        padding:18px 14px 14px;
+      }
+
+      .settings-nav-item{
+        padding:10px 12px;
+      }
+
+      .settings-hero{
+        margin-top:72px;
+        padding:18px 16px 16px;
+      }
+
+      .settings-hero h2{
+        font-size:28px;
+      }
+
+      .settings-row{
+        padding:14px 10px;
+      }
+
+      .settings-row-head{
+        align-items:flex-start;
+      }
+
+      .settings-row-title{
+        font-size:18px;
+      }
+    }
+
     /* Botones */
     .logout-actions{
       display:flex;
@@ -2838,6 +3395,175 @@
       text-shadow: 0 2px 6px rgba(0,0,0,0.35);
     }
 
+    /* LOCK SCREEN */
+
+    .lock-screen{
+      position:fixed;
+      inset:0;
+
+      display:none;
+      align-items:center;
+      justify-content:center;
+      flex-direction:column;
+
+      backdrop-filter: blur(50px) saturate(180%);
+
+      background:
+        radial-gradient(
+          ellipse at center,
+          rgba(0,0,0,.25) 0%,
+          rgba(0,0,0,.45) 100%
+        );
+
+      z-index:999999;
+
+      gap:26px;
+
+      animation: lockFade .35s ease;
+    }
+
+    @keyframes lockFade{
+      from{
+        opacity:0;
+        transform:scale(1.03);
+      }
+      to{
+        opacity:1;
+        transform:scale(1);
+      }
+    }
+
+    .lock-screen.active{
+      display:flex;
+    }
+
+    /* quitamos el card negro */
+
+    .lock-card{
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:18px;
+
+      text-align:center;
+    }
+
+    /* texto principal */
+
+    .lock-title{
+      font-size:20px;
+      font-weight:600;
+
+      color:white;
+
+      text-shadow:
+        0 3px 18px rgba(0,0,0,.65),
+        0 0 40px rgba(0,0,0,.35);
+
+      max-width:340px;
+
+      letter-spacing:.3px;
+    }
+
+    /* input PIN */
+
+    .pin-input{
+      width:190px;
+      padding:16px;
+
+      border-radius:18px;
+
+      border:1px solid rgba(255,255,255,.35);
+
+      background: rgba(255,255,255,.06);
+
+      backdrop-filter: blur(30px);
+
+      font-size:22px;
+      text-align:center;
+
+      letter-spacing:10px;
+
+      color:white;
+
+      outline:none;
+
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.25),
+        inset 0 -1px 0 rgba(255,255,255,.05),
+        0 20px 50px rgba(0,0,0,.5);
+
+      transition:.2s;
+    }
+
+    .pin-input:focus{
+
+      border-color: rgba(255,255,255,.6);
+
+      background: rgba(255,255,255,.1);
+
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.35),
+        0 0 20px rgba(255,255,255,.15),
+        0 20px 50px rgba(0,0,0,.5);
+
+    }
+
+    /* círculos del PIN */
+
+    .pin-input[type="password"]{
+      font-family: "SF Pro Display", system-ui;
+    }
+
+    /* botón desbloquear */
+
+    .lock-card .btn{
+
+      width:200px;
+
+      backdrop-filter: blur(20px);
+
+      background: rgba(255,255,255,.1);
+
+      border:1px solid rgba(255,255,255,.25);
+
+      box-shadow:
+        0 10px 25px rgba(0,0,0,.4);
+
+    }
+
+    /* olvidé PIN */
+
+    .forgot-pin{
+
+      font-size:13px;
+
+      color:rgba(255,255,255,.75);
+
+      cursor:pointer;
+
+      text-shadow:0 2px 12px rgba(0,0,0,.7);
+
+      transition:.2s;
+    }
+
+    .forgot-pin:hover{
+
+      color:white;
+      transform:translateY(-1px);
+
+    }
+
+    /* error */
+
+    .pin-error{
+      font-size:13px;
+
+      color:#ff6b6b;
+
+      text-shadow:0 2px 10px rgba(0,0,0,.7);
+    }
+
 
 
 
@@ -3012,6 +3738,141 @@
   <div id="loadingScreen">
     <div class="loader"></div>
   </div>
+
+  <div id="settingsOverlay" class="settings-overlay">
+    <div class="settings-shell">
+      <aside class="settings-sidebar">
+        <div class="settings-profile">
+          <img id="settingsProfileAvatar" class="settings-profile-avatar" src="/flav-icon.png" alt="Perfil">
+          <div>
+            <div id="settingsProfileName" class="settings-profile-name">Invitado</div>
+            <div class="settings-profile-subtitle">Configuración de MultiTareas</div>
+          </div>
+        </div>
+
+        <nav class="settings-nav">
+          <button class="settings-nav-item" data-settings-panel="general">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M4 7C4 5.89543 4.89543 5 6 5H18C19.1046 5 20 5.89543 20 7V17C20 18.1046 19.1046 19 18 19H6C4.89543 19 4 18.1046 4 17V7Z" stroke="currentColor" stroke-width="1.8"/>
+                <path d="M8 9H16M8 13H13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </span>
+            General
+          </button>
+
+          <button class="settings-nav-item active" data-settings-panel="security">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M12 3L19 7V12C19 16.4183 16.3137 20.4402 12 22C7.68629 20.4402 5 16.4183 5 12V7L12 3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                <path d="M9.5 12.5L11.2 14.2L14.8 10.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            Seguridad
+          </button>
+        </nav>
+      </aside>
+
+      <section class="settings-main">
+        <button id="settingsCloseBtn" class="settings-close" aria-label="Cerrar ajustes">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+
+        <div id="settingsPanelGeneral" class="settings-panel">
+          <div class="settings-empty">
+            Próximamente podrás administrar más preferencias desde este espacio.
+          </div>
+        </div>
+
+        <div id="settingsPanelSecurity" class="settings-panel active">
+          <div class="settings-hero">
+            <div class="settings-hero-icon">
+              <svg width="50" height="50" viewBox="0 0 24 24" fill="none">
+                <path d="M12 3L19 7V12C19 16.4183 16.3137 20.4402 12 22C7.68629 20.4402 5 16.4183 5 12V7L12 3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                <path d="M9.5 12.5L11.2 14.2L14.8 10.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <h2>Seguridad</h2>
+            <p>Administra el comportamiento de bloqueo de la app y guarda tus preferencias por cuenta para que el acceso a tus tareas sea consistente en cada inicio de sesión.</p>
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="settings-row-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <path d="M7 11V8.5C7 5.46243 9.46243 3 12.5 3C15.5376 3 18 5.46243 18 8.5V11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                  <rect x="5" y="11" width="15" height="10" rx="3" stroke="currentColor" stroke-width="1.8"/>
+                </svg>
+              </div>
+
+              <div class="settings-row-body">
+                <div class="settings-row-head">
+                  <div class="settings-row-title">Modo Oficina</div>
+
+                  <label class="ios-switch" aria-label="Activar modo oficina">
+                    <input id="officeModeToggle" type="checkbox">
+                    <span class="ios-switch-track">
+                      <span class="ios-switch-thumb"></span>
+                    </span>
+                  </label>
+                </div>
+
+                <div class="settings-row-desc">
+                  Activa este modo para bloquear tu pantalla en un determinado tiempo. Al desbloquearla, la app te pedirá la huella o biometría del dispositivo.
+                </div>
+
+                <div class="office-mode-timer">
+                  <label for="officeModeTimeoutSelect">Bloquear después de</label>
+                  <select id="officeModeTimeoutSelect">
+                    <option value="30">30 segundos</option>
+                    <option value="60">1 minuto</option>
+                    <option value="120">2 minutos</option>
+                    <option value="300">5 minutos</option>
+                  </select>
+                </div>
+
+                <div class="settings-footnote">
+                  Si activas el modo y todavía no tienes PIN, la app te pedirá crearlo junto con la credencial biométrica antes de guardar la configuración.
+                </div>
+
+                <div id="settingsAuthNote" class="settings-auth-note">
+                  Inicia sesión con tu cuenta para guardar esta configuración en Firebase.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- LOCK SCREEN -->
+  <div id="lockScreen" class="lock-screen">
+    <div class="lock-card">
+
+      <div class="lock-title">
+        Desbloquea con tu huella para continuar
+      </div>
+
+      <div id="lockBiometricHint" class="forgot-pin" style="margin:10px 0 18px;">
+        Usa la verificación del dispositivo para volver a entrar.
+      </div>
+
+      <button id="unlockBtn" class="btn primary">
+        Usar huella
+      </button>
+
+      <div id="forgotPinBtn" class="forgot-pin">
+        Cerrar sesión
+      </div>
+
+      <div id="pinError" class="pin-error"></div>
+
+    </div>
+  </div>
+
   <aside class="sidebar">
     <div class="logo">
       <div class="brand">
@@ -3024,7 +3885,7 @@
         </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
-          <span class="version">v1.7</span>
+          <span class="version">v1.8</span>
         </div>
       </div>
 
@@ -3060,16 +3921,14 @@
     <div class="panel">
       <h3 class="changelog-title">
         NOTAS DE VERSIÓN
-        <span class="changelog-version">v1.7</span>
+        <span class="changelog-version">v1.8</span>
       </h3>
       <div class="muted changelog">
         <ul>
+          <li>Nuevo menu de Ajustes.</li>
+          <li>Modo Oficina: Se puede elegir si bloquear la app al no usarla por un tiempo determinado.</li>
           <li>Indicador de guardado.</li>
           <li>Nuevo modo: Usa el modo proyectos para crear tareas que no dependan de una fecha concreta.</li>
-          <li>Arreglo de errores.</li>
-          <li>Nuevo sistema de niveles.</li>
-          <li>Completar tareas sube tu nivel.</li>
-          <li>Tabla de posiciones segun puntos de nivel.</li>
         </ul>
       </div>
     </div>
