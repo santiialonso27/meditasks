@@ -1800,7 +1800,14 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               targetList._showIndicator?.(taskBelow, previewPosition);
             } else {
               const targetTasks = getDropTargetList(targetDate, targetProject);
-              const visualInsertIndex = targetTasks ? targetTasks.length : 0;
+              const firstTask = targetList.querySelector(".task");
+              const isAboveFirstTask =
+                firstTask &&
+                y < firstTask.getBoundingClientRect().top;
+
+              const visualInsertIndex = isAboveFirstTask
+                ? 0
+                : (targetTasks ? targetTasks.length : 0);
               let rawInsertIndex = visualInsertIndex;
 
               const sameProjectTarget = !!targetProject && projectId === targetProject;
@@ -1821,7 +1828,11 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
                 insertIndex: visualInsertIndex,
                 list: targetList
               };
-              targetList._showIndicatorAtEnd?.();
+              if (isAboveFirstTask) {
+                targetList._showIndicator?.(firstTask, "before");
+              } else {
+                targetList._showIndicatorAtEnd?.();
+              }
             }
           };
 
