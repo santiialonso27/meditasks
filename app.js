@@ -362,6 +362,12 @@ document.addEventListener("touchstart", (e) => {
   setMobileTaskReorderMode(false);
 }, { passive: true });
 
+document.addEventListener("selectstart", (e) => {
+  if (!isMobileViewport()) return;
+  if (e.target.closest(".edit-input")) return;
+  e.preventDefault();
+});
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }

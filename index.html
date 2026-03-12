@@ -3607,6 +3607,7 @@
     @media (max-width: 900px) {
 
       body,
+      html,
       body * {
         user-select: none;
         -webkit-user-select: none;
@@ -3918,7 +3919,16 @@
       .projects-container .col{
         width:100%;
         min-width:0;
+        max-width:100%;
+        flex:none;
         margin-bottom:20px;
+      }
+
+      .projects-container .project-col{
+        width:100%;
+        min-width:100%;
+        max-width:100%;
+        flex:none;
       }
 
       .project-add-card{
@@ -4127,6 +4137,7 @@
       </h3>
       <div class="muted changelog">
         <ul>
+          <li>Ahora se pueden reordenar tareas desde el celular.</li>
           <li>Nuevo menu de Ajustes.</li>
           <li>Modo Oficina: Se puede elegir si bloquear la app al no usarla por un tiempo determinado.</li>
           <li>Indicador de guardado.</li>
