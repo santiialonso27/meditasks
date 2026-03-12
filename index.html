@@ -4089,7 +4089,7 @@
                 </div>
 
                 <div class="settings-row-desc">
-                  Activa este modo para bloquear tu pantalla en un determinado tiempo. Al desbloquearla, la app te pedirá la huella o biometría del dispositivo.
+                  Activa este modo para bloquear tu pantalla después de un tiempo de inactividad. Al desbloquearla, la app te pedirá tu PIN.
                 </div>
 
                 <div class="office-mode-timer">
@@ -4105,7 +4105,7 @@
                 </div>
 
                 <div class="settings-footnote">
-                  Si activas el modo y todavía no tienes PIN, la app te pedirá crearlo junto con la credencial biométrica antes de guardar la configuración.
+                  Si activas el modo y todavía no tienes PIN, la app te pedirá crearlo y lo guardará en Firebase para usarlo en todos tus dispositivos.
                 </div>
 
                 <div id="settingsAuthNote" class="settings-auth-note">
@@ -4124,15 +4124,17 @@
     <div class="lock-card">
 
       <div class="lock-title">
-        Desbloquea con tu huella para continuar
+        Ingresa tu PIN para continuar
       </div>
 
-      <div id="lockBiometricHint" class="forgot-pin" style="margin:10px 0 18px;">
-        Usa la verificación del dispositivo para volver a entrar.
+      <div class="forgot-pin" style="margin:10px 0 18px;">
+        Este bloqueo sigue activo aunque recargues o abras otra pestaña.
       </div>
+
+      <input id="pinInput" class="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="PIN">
 
       <button id="unlockBtn" class="btn primary">
-        Usar huella
+        Desbloquear
       </button>
 
       <div id="forgotPinBtn" class="forgot-pin">

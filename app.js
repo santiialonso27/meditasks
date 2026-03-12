@@ -74,7 +74,8 @@ let officeModeEnabled = false;
 let officeModeTimeoutSeconds = 60;
 let inactivityTimer = null;
 let isLocked = false;
-let deviceCredentialId = null;
+let securityPinHash = "";
+let legacySecurityPin = "";
 
 const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
 const MOBILE_BREAKPOINT = 900;
@@ -85,6 +86,7 @@ const MOBILE_DRAG_AUTOSCROLL_EDGE_PX = 72;
 const MOBILE_DRAG_AUTOSCROLL_MAX_SPEED = 16;
 const MOBILE_DRAG_PREVIEW_STICKY_TOP = 0.38;
 const MOBILE_DRAG_PREVIEW_STICKY_BOTTOM = 0.62;
+const OFFICE_MODE_LOCK_STORAGE_KEY = "mt_office_mode_locked";
 
 let activeTaskMobileFocus = null;
 let mobileTaskReorderBanner = null;
@@ -562,15 +564,26 @@ onAuthStateChanged(auth, async (user) => {
         officeModeTimeoutSeconds = normalizeOfficeModeTimeout(
           data.officeModeTimeoutSeconds
         );
-        deviceCredentialId = data.deviceCredentialId || null;
+        securityPinHash = data.securityPinHash || "";
+        legacySecurityPin = data.securityPin || "";
+        isLocked = !!data.officeModeLocked;
+        setLocalOfficeLockState(isLocked);
 
         updateSettingsProfile(user);
         syncOfficeModeControls();
 
         if(officeModeEnabled){
-          resetInactivityTimer();
+          if(isLocked){
+            lockApp(false);
+          }else{
+            hideLockScreen();
+            clearLockFeedback();
+            resetInactivityTimer();
+          }
         }else{
           clearTimeout(inactivityTimer);
+          isLocked = false;
+          hideLockScreen();
         }
 
         const cloudTasks = data.tasks || {};
@@ -695,8 +708,12 @@ onAuthStateChanged(auth, async (user) => {
         currentUser = null;
         officeModeEnabled = false;
         officeModeTimeoutSeconds = 60;
-        deviceCredentialId = null;
+        securityPinHash = "";
+        legacySecurityPin = "";
+        isLocked = false;
+        setLocalOfficeLockState(false);
         clearTimeout(inactivityTimer);
+        hideLockScreen();
         updateSettingsProfile(null);
         syncOfficeModeControls();
 
@@ -932,6 +949,14 @@ function normalizeOfficeModeTimeout(value){
   return OFFICE_MODE_TIMEOUT_OPTIONS.includes(parsed) ? parsed : 60;
 }
 
+async function hashSecurityPin(pin){
+  const data = new TextEncoder().encode(pin);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 function updateSettingsProfile(user = currentUser){
   if(settingsProfileName){
     settingsProfileName.textContent = user?.displayName || "Invitado";
@@ -940,6 +965,10 @@ function updateSettingsProfile(user = currentUser){
   if(settingsProfileAvatar){
     settingsProfileAvatar.src = user?.photoURL || "/flav-icon.png";
   }
+}
+
+function setLocalOfficeLockState(locked){
+  localStorage.setItem(OFFICE_MODE_LOCK_STORAGE_KEY, locked ? "true" : "false");
 }
 
 function syncOfficeModeControls(){
@@ -3855,109 +3884,24 @@ function clearLockFeedback(){
   }
 }
 
-function finishUnlock(){
+function hideLockScreen(){
   const lockScreen = document.getElementById("lockScreen");
+  lockScreen?.classList.remove("active");
+}
 
-  lockScreen.classList.remove("active");
-
+async function finishUnlock(){
+  hideLockScreen();
   clearLockFeedback();
   isLocked = false;
+  setLocalOfficeLockState(false);
   resetInactivityTimer();
-}
-
-async function platformAuthenticatorAvailable(){
-  if(!window.PublicKeyCredential) return false;
-  if(typeof PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable !== "function"){
-    return false;
-  }
-
-  try{
-    return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-  }catch(err){
-    console.error("No se pudo verificar biometría del dispositivo", err);
-    return false;
-  }
-}
-
-function credentialToBase64(credential){
-  return btoa(String.fromCharCode(...new Uint8Array(credential.rawId)));
-}
-
-async function registerDeviceCredential(){
-  if(!(await platformAuthenticatorAvailable())){
-    alert("Este dispositivo no soporta desbloqueo biométrico compatible.");
-    return null;
-  }
-
-  const challenge = crypto.getRandomValues(new Uint8Array(32));
-  const userId = crypto.getRandomValues(new Uint8Array(16));
-
-  const credential = await navigator.credentials.create({
-    publicKey:{
-      challenge,
-      rp:{ name:"MultiTareas" },
-      user:{
-        id:userId,
-        name:currentUser.email,
-        displayName:currentUser.displayName || currentUser.email
-      },
-      pubKeyCredParams:[
-        { type:"public-key", alg:-7 },
-        { type:"public-key", alg:-257 }
-      ],
-      authenticatorSelection:{
-        authenticatorAttachment:"platform",
-        userVerification:"required"
-      },
-      timeout:60000,
-      attestation:"none"
-    }
-  });
-
-  return credential;
-}
-
-async function unlockWithDevice(){
-  if(!isLocked) return false;
-  if(!deviceCredentialId) return false;
-
-  const pinError = document.getElementById("pinError");
-
-  if(pinError){
-    pinError.textContent = "";
-  }
-
-  try{
-    const credentialId = Uint8Array.from(
-      atob(deviceCredentialId),
-      c => c.charCodeAt(0)
-    );
-
-    await navigator.credentials.get({
-      publicKey:{
-        challenge: crypto.getRandomValues(new Uint8Array(32)),
-        allowCredentials:[
-          {
-            type:"public-key",
-            id:credentialId
-          }
-        ],
-        userVerification:"required",
-        timeout:60000
-      }
+  if(currentUser){
+    await saveOfficeModePreferences({
+      officeModeLocked: false
     });
-
-    finishUnlock();
-    return true;
-  }catch(err){
-    console.error("La verificación biométrica falló o fue cancelada", err);
-
-    if(pinError){
-      pinError.textContent = "No se pudo verificar la huella. Intenta nuevamente.";
-    }
-
-    return false;
   }
+
+  return true;
 }
 
 async function promptForNewSecurityPin(){
@@ -3991,59 +3935,40 @@ async function enableOfficeMode(){
     return false;
   }
 
-  if(!(await platformAuthenticatorAvailable())){
-    alert("Necesitas un dispositivo con huella o biometría compatible para usar Modo Oficina.");
-    syncOfficeModeControls();
-    return false;
-  }
-
   const userRef = doc(db,"users",currentUser.uid);
   const snap = await getDoc(userRef);
   const data = snap.data() || {};
   const updates = {};
 
-  let securityPin = data.securityPin || "";
+  let nextSecurityPinHash = data.securityPinHash || "";
+  const existingLegacyPin = data.securityPin || "";
 
-  if(!securityPin){
-    securityPin = await promptForNewSecurityPin();
+  if(!nextSecurityPinHash && !existingLegacyPin){
+    const securityPin = await promptForNewSecurityPin();
 
     if(!securityPin){
       syncOfficeModeControls();
       return false;
     }
 
-    updates.securityPin = securityPin;
-  }
-
-  let credentialId = data.deviceCredentialId || null;
-
-  if(!credentialId){
-    try{
-      const credential = await registerDeviceCredential();
-
-      if(!credential){
-        syncOfficeModeControls();
-        return false;
-      }
-
-      credentialId = credentialToBase64(credential);
-      updates.deviceCredentialId = credentialId;
-    }catch(err){
-      console.error(err);
-      alert("No se pudo crear la llave biométrica del dispositivo.");
-      syncOfficeModeControls();
-      return false;
-    }
+    nextSecurityPinHash = await hashSecurityPin(securityPin);
+    updates.securityPinHash = nextSecurityPinHash;
+  }else if(!nextSecurityPinHash && existingLegacyPin){
+    nextSecurityPinHash = await hashSecurityPin(existingLegacyPin);
+    updates.securityPinHash = nextSecurityPinHash;
   }
 
   updates.officeModeEnabled = true;
   updates.securityPinEnabled = true;
   updates.officeModeTimeoutSeconds = officeModeTimeoutSeconds;
+  updates.officeModeLocked = false;
 
   await saveOfficeModePreferences(updates);
 
   officeModeEnabled = true;
-  deviceCredentialId = credentialId;
+  securityPinHash = nextSecurityPinHash;
+  legacySecurityPin = existingLegacyPin;
+  isLocked = false;
   syncOfficeModeControls();
   resetInactivityTimer();
   return true;
@@ -4058,31 +3983,91 @@ async function disableOfficeMode(){
   await saveOfficeModePreferences({
     officeModeEnabled: false,
     securityPinEnabled: false,
-    officeModeTimeoutSeconds
+    officeModeTimeoutSeconds,
+    officeModeLocked: false
   });
 
   officeModeEnabled = false;
+  isLocked = false;
+  setLocalOfficeLockState(false);
   clearTimeout(inactivityTimer);
+  hideLockScreen();
   syncOfficeModeControls();
   return true;
 }
 
-function lockApp(){
+async function lockApp(shouldPersist = true){
 
-  if(isLocked) return;
+  if(isLocked && shouldPersist) return;
 
   const lock = document.getElementById("lockScreen");
 
   lock.classList.add("active");
   clearLockFeedback();
+  requestAnimationFrame(() => {
+    document.getElementById("pinInput")?.focus();
+  });
 
   isLocked = true;
-  unlockWithDevice();
+  setLocalOfficeLockState(true);
+  clearTimeout(inactivityTimer);
+
+  if(shouldPersist && currentUser){
+    await saveOfficeModePreferences({
+      officeModeLocked: true
+    });
+  }
 
 }
 
 const unlockBtn = document.getElementById("unlockBtn");
-unlockBtn.addEventListener("click", unlockWithDevice);
+unlockBtn.addEventListener("click", async ()=>{
+  if(!isLocked) return;
+
+  const pinInput = document.getElementById("pinInput");
+  const pinError = document.getElementById("pinError");
+  const enteredPin = pinInput?.value.trim() || "";
+
+  if(pinError){
+    pinError.textContent = "";
+  }
+
+  if(!/^\d{4,6}$/.test(enteredPin)){
+    if(pinError){
+      pinError.textContent = "Ingresa tu PIN de 4 a 6 números.";
+    }
+    return;
+  }
+
+  const enteredPinHash = await hashSecurityPin(enteredPin);
+  const matchesHashed = !!securityPinHash && enteredPinHash === securityPinHash;
+  const matchesLegacy = !!legacySecurityPin && enteredPin === legacySecurityPin;
+
+  if(!matchesHashed && !matchesLegacy){
+    if(pinError){
+      pinError.textContent = "PIN incorrecto. Intenta nuevamente.";
+    }
+    return;
+  }
+
+  if(matchesLegacy && !securityPinHash && currentUser){
+    securityPinHash = enteredPinHash;
+    legacySecurityPin = enteredPin;
+    await saveOfficeModePreferences({
+      securityPinHash
+    });
+  }
+
+  await finishUnlock();
+});
+
+const pinInput = document.getElementById("pinInput");
+pinInput?.addEventListener("keydown", (e)=>{
+  if(e.key === "Enter"){
+    e.preventDefault();
+    unlockBtn.click();
+  }
+});
 
 const forgotBtn = document.getElementById("forgotPinBtn");
 
@@ -4105,6 +4090,11 @@ forgotBtn.addEventListener("click", async ()=>{
   }
 
 });
+
+if(localStorage.getItem(OFFICE_MODE_LOCK_STORAGE_KEY) === "true"){
+  document.getElementById("lockScreen")?.classList.add("active");
+  isLocked = true;
+}
 
 document.documentElement.classList.remove("pre-collapsed");
 
