@@ -1704,6 +1704,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           if (isMobileViewport()) {
             createMobileTouchDragGhost(el, e.touches[0]);
             el.style.opacity = "0";
+            el.style.pointerEvents = "none";
           }
 
           el.classList.add("dragging-touch");
@@ -1800,10 +1801,20 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               targetList._showIndicator?.(taskBelow, previewPosition);
             } else {
               const targetTasks = getDropTargetList(targetDate, targetProject);
+              const taskElements = Array.from(targetList.querySelectorAll(".task"));
               const firstTask = targetList.querySelector(".task");
+              const lastTask = taskElements[taskElements.length - 1];
               const isAboveFirstTask =
                 firstTask &&
                 y < firstTask.getBoundingClientRect().top;
+              const isBelowLastTask =
+                lastTask &&
+                y > lastTask.getBoundingClientRect().bottom;
+
+              if (!isAboveFirstTask && !isBelowLastTask) {
+                removeActiveMobileDropIndicator();
+                return;
+              }
 
               const visualInsertIndex = isAboveFirstTask
                 ? 0
@@ -1869,6 +1880,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
           if (draggedElement) {
             draggedElement.style.opacity = "";
+            draggedElement.style.pointerEvents = "";
           }
 
           draggedElement = null;
@@ -1883,6 +1895,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
           if (draggedElement) {
             draggedElement.style.opacity = "";
+            draggedElement.style.pointerEvents = "";
           }
 
           draggedElement = null;
