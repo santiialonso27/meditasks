@@ -83,6 +83,8 @@ const MOBILE_TASK_MOVE_TOLERANCE = 12;
 const MOBILE_TASK_FOCUS_KEYBOARD_DELAY_MS = 160;
 const MOBILE_DRAG_AUTOSCROLL_EDGE_PX = 72;
 const MOBILE_DRAG_AUTOSCROLL_MAX_SPEED = 16;
+const MOBILE_DRAG_PREVIEW_STICKY_TOP = 0.38;
+const MOBILE_DRAG_PREVIEW_STICKY_BOTTOM = 0.62;
 
 let activeTaskMobileFocus = null;
 let mobileTaskReorderBanner = null;
@@ -90,6 +92,31 @@ let mobileDragAutoScrollRaf = null;
 let mobileDragAutoScrollSpeed = 0;
 let mobileDragAutoScrollTouch = null;
 let mobileDragAutoScrollCallback = null;
+
+function getStablePreviewPosition(targetIndex, percent, draggedIndex, isSameContainer) {
+  const existingTarget = mobileActiveDropTarget;
+  const existingIndex = existingTarget?.insertIndex;
+
+  if (isSameContainer && targetIndex === draggedIndex + 1) {
+    if (percent < MOBILE_DRAG_PREVIEW_STICKY_TOP) return null;
+    return "after";
+  }
+
+  if (isSameContainer && targetIndex === draggedIndex - 1) {
+    if (percent > MOBILE_DRAG_PREVIEW_STICKY_BOTTOM) return null;
+    return "before";
+  }
+
+  if (percent <= MOBILE_DRAG_PREVIEW_STICKY_TOP) return "before";
+  if (percent >= MOBILE_DRAG_PREVIEW_STICKY_BOTTOM) return "after";
+
+  if (existingTarget?.taskIndex === targetIndex && existingTarget?.sameContainer === isSameContainer) {
+    if (existingIndex === targetIndex) return "before";
+    if (existingIndex === targetIndex + 1) return "after";
+  }
+
+  return percent < 0.5 ? "before" : "after";
+}
 
 function isMobileViewport() {
   return window.innerWidth <= MOBILE_BREAKPOINT;
@@ -1758,28 +1785,15 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               const sameProjectTarget = !!targetProject && projectId === targetProject;
               const sameDateTarget = !!targetDate && iso === targetDate;
               const isSameContainer = sameProjectTarget || sameDateTarget;
-              const isImmediateNext = isSameContainer && targetIndex === i + 1;
-              const isImmediatePrev = isSameContainer && targetIndex === i - 1;
+              const previewPosition = getStablePreviewPosition(targetIndex, percent, i, isSameContainer);
 
-              let visualInsertIndex;
-              let previewPosition;
-
-              if (isImmediateNext) {
-                if (percent < 0.35) {
-                  return;
-                }
-                visualInsertIndex = targetIndex + 1;
-                previewPosition = "after";
-              } else if (isImmediatePrev) {
-                if (percent > 0.65) {
-                  return;
-                }
-                visualInsertIndex = targetIndex;
-                previewPosition = "before";
-              } else {
-                visualInsertIndex = percent < 0.5 ? targetIndex : targetIndex + 1;
-                previewPosition = percent < 0.5 ? "before" : "after";
+              if (!previewPosition) {
+                return;
               }
+
+              const visualInsertIndex = previewPosition === "before"
+                ? targetIndex
+                : targetIndex + 1;
 
               let rawInsertIndex = visualInsertIndex;
 
@@ -1796,7 +1810,9 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
                 targetDate,
                 targetProject,
                 insertIndex: visualInsertIndex,
-                list: targetList
+                list: targetList,
+                taskIndex: targetIndex,
+                sameContainer: isSameContainer
               };
               targetList._showIndicator?.(taskBelow, previewPosition);
             } else {
@@ -1837,7 +1853,9 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
                 targetDate,
                 targetProject,
                 insertIndex: visualInsertIndex,
-                list: targetList
+                list: targetList,
+                taskIndex: isAboveFirstTask ? 0 : (taskElements.length - 1),
+                sameContainer: (!!targetProject && projectId === targetProject) || (!!targetDate && iso === targetDate)
               };
               if (isAboveFirstTask) {
                 targetList._showIndicator?.(firstTask, "before");

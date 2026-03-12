@@ -3606,6 +3606,19 @@
     /* ===== MOBILE SIDEBAR DEFINITIVO ===== */
     @media (max-width: 900px) {
 
+      body,
+      body * {
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+      }
+
+      .edit-input {
+        user-select: text;
+        -webkit-user-select: text;
+        -webkit-touch-callout: default;
+      }
+
       #taskMobileOverlay {
         position: fixed;
         inset: 0;
