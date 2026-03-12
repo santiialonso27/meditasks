@@ -1763,7 +1763,11 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
             const elementBelow = document.elementFromPoint(touch.clientX, y);
             const taskBelow = elementBelow?.closest(".task");
-            const targetList = taskBelow?.closest(".list") || elementBelow?.closest(".list");
+            const targetColumn = elementBelow?.closest(".col");
+            const targetList =
+              taskBelow?.closest(".list") ||
+              elementBelow?.closest(".list") ||
+              targetColumn?.querySelector(".list");
 
             if (!targetList) {
               removeActiveMobileDropIndicator();
@@ -1826,6 +1830,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               const taskElements = Array.from(targetList.querySelectorAll(".task"));
               const firstTask = targetList.querySelector(".task");
               const lastTask = taskElements[taskElements.length - 1];
+              const isEmptyList = taskElements.length === 0;
               const isAboveFirstTask =
                 firstTask &&
                 y < firstTask.getBoundingClientRect().top;
@@ -1833,12 +1838,14 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
                 lastTask &&
                 y > lastTask.getBoundingClientRect().bottom;
 
-              if (!isAboveFirstTask && !isBelowLastTask) {
+              if (!isEmptyList && !isAboveFirstTask && !isBelowLastTask) {
                 removeActiveMobileDropIndicator();
                 return;
               }
 
-              const visualInsertIndex = isAboveFirstTask
+              const visualInsertIndex = isEmptyList
+                ? 0
+                : isAboveFirstTask
                 ? 0
                 : (targetTasks ? targetTasks.length : 0);
               let rawInsertIndex = visualInsertIndex;
@@ -1860,10 +1867,12 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
                 targetProject,
                 insertIndex: visualInsertIndex,
                 list: targetList,
-                taskIndex: isAboveFirstTask ? 0 : (taskElements.length - 1),
+                taskIndex: isAboveFirstTask || isEmptyList ? 0 : (taskElements.length - 1),
                 sameContainer: (!!targetProject && projectId === targetProject) || (!!targetDate && iso === targetDate)
               };
-              if (isAboveFirstTask) {
+              if (isEmptyList) {
+                targetList._showIndicatorAtEnd?.();
+              } else if (isAboveFirstTask) {
                 targetList._showIndicator?.(firstTask, "before");
               } else {
                 targetList._showIndicatorAtEnd?.();
