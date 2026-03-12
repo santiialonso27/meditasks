@@ -65,6 +65,7 @@ let currentPosition = null;
 let previewInsertIndex = null;
 let mobileTaskReorderMode = false;
 let activeMobileDropList = null;
+let mobileActiveDropTarget = null;
 let mobileTouchDragGhost = null;
 let mobileTouchDragOffsetX = 0;
 let mobileTouchDragOffsetY = 0;
@@ -181,6 +182,7 @@ function removeActiveMobileDropIndicator(resetState = true) {
     activeMobileDropList._removeIndicator(resetState);
   }
   activeMobileDropList = null;
+  mobileActiveDropTarget = null;
   previewInsertIndex = null;
 }
 
@@ -1752,28 +1754,50 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               const rect = taskBelow.getBoundingClientRect();
               const percent = (y - rect.top) / rect.height;
               const targetIndex = parseInt(taskBelow.dataset.index, 10);
-              const visualInsertIndex = percent < 0.5 ? targetIndex : targetIndex + 1;
-              let rawInsertIndex = visualInsertIndex;
-
               const sameProjectTarget = !!targetProject && projectId === targetProject;
               const sameDateTarget = !!targetDate && iso === targetDate;
+              const isSameContainer = sameProjectTarget || sameDateTarget;
+              const isImmediateNext = isSameContainer && targetIndex === i + 1;
+              const isImmediatePrev = isSameContainer && targetIndex === i - 1;
 
-              if ((sameProjectTarget || sameDateTarget) && i < rawInsertIndex) {
+              let visualInsertIndex;
+              let previewPosition;
+
+              if (isImmediateNext) {
+                if (percent < 0.35) {
+                  return;
+                }
+                visualInsertIndex = targetIndex + 1;
+                previewPosition = "after";
+              } else if (isImmediatePrev) {
+                if (percent > 0.65) {
+                  return;
+                }
+                visualInsertIndex = targetIndex;
+                previewPosition = "before";
+              } else {
+                visualInsertIndex = percent < 0.5 ? targetIndex : targetIndex + 1;
+                previewPosition = percent < 0.5 ? "before" : "after";
+              }
+
+              let rawInsertIndex = visualInsertIndex;
+
+              if (isSameContainer && i < rawInsertIndex) {
                 rawInsertIndex--;
               }
 
               if (rawInsertIndex === i) {
-                removeActiveMobileDropIndicator();
                 return;
               }
 
-              if (percent < 0.5) {
-                previewInsertIndex = visualInsertIndex;
-                targetList._showIndicator?.(taskBelow, "before");
-              } else {
-                previewInsertIndex = visualInsertIndex;
-                targetList._showIndicator?.(taskBelow, "after");
-              }
+              previewInsertIndex = visualInsertIndex;
+              mobileActiveDropTarget = {
+                targetDate,
+                targetProject,
+                insertIndex: visualInsertIndex,
+                list: targetList
+              };
+              targetList._showIndicator?.(taskBelow, previewPosition);
             } else {
               const targetTasks = getDropTargetList(targetDate, targetProject);
               const visualInsertIndex = targetTasks ? targetTasks.length : 0;
@@ -1787,11 +1811,16 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               }
 
               if (rawInsertIndex === i) {
-                removeActiveMobileDropIndicator();
                 return;
               }
 
               previewInsertIndex = visualInsertIndex;
+              mobileActiveDropTarget = {
+                targetDate,
+                targetProject,
+                insertIndex: visualInsertIndex,
+                list: targetList
+              };
               targetList._showIndicatorAtEnd?.();
             }
           };
@@ -1805,20 +1834,18 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         el.addEventListener("touchend", () => {
           if (isMobileViewport() && !isMobileTaskReorderEnabled()) return;
 
-          const targetList = activeMobileDropList;
-          const targetDate = targetList?.dataset.date || null;
-          const targetProject = targetList?.dataset.project || null;
+          const dropTarget = mobileActiveDropTarget;
 
-          if (draggedElement && targetList && previewInsertIndex !== null) {
+          if (draggedElement && dropTarget) {
             const moved = moveTaskToTarget(
               {
                 fromDate: iso,
                 fromProject: projectId,
                 index: i
               },
-              targetDate,
-              targetProject,
-              previewInsertIndex
+              dropTarget.targetDate,
+              dropTarget.targetProject,
+              dropTarget.insertIndex
             );
 
             if (moved) {
