@@ -3933,6 +3933,63 @@
         flex:none;
       }
 
+      #leaderboardOverlay .modal{
+        width: min(94vw, 520px);
+      }
+
+      #leaderboardOverlay .leaderboard-list{
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+
+      #leaderboardOverlay .leaderboard-row{
+        min-width: 0;
+        width: 100%;
+        grid-template-columns: 30px 34px minmax(0, 1fr) 64px 56px;
+        gap: 8px;
+        padding: 8px 10px;
+      }
+
+      #leaderboardOverlay .leader-pos{
+        width: 30px;
+        font-size: 22px;
+      }
+
+      #leaderboardOverlay .leader-rank-circle{
+        width: 24px;
+        height: 24px;
+        font-size: 12px;
+      }
+
+      #leaderboardOverlay .leader-photo{
+        width: 34px;
+        height: 34px;
+      }
+
+      #leaderboardOverlay .leader-name,
+      #leaderboardOverlay .leader-level,
+      #leaderboardOverlay .leader-exp{
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      #leaderboardOverlay .leader-name{
+        min-width: 0;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      #leaderboardOverlay .leader-level{
+        font-size: 11px;
+        text-align: right;
+      }
+
+      #leaderboardOverlay .leader-exp{
+        font-size: 10px;
+        text-align: right;
+      }
+
       .project-add-card{
           width:100%;
           max-width:100%;
