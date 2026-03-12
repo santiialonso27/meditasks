@@ -3161,6 +3161,7 @@
     .dragging-touch{
       opacity:.6;
       transform:scale(.98);
+      animation:none !important;
     }
 
     body.app-loading #levelButton,
@@ -3605,6 +3606,173 @@
     /* ===== MOBILE SIDEBAR DEFINITIVO ===== */
     @media (max-width: 900px) {
 
+      #taskMobileOverlay {
+        position: fixed;
+        inset: 0;
+        z-index: 9997;
+        opacity: 0;
+        backdrop-filter: blur(0px);
+        -webkit-backdrop-filter: blur(0px);
+        background: rgba(6, 8, 14, 0);
+        transition:
+          opacity .24s ease,
+          backdrop-filter .28s ease,
+          -webkit-backdrop-filter .28s ease,
+          background .24s ease;
+      }
+
+      #taskMobileOverlay.visible {
+        opacity: 1;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        background: rgba(6, 8, 14, 0.18);
+      }
+
+      .task-mobile-focus {
+        position: relative;
+        z-index: 9998;
+        transform: translateY(-6px) scale(1.01);
+        box-shadow:
+          0 18px 40px rgba(0,0,0,.26),
+          0 8px 18px rgba(0,0,0,.18);
+        transition:
+          transform .22s cubic-bezier(.16,1,.3,1),
+          box-shadow .22s ease,
+          border-color .22s ease;
+        border-color: rgba(255,255,255,.18);
+      }
+
+      .task-mobile-focus-source {
+        visibility: hidden;
+      }
+
+      #taskMobileFocusClone {
+        position: fixed;
+        z-index: 9998;
+        pointer-events: auto;
+        opacity: 0;
+        transform: translateY(4px) scale(.985);
+        transition:
+          opacity .22s ease,
+          transform .26s cubic-bezier(.16,1,.3,1),
+          box-shadow .26s ease,
+          border-color .26s ease;
+        will-change: transform, opacity;
+      }
+
+      #taskMobileFocusClone.visible {
+        opacity: 1;
+        transform: translateY(-2px) scale(1.01);
+      }
+
+      #taskMobileMenu {
+        position: fixed;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-radius: 18px;
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.16);
+        backdrop-filter: blur(18px) saturate(140%);
+        -webkit-backdrop-filter: blur(18px) saturate(140%);
+        box-shadow:
+          0 18px 32px rgba(0,0,0,.22),
+          inset 0 1px 0 rgba(255,255,255,.16);
+        opacity: 0;
+        transform: translateX(-50%) translateY(-6px) scale(.96);
+        transition:
+          opacity .2s ease,
+          transform .24s cubic-bezier(.16,1,.3,1);
+      }
+
+      #taskMobileMenu.visible {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0) scale(1);
+      }
+
+      #taskReorderBanner {
+        position: fixed;
+        top: max(14px, env(safe-area-inset-top, 0px) + 8px);
+        left: 50%;
+        z-index: 9996;
+        max-width: min(84vw, 320px);
+        padding: 12px 16px;
+        border-radius: 18px;
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.16);
+        backdrop-filter: blur(18px) saturate(140%);
+        -webkit-backdrop-filter: blur(18px) saturate(140%);
+        box-shadow:
+          0 18px 32px rgba(0,0,0,.18),
+          inset 0 1px 0 rgba(255,255,255,.14);
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 700;
+        text-align: center;
+        opacity: 0;
+        transform: translateX(-50%) translateY(-10px) scale(.96);
+        transition:
+          opacity .22s ease,
+          transform .26s cubic-bezier(.16,1,.3,1);
+      }
+
+      #taskReorderBanner.visible {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0) scale(1);
+      }
+
+      #mobileTaskDragGhost {
+        position: fixed;
+        z-index: 10001;
+        pointer-events: none;
+        opacity: .96;
+        transform: rotate(1.4deg) scale(1.02);
+        box-shadow:
+          0 20px 42px rgba(0,0,0,.24),
+          0 8px 18px rgba(0,0,0,.16);
+      }
+
+      body.mobile-task-reorder-mode .task-reorder-ready {
+        animation: taskWiggle .21s ease-in-out infinite alternate;
+        transform-origin: center;
+      }
+
+      body.mobile-task-reorder-mode .task-reorder-ready:nth-of-type(2n) {
+        animation-duration: .24s;
+      }
+
+      body.mobile-task-reorder-mode .task-reorder-ready:nth-of-type(3n) {
+        animation-duration: .27s;
+      }
+
+      body.mobile-task-reorder-mode .task-reorder-ready .icon.danger,
+      body.mobile-task-reorder-mode .task-reorder-ready .cb {
+        pointer-events: none;
+      }
+
+      @keyframes taskWiggle {
+        from { transform: rotate(-1.1deg) scale(1.01); }
+        to { transform: rotate(1.1deg) scale(1.01); }
+      }
+
+      #taskMobileMenu button {
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: .01em;
+        padding: 0;
+      }
+
+      .task-mobile-menu-separator {
+        color: rgba(255,255,255,.45);
+        font-weight: 600;
+      }
+
       /* Sidebar pantalla completa */
       .sidebar {
         position: fixed;
@@ -3849,6 +4017,8 @@
                     <option value="60">1 minuto</option>
                     <option value="120">2 minutos</option>
                     <option value="300">5 minutos</option>
+                    <option value="600">10 minutos</option>
+                    <option value="1800">30 minutos</option>
                   </select>
                 </div>
 
@@ -3904,7 +4074,7 @@
         </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
-          <span class="version">v1.8</span>
+          <span class="version">v1.9</span>
         </div>
       </div>
 
@@ -3940,7 +4110,7 @@
     <div class="panel">
       <h3 class="changelog-title">
         NOTAS DE VERSIÓN
-        <span class="changelog-version">v1.8</span>
+        <span class="changelog-version">v1.9</span>
       </h3>
       <div class="muted changelog">
         <ul>

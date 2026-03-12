@@ -63,6 +63,11 @@ let draggedElement = null;
 let currentTarget = null;
 let currentPosition = null;
 let previewInsertIndex = null;
+let mobileTaskReorderMode = false;
+let activeMobileDropList = null;
+let mobileTouchDragGhost = null;
+let mobileTouchDragOffsetX = 0;
+let mobileTouchDragOffsetY = 0;
 
 let officeModeEnabled = false;
 let officeModeTimeoutSeconds = 60;
@@ -71,6 +76,282 @@ let isLocked = false;
 let deviceCredentialId = null;
 
 const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
+const MOBILE_BREAKPOINT = 900;
+const MOBILE_TASK_LONG_PRESS_MS = 420;
+const MOBILE_TASK_MOVE_TOLERANCE = 12;
+const MOBILE_TASK_FOCUS_KEYBOARD_DELAY_MS = 160;
+const MOBILE_DRAG_AUTOSCROLL_EDGE_PX = 72;
+const MOBILE_DRAG_AUTOSCROLL_MAX_SPEED = 16;
+
+let activeTaskMobileFocus = null;
+let mobileTaskReorderBanner = null;
+let mobileDragAutoScrollRaf = null;
+let mobileDragAutoScrollSpeed = 0;
+let mobileDragAutoScrollTouch = null;
+let mobileDragAutoScrollCallback = null;
+
+function isMobileViewport() {
+  return window.innerWidth <= MOBILE_BREAKPOINT;
+}
+
+function isMobileTaskFocusEnabled() {
+  return isTouchDevice && isMobileViewport();
+}
+
+function clearTaskMobileFocus() {
+  if (!activeTaskMobileFocus) return;
+
+  const { taskElement, menuElement, overlayElement, cloneElement } = activeTaskMobileFocus;
+
+  taskElement?.classList.remove("task-mobile-focus");
+  taskElement?.classList.remove("task-mobile-focus-source");
+  menuElement?.remove();
+  overlayElement?.remove();
+  cloneElement?.remove();
+
+  activeTaskMobileFocus = null;
+}
+
+function isMobileTaskReorderEnabled() {
+  return isMobileTaskFocusEnabled() && mobileTaskReorderMode;
+}
+
+function getDragOriginList(data) {
+  if (data.fromProject) {
+    return projects[data.fromProject]?.tasks || null;
+  }
+
+  return tasks[data.fromDate] || null;
+}
+
+function getDropTargetList(targetDate, targetProjectId) {
+  if (targetProjectId) {
+    return projects[targetProjectId]?.tasks || null;
+  }
+
+  if (!targetDate) return null;
+  if (!tasks[targetDate]) tasks[targetDate] = [];
+  return tasks[targetDate];
+}
+
+function canDropTaskInTarget(data, targetDate, targetProjectId) {
+  const sourceIsProject = !!data.fromProject;
+  const targetIsProject = !!targetProjectId;
+
+  if (sourceIsProject || targetIsProject) {
+    return sourceIsProject && targetIsProject && data.fromProject === targetProjectId;
+  }
+
+  return !!targetDate;
+}
+
+function moveTaskToTarget(data, targetDate, targetProjectId, insertIndex = null) {
+  if (!canDropTaskInTarget(data, targetDate, targetProjectId)) return false;
+
+  const originList = getDragOriginList(data);
+  const targetList = getDropTargetList(targetDate, targetProjectId);
+
+  if (!originList || !targetList) return false;
+
+  const movedTask = originList[data.index];
+  if (!movedTask) return false;
+
+  originList.splice(data.index, 1);
+
+  let safeInsertIndex = insertIndex;
+  if (safeInsertIndex === null || safeInsertIndex === undefined) {
+    safeInsertIndex = targetList.length;
+  }
+
+  const sameProjectTarget = !!targetProjectId && data.fromProject === targetProjectId;
+  const sameDateTarget = !!targetDate && data.fromDate === targetDate;
+
+  if ((sameProjectTarget || sameDateTarget) && data.index < safeInsertIndex) {
+    safeInsertIndex--;
+  }
+
+  safeInsertIndex = Math.max(0, Math.min(safeInsertIndex, targetList.length));
+  targetList.splice(safeInsertIndex, 0, movedTask);
+
+  return true;
+}
+
+function removeActiveMobileDropIndicator(resetState = true) {
+  if (activeMobileDropList?._removeIndicator) {
+    activeMobileDropList._removeIndicator(resetState);
+  }
+  activeMobileDropList = null;
+  previewInsertIndex = null;
+}
+
+function clearMobileTouchDragGhost() {
+  mobileTouchDragGhost?.remove();
+  mobileTouchDragGhost = null;
+}
+
+function createMobileTouchDragGhost(taskElement, touch) {
+  clearMobileTouchDragGhost();
+
+  const rect = taskElement.getBoundingClientRect();
+  mobileTouchDragOffsetX = touch.clientX - rect.left;
+  mobileTouchDragOffsetY = touch.clientY - rect.top;
+
+  const ghost = taskElement.cloneNode(true);
+  ghost.id = "mobileTaskDragGhost";
+  ghost.classList.add("mobile-task-drag-ghost");
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.height = `${rect.height}px`;
+  document.body.appendChild(ghost);
+
+  mobileTouchDragGhost = ghost;
+  updateMobileTouchDragGhostPosition(touch);
+}
+
+function updateMobileTouchDragGhostPosition(touch) {
+  if (!mobileTouchDragGhost) return;
+
+  mobileTouchDragGhost.style.left = `${touch.clientX - mobileTouchDragOffsetX}px`;
+  mobileTouchDragGhost.style.top = `${touch.clientY - mobileTouchDragOffsetY}px`;
+}
+
+function getBoardScrollContainer() {
+  return document.querySelector(".board-scroll");
+}
+
+function stopMobileDragAutoscroll() {
+  if (mobileDragAutoScrollRaf) {
+    cancelAnimationFrame(mobileDragAutoScrollRaf);
+    mobileDragAutoScrollRaf = null;
+  }
+
+  mobileDragAutoScrollSpeed = 0;
+  mobileDragAutoScrollTouch = null;
+  mobileDragAutoScrollCallback = null;
+}
+
+function runMobileDragAutoscroll() {
+  const container = getBoardScrollContainer();
+
+  if (!container || !mobileDragAutoScrollSpeed) {
+    stopMobileDragAutoscroll();
+    return;
+  }
+
+  container.scrollBy({
+    top: mobileDragAutoScrollSpeed,
+    behavior: "auto"
+  });
+
+  if (mobileDragAutoScrollTouch && typeof mobileDragAutoScrollCallback === "function") {
+    mobileDragAutoScrollCallback(mobileDragAutoScrollTouch);
+  }
+
+  mobileDragAutoScrollRaf = requestAnimationFrame(runMobileDragAutoscroll);
+}
+
+function updateMobileDragAutoscroll(touch, onScroll) {
+  const container = getBoardScrollContainer();
+  if (!container) return;
+
+  const rect = container.getBoundingClientRect();
+  let speed = 0;
+
+  if (touch.clientY < rect.top + MOBILE_DRAG_AUTOSCROLL_EDGE_PX) {
+    const intensity = (rect.top + MOBILE_DRAG_AUTOSCROLL_EDGE_PX - touch.clientY) / MOBILE_DRAG_AUTOSCROLL_EDGE_PX;
+    speed = -Math.ceil(MOBILE_DRAG_AUTOSCROLL_MAX_SPEED * Math.min(intensity, 1));
+  } else if (touch.clientY > rect.bottom - MOBILE_DRAG_AUTOSCROLL_EDGE_PX) {
+    const intensity = (touch.clientY - (rect.bottom - MOBILE_DRAG_AUTOSCROLL_EDGE_PX)) / MOBILE_DRAG_AUTOSCROLL_EDGE_PX;
+    speed = Math.ceil(MOBILE_DRAG_AUTOSCROLL_MAX_SPEED * Math.min(intensity, 1));
+  }
+
+  mobileDragAutoScrollTouch = {
+    clientX: touch.clientX,
+    clientY: touch.clientY
+  };
+  mobileDragAutoScrollCallback = onScroll;
+
+  if (!speed) {
+    stopMobileDragAutoscroll();
+    return;
+  }
+
+  mobileDragAutoScrollSpeed = speed;
+
+  if (!mobileDragAutoScrollRaf) {
+    mobileDragAutoScrollRaf = requestAnimationFrame(runMobileDragAutoscroll);
+  }
+}
+
+function removeMobileTaskReorderBanner() {
+  mobileTaskReorderBanner?.remove();
+  mobileTaskReorderBanner = null;
+}
+
+function updateMobileTaskReorderBanner() {
+  removeMobileTaskReorderBanner();
+
+  if (!isMobileTaskReorderEnabled()) return;
+
+  const banner = document.createElement("div");
+  banner.id = "taskReorderBanner";
+  banner.textContent = "Cambia el orden de tus tareas";
+  banner.addEventListener("click", () => {
+    setMobileTaskReorderMode(false);
+  });
+  banner.addEventListener("touchstart", (e) => {
+    e.stopPropagation();
+  });
+  document.body.appendChild(banner);
+
+  requestAnimationFrame(() => {
+    banner.classList.add("visible");
+  });
+
+  mobileTaskReorderBanner = banner;
+}
+
+function setMobileTaskReorderMode(enabled) {
+  mobileTaskReorderMode = enabled;
+  document.body.classList.toggle("mobile-task-reorder-mode", enabled);
+
+  if (!enabled) {
+    stopMobileDragAutoscroll();
+    clearMobileTouchDragGhost();
+    removeActiveMobileDropIndicator();
+  }
+
+  updateMobileTaskReorderBanner();
+  init();
+}
+
+document.addEventListener("touchstart", (e) => {
+  if (!isMobileTaskReorderEnabled()) return;
+  if (e.target.closest(".task")) return;
+  if (e.target.closest("#taskReorderBanner")) return;
+  if (e.target.closest("#taskMobileMenu")) return;
+
+  setMobileTaskReorderMode(false);
+}, { passive: true });
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function closeMobileKeyboardIfNeeded() {
+  const activeElement = document.activeElement;
+  if (!activeElement) return;
+
+  const tagName = activeElement.tagName;
+  const isEditable =
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    activeElement.isContentEditable;
+
+  if (!isEditable) return;
+
+  activeElement.blur();
+  await delay(MOBILE_TASK_FOCUS_KEYBOARD_DELAY_MS);
+}
 
 let player = JSON.parse(localStorage.getItem("mt_player")) || {
   exp: 0,
@@ -609,7 +890,7 @@ const settingsPanels = {
   security: document.getElementById("settingsPanelSecurity")
 };
 
-const OFFICE_MODE_TIMEOUT_OPTIONS = [30, 60, 120, 300];
+const OFFICE_MODE_TIMEOUT_OPTIONS = [30, 60, 120, 300, 600, 1800];
 
 function normalizeOfficeModeTimeout(value){
   const parsed = Number(value);
@@ -952,11 +1233,13 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
     <div class="list"></div>
 
     <div class="adder">
-      <input class="input" placeholder="Nueva tarea…" />
+      <input class="input" placeholder="Nueva tarea…" enterkeyhint="done" />
     </div>
   `;
 
   const list = col.querySelector(".list");
+  list.dataset.date = iso || "";
+  list.dataset.project = projectId || "";
 
   // DRAG OVER LIST
   list.addEventListener("dragover", e => {
@@ -1114,6 +1397,10 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
     }
   }
 
+  list._showIndicator = showIndicator;
+  list._showIndicatorAtEnd = showIndicatorAtEnd;
+  list._removeIndicator = removeIndicator;
+
   const input = col.querySelector(".input");
   const progressBar = col.querySelector(".progress-bar");
 
@@ -1131,6 +1418,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
   });
 
   function render() {
+    clearTaskMobileFocus();
     list.innerHTML = "";
     for (let i = dayTasks.length - 1; i >= 0; i--) {
       if (!dayTasks[i]) dayTasks.splice(i, 1);
@@ -1139,6 +1427,9 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       if (t.expGiven === undefined) t.expGiven = false;
       const el = document.createElement("div");
       el.className = "task" + (t.done ? " done" : "");
+      if (isMobileTaskReorderEnabled()) {
+        el.classList.add("task-reorder-ready");
+      }
       el.draggable = !isTouchDevice;
 
       el.dataset.index = i;
@@ -1311,27 +1602,59 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       });
 
 
-      // MOBILE DOUBLE TAP
-      el.addEventListener("touchend", (e) => {
+      if (isMobileTaskFocusEnabled()) {
+        let longPressTimer = null;
+        let pressStartX = 0;
+        let pressStartY = 0;
+        let longPressTriggered = false;
 
-        const now = Date.now();
+        const clearLongPressTimer = () => {
+          if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+          }
+        };
 
-        if(!el.dataset.lastTap){
-          el.dataset.lastTap = now;
-          return;
-        }
+        el.addEventListener("touchstart", (e) => {
+          if (!isMobileTaskFocusEnabled()) return;
+          if (isMobileTaskReorderEnabled()) return;
+          if (e.touches.length !== 1) return;
+          if (e.target.closest(".cb") || e.target.closest(".icon.danger")) return;
+          if (activeTaskMobileFocus && activeTaskMobileFocus.taskElement !== el) return;
 
-        const delta = now - el.dataset.lastTap;
-        el.dataset.lastTap = now;
+          longPressTriggered = false;
+          pressStartX = e.touches[0].clientX;
+          pressStartY = e.touches[0].clientY;
 
-        if(delta < 300){
+          clearLongPressTimer();
+          longPressTimer = setTimeout(() => {
+            longPressTriggered = true;
+            showTaskMobileMenu(el, t, render);
+          }, MOBILE_TASK_LONG_PRESS_MS);
+        });
 
-          e.preventDefault();
-          showTaskMobileMenu(el, t, render);
+        el.addEventListener("touchmove", (e) => {
+          if (!longPressTimer) return;
 
-        }
+          const moveX = Math.abs(e.touches[0].clientX - pressStartX);
+          const moveY = Math.abs(e.touches[0].clientY - pressStartY);
 
-      });
+          if (moveX > MOBILE_TASK_MOVE_TOLERANCE || moveY > MOBILE_TASK_MOVE_TOLERANCE) {
+            clearLongPressTimer();
+          }
+        });
+
+        el.addEventListener("touchend", (e) => {
+          if (longPressTriggered) {
+            e.preventDefault();
+          }
+          clearLongPressTimer();
+        });
+
+        el.addEventListener("touchcancel", () => {
+          clearLongPressTimer();
+        });
+      }
 
       el.addEventListener("dragstart", e => {
 
@@ -1363,55 +1686,140 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         removeIndicator();
       });
 
-      if (isTouchDevice) {
+      if (isTouchDevice && (!isMobileViewport() || isMobileTaskReorderEnabled())) {
 
         let startY = 0;
 
         el.addEventListener("touchstart", (e) => {
+          if (isMobileViewport() && !isMobileTaskReorderEnabled()) return;
+          if (e.target.closest(".cb") || e.target.closest(".icon.danger")) return;
 
           e.stopPropagation();
 
           startY = e.touches[0].clientY;
           draggedElement = el;
 
+          if (isMobileViewport()) {
+            createMobileTouchDragGhost(el, e.touches[0]);
+            el.style.opacity = "0";
+          }
+
           el.classList.add("dragging-touch");
 
         });
 
         el.addEventListener("touchmove", (e) => {
+          if (isMobileViewport() && !isMobileTaskReorderEnabled()) return;
 
           e.preventDefault();
 
           if (!draggedElement) return;
 
-          const touch = e.touches[0];
-          const y = touch.clientY;
+          const dragData = {
+            fromDate: iso,
+            fromProject: projectId,
+            index: i
+          };
 
-          const elementBelow = document.elementFromPoint(touch.clientX, y);
+          const handleTouchDragPosition = (touch) => {
+            const y = touch.clientY;
+            updateMobileTouchDragGhostPosition(touch);
 
-          const taskBelow = elementBelow?.closest(".task");
+            const elementBelow = document.elementFromPoint(touch.clientX, y);
+            const taskBelow = elementBelow?.closest(".task");
+            const targetList = taskBelow?.closest(".list") || elementBelow?.closest(".list");
 
-          if (taskBelow && taskBelow !== draggedElement) {
-
-            const rect = taskBelow.getBoundingClientRect();
-            const percent = (y - rect.top) / rect.height;
-
-            if (percent < 0.5) {
-              showIndicator(taskBelow, "before");
-            } else {
-              showIndicator(taskBelow, "after");
+            if (!targetList) {
+              removeActiveMobileDropIndicator();
+              return;
             }
 
-          }
+            const targetDate = targetList.dataset.date || null;
+            const targetProject = targetList.dataset.project || null;
+
+            if (!canDropTaskInTarget(dragData, targetDate, targetProject)) {
+              removeActiveMobileDropIndicator();
+              return;
+            }
+
+            if (activeMobileDropList && activeMobileDropList !== targetList) {
+              activeMobileDropList._removeIndicator?.();
+            }
+
+            activeMobileDropList = targetList;
+
+            if (taskBelow && taskBelow !== draggedElement) {
+              const rect = taskBelow.getBoundingClientRect();
+              const percent = (y - rect.top) / rect.height;
+              const targetIndex = parseInt(taskBelow.dataset.index, 10);
+              let rawInsertIndex = percent < 0.5 ? targetIndex : targetIndex + 1;
+
+              const sameProjectTarget = !!targetProject && projectId === targetProject;
+              const sameDateTarget = !!targetDate && iso === targetDate;
+
+              if ((sameProjectTarget || sameDateTarget) && i < rawInsertIndex) {
+                rawInsertIndex--;
+              }
+
+              if (rawInsertIndex === i) {
+                removeActiveMobileDropIndicator();
+                return;
+              }
+
+              if (percent < 0.5) {
+                targetList._showIndicator?.(taskBelow, "before");
+              } else {
+                targetList._showIndicator?.(taskBelow, "after");
+              }
+            } else {
+              const targetTasks = getDropTargetList(targetDate, targetProject);
+              let rawInsertIndex = targetTasks ? targetTasks.length : 0;
+
+              const sameProjectTarget = !!targetProject && projectId === targetProject;
+              const sameDateTarget = !!targetDate && iso === targetDate;
+
+              if ((sameProjectTarget || sameDateTarget) && i < rawInsertIndex) {
+                rawInsertIndex--;
+              }
+
+              if (rawInsertIndex === i) {
+                removeActiveMobileDropIndicator();
+                return;
+              }
+
+              targetList._showIndicatorAtEnd?.();
+            }
+          };
+
+          const touch = e.touches[0];
+          handleTouchDragPosition(touch);
+          updateMobileDragAutoscroll(touch, handleTouchDragPosition);
 
         });
 
         el.addEventListener("touchend", () => {
+          if (isMobileViewport() && !isMobileTaskReorderEnabled()) return;
 
-          const indicator = list.querySelector(".drop-indicator");
+          const targetList = activeMobileDropList;
+          const targetDate = targetList?.dataset.date || null;
+          const targetProject = targetList?.dataset.project || null;
 
-          if (indicator && draggedElement) {
-            indicator.parentNode.insertBefore(draggedElement, indicator);
+          if (draggedElement && targetList && previewInsertIndex !== null) {
+            const moved = moveTaskToTarget(
+              {
+                fromDate: iso,
+                fromProject: projectId,
+                index: i
+              },
+              targetDate,
+              targetProject,
+              previewInsertIndex
+            );
+
+            if (moved) {
+              save();
+              init();
+            }
           }
 
           draggedElement?.classList.remove("dragging-touch");
@@ -1422,8 +1830,23 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
           draggedElement = null;
 
-          removeIndicator();
-          save();
+          stopMobileDragAutoscroll();
+          clearMobileTouchDragGhost();
+          removeActiveMobileDropIndicator();
+        });
+
+        el.addEventListener("touchcancel", () => {
+          draggedElement?.classList.remove("dragging-touch");
+
+          if (draggedElement) {
+            draggedElement.style.opacity = "";
+          }
+
+          draggedElement = null;
+
+          stopMobileDragAutoscroll();
+          clearMobileTouchDragGhost();
+          removeActiveMobileDropIndicator();
         });
 
       }
@@ -1557,7 +1980,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
     progressBar.style.width = percent + "%";
 
     const percentEl = col.querySelector(".progress-percent");
-    if (percentEl) {
+  if (percentEl) {
       percentEl.textContent = percent + "%";
 
       if (percent === 100) {
@@ -1568,42 +1991,53 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
     }
   }
 
+  function addTaskFromInput() {
+    if (!input.value.trim()) return false;
+
+    let text = input.value.trim();
+
+    if (/^[a-záéíóúñ]/.test(text)) {
+      text = text.charAt(0).toUpperCase() + text.slice(1);
+    }
+
+    const newTask = { text, done:false, expGiven:false };
+    const firstDoneIndex = dayTasks.findIndex(t => t.done);
+
+    if(firstDoneIndex === -1){
+      dayTasks.push(newTask);
+    }else{
+      dayTasks.splice(firstDoneIndex, 0, newTask);
+    }
+
+    if (iso) {
+      updateDayModalTaskCount(iso);
+    }
+
+    if (soundEnabled) {
+      playAddTaskSound();
+    }
+
+    input.value = "";
+    save();
+    render();
+    return true;
+  }
+
+  input.addEventListener("beforeinput", e => {
+    if (e.inputType === "insertLineBreak") {
+      e.preventDefault();
+      addTaskFromInput();
+    }
+  });
+
   input.addEventListener("keydown", e => {
 
     if (e.key === "Enter") {
       e.preventDefault();
     }
 
-    if (e.key === "Enter" && input.value.trim()) {
-
-      let text = input.value.trim();
-
-      // 🔥 Si el primer carácter es letra y está en minúscula → convertirlo
-      if (/^[a-záéíóúñ]/.test(text)) {
-        text = text.charAt(0).toUpperCase() + text.slice(1);
-      }
-
-      const newTask = { text, done:false, expGiven:false };
-
-      const firstDoneIndex = dayTasks.findIndex(t => t.done);
-
-      if(firstDoneIndex === -1){
-        dayTasks.push(newTask);
-      }else{
-        dayTasks.splice(firstDoneIndex, 0, newTask);
-      }
-
-      if (iso) {
-        updateDayModalTaskCount(iso);
-      }
-
-      if (soundEnabled) {
-        playAddTaskSound();
-      }
-
-      input.value = "";
-      save();
-      render();
+    if (e.key === "Enter") {
+      addTaskFromInput();
     }
   });
 
@@ -1939,50 +2373,100 @@ function showToast(message) {
   }, 2500);
 }
 
-function showTaskMobileMenu(taskElement, taskData, render){
+async function showTaskMobileMenu(taskElement, taskData, render){
 
-  const existing = document.getElementById("taskMobileMenu");
-  if(existing) existing.remove();
+  if (!isMobileTaskFocusEnabled()) return;
 
-  const rect = taskElement.getBoundingClientRect();
-  
+  clearTaskMobileFocus();
+  await closeMobileKeyboardIfNeeded();
+
+  if (!isMobileTaskFocusEnabled()) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "taskMobileOverlay";
+
+  const clone = taskElement.cloneNode(true);
+  clone.id = "taskMobileFocusClone";
+  clone.classList.add("task-mobile-focus");
+  clone.classList.add("task-mobile-focus-clone");
+
   const menu = document.createElement("div");
   menu.id = "taskMobileMenu";
-
-  menu.style.position = "fixed";
-  menu.style.left = rect.left + rect.width/2 + "px";
-  menu.style.top = rect.top - 10 + "px";
-  menu.style.transform = "translate(-50%, -100%)";
-
-  menu.style.padding = "8px 12px";
-  menu.style.borderRadius = "10px";
-
-  menu.style.background = "rgba(20,20,25,.9)";
-  menu.style.backdropFilter = "blur(10px)";
-  menu.style.border = "1px solid rgba(255,255,255,.1)";
-
-  menu.style.fontSize = "13px";
-  menu.style.fontWeight = "600";
-
-  menu.style.display = "flex";
-  menu.style.gap = "10px";
-
-  menu.style.zIndex = "9999";
-
   menu.innerHTML = `
-    <span id="taskEditBtn" style="cursor:pointer;">Editar</span>
+    <button id="taskEditBtn" type="button">Editar</button>
+    <span class="task-mobile-menu-separator">|</span>
+    <button id="taskReorderBtn" type="button">Reordenar</button>
   `;
 
+  document.body.appendChild(overlay);
+  document.body.appendChild(clone);
   document.body.appendChild(menu);
 
-  menu.addEventListener("touchstart", e => e.stopPropagation());
+  taskElement.classList.add("task-mobile-focus");
+  taskElement.classList.add("task-mobile-focus-source");
 
-  // EDITAR
+  const positionFocusElements = () => {
+    const rect = taskElement.getBoundingClientRect();
+    clone.style.left = `${rect.left}px`;
+    clone.style.top = `${rect.top}px`;
+    clone.style.width = `${rect.width}px`;
+    clone.style.height = `${rect.height}px`;
+
+    const menuTop = Math.min(rect.bottom + 12, window.innerHeight - 24);
+    const menuLeft = Math.min(
+      Math.max(rect.left + rect.width / 2, 24),
+      window.innerWidth - 24
+    );
+
+    menu.style.left = `${menuLeft}px`;
+    menu.style.top = `${menuTop}px`;
+  };
+
+  const cleanup = () => {
+    clearTaskMobileFocus();
+    window.removeEventListener("resize", handleViewportChange);
+    window.removeEventListener("scroll", handleViewportChange, true);
+  };
+
+  const handleViewportChange = () => {
+    if (!activeTaskMobileFocus || activeTaskMobileFocus.taskElement !== taskElement) return;
+
+    if (!isMobileTaskFocusEnabled()) {
+      cleanup();
+      return;
+    }
+
+    positionFocusElements();
+  };
+
+  activeTaskMobileFocus = {
+    taskElement,
+    menuElement: menu,
+    overlayElement: overlay,
+    cloneElement: clone
+  };
+
+  positionFocusElements();
+
+  requestAnimationFrame(() => {
+    overlay.classList.add("visible");
+    clone.classList.add("visible");
+    menu.classList.add("visible");
+  });
+
+  overlay.addEventListener("touchstart", cleanup);
+  overlay.addEventListener("click", cleanup);
+  clone.addEventListener("touchstart", e => e.stopPropagation());
+  clone.addEventListener("click", e => e.stopPropagation());
+  menu.addEventListener("touchstart", e => e.stopPropagation());
+  menu.addEventListener("click", e => e.stopPropagation());
+
   menu.querySelector("#taskEditBtn").onclick = ()=>{
 
-    menu.remove();
+    cleanup();
 
     const textDiv = taskElement.querySelector(".ttext");
+    if (!textDiv) return;
 
     const oldText = taskData.text;
 
@@ -2008,27 +2492,27 @@ function showTaskMobileMenu(taskElement, taskData, render){
       render();
     }
 
+    function cancelEdit() {
+      render();
+    }
+
     input.addEventListener("keydown", e=>{
       if(e.key === "Enter") saveEdit();
-      if(e.key === "Escape") render();
+      if(e.key === "Escape") cancelEdit();
     });
 
     input.addEventListener("blur", saveEdit);
 
   };
 
-  // cerrar si tocás afuera
-  setTimeout(()=>{
+  menu.querySelector("#taskReorderBtn").onclick = (e) => {
+    e.preventDefault();
+    cleanup();
+    setMobileTaskReorderMode(true);
+  };
 
-    document.addEventListener("touchstart", (e)=>{
-
-      if(!menu.contains(e.target)){
-        menu.remove();
-      }
-
-    },{once:true});
-
-  },50);
+  window.addEventListener("resize", handleViewportChange);
+  window.addEventListener("scroll", handleViewportChange, true);
 
 }
 
