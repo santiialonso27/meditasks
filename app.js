@@ -1752,7 +1752,8 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               const rect = taskBelow.getBoundingClientRect();
               const percent = (y - rect.top) / rect.height;
               const targetIndex = parseInt(taskBelow.dataset.index, 10);
-              let rawInsertIndex = percent < 0.5 ? targetIndex : targetIndex + 1;
+              const visualInsertIndex = percent < 0.5 ? targetIndex : targetIndex + 1;
+              let rawInsertIndex = visualInsertIndex;
 
               const sameProjectTarget = !!targetProject && projectId === targetProject;
               const sameDateTarget = !!targetDate && iso === targetDate;
@@ -1767,13 +1768,16 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               }
 
               if (percent < 0.5) {
+                previewInsertIndex = visualInsertIndex;
                 targetList._showIndicator?.(taskBelow, "before");
               } else {
+                previewInsertIndex = visualInsertIndex;
                 targetList._showIndicator?.(taskBelow, "after");
               }
             } else {
               const targetTasks = getDropTargetList(targetDate, targetProject);
-              let rawInsertIndex = targetTasks ? targetTasks.length : 0;
+              const visualInsertIndex = targetTasks ? targetTasks.length : 0;
+              let rawInsertIndex = visualInsertIndex;
 
               const sameProjectTarget = !!targetProject && projectId === targetProject;
               const sameDateTarget = !!targetDate && iso === targetDate;
@@ -1787,6 +1791,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
                 return;
               }
 
+              previewInsertIndex = visualInsertIndex;
               targetList._showIndicatorAtEnd?.();
             }
           };
