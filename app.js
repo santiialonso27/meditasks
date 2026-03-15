@@ -35,6 +35,8 @@ const statusText = document.getElementById("statusText");
 const loginCircleBtn = document.getElementById("loginCircleBtn");
 const closeMenuBtn = document.getElementById("closeMenuBtn");
 const loginTooltip = document.getElementById("loginTooltip");
+const authGate = document.getElementById("authGate");
+const authGateGoogleBtn = document.getElementById("authGateGoogleBtn");
 let tooltipTimeout = null;
 const logoutOverlay = document.getElementById("logoutOverlay");
 const cancelLogout = document.getElementById("cancelLogout");
@@ -46,6 +48,7 @@ let currentCalendarDate = new Date();
 let lastCarryDate = null;
 let tasks = {};
 let projects = {};
+let taskLabels = [];
 let currentViewMode = localStorage.getItem("mt_view_mode") || "tasks";
 const storeKey = "mt_tasks_local";
 const DAYS = [
@@ -56,6 +59,22 @@ const DAYS = [
   "Jueves",
   "Viernes",
   "Sábado"
+];
+const TASK_TIME_OPTIONS = Array.from({ length: 48 }, (_, index) => {
+  const hours = String(Math.floor(index / 2)).padStart(2, "0");
+  const minutes = index % 2 === 0 ? "00" : "30";
+  return `${hours}:${minutes}`;
+});
+const TASK_LABEL_COLORS = [
+  "#ef4444",
+  "#f97316",
+  "#f59e0b",
+  "#84cc16",
+  "#10b981",
+  "#06b6d4",
+  "#3b82f6",
+  "#8b5cf6",
+  "#ec4899"
 ];
 
 
@@ -89,11 +108,96 @@ const MOBILE_DRAG_PREVIEW_STICKY_BOTTOM = 0.62;
 const OFFICE_MODE_LOCK_STORAGE_KEY = "mt_office_mode_locked";
 
 let activeTaskMobileFocus = null;
+let activeTaskActionMenu = null;
 let mobileTaskReorderBanner = null;
 let mobileDragAutoScrollRaf = null;
 let mobileDragAutoScrollSpeed = 0;
 let mobileDragAutoScrollTouch = null;
 let mobileDragAutoScrollCallback = null;
+
+function closeTaskActionMenu() {
+  if (!activeTaskActionMenu) return;
+
+  activeTaskActionMenu.anchorElement?.classList.remove("open");
+  activeTaskActionMenu.anchorElement?.classList.remove("open-upwards");
+  activeTaskActionMenu.anchorElement?.classList.remove("schedule-open");
+  activeTaskActionMenu.anchorElement?.classList.remove("tag-open");
+  activeTaskActionMenu.anchorElement?.classList.remove("tag-create-open");
+  activeTaskActionMenu.anchorElement?.classList.remove("postpone-open");
+  activeTaskActionMenu.taskElement?.classList.remove("menu-open");
+  activeTaskActionMenu.hostColumn?.classList.remove("task-focus-host");
+  activeTaskActionMenu.overlayElement?.remove();
+  document.body.classList.remove("task-action-focus");
+  activeTaskActionMenu = null;
+}
+
+function positionTaskActionMenu(anchorElement) {
+  const menuElement = anchorElement?.querySelector(".task-menu-stack");
+  if (!menuElement) return;
+
+  const taskElement = anchorElement.closest(".task");
+  const taskRect = taskElement?.getBoundingClientRect();
+  anchorElement.classList.remove("open-upwards");
+
+  const anchorRect = anchorElement.getBoundingClientRect();
+  const menuHeight = menuElement.offsetHeight;
+  const gap = 16;
+  const viewportPadding = 24;
+
+  if (taskRect) {
+    const belowOffset = Math.max(gap, Math.round(taskRect.bottom - anchorRect.top) + gap);
+    const aboveOffset = Math.max(gap, Math.round(anchorRect.bottom - taskRect.top) + gap);
+    anchorElement.style.setProperty("--task-menu-below-offset", `${belowOffset}px`);
+    anchorElement.style.setProperty("--task-menu-above-offset", `${aboveOffset}px`);
+  } else {
+    anchorElement.style.removeProperty("--task-menu-below-offset");
+    anchorElement.style.removeProperty("--task-menu-above-offset");
+  }
+
+  const spaceBelow = window.innerHeight - anchorRect.bottom - viewportPadding;
+  const spaceAbove = anchorRect.top - viewportPadding;
+
+  if (spaceBelow < menuHeight + gap && spaceAbove > spaceBelow) {
+    anchorElement.classList.add("open-upwards");
+  }
+}
+
+function toggleTaskActionMenu(taskElement, anchorElement) {
+  const isSameMenu =
+    activeTaskActionMenu &&
+    activeTaskActionMenu.anchorElement === anchorElement;
+
+  closeTaskActionMenu();
+
+  if (isSameMenu) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "taskActionOverlay";
+  overlay.addEventListener("click", closeTaskActionMenu);
+  document.body.appendChild(overlay);
+
+  const hostColumn = taskElement.closest(".col");
+  hostColumn?.classList.add("task-focus-host");
+  anchorElement.classList.add("open");
+  taskElement.classList.add("menu-open");
+  document.body.classList.add("task-action-focus");
+  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  taskElement?.scrollIntoView({
+    block: "center",
+    inline: "nearest",
+    behavior: prefersReducedMotion ? "auto" : "smooth"
+  });
+  positionTaskActionMenu(anchorElement);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      positionTaskActionMenu(anchorElement);
+    });
+  });
+  if (!prefersReducedMotion) {
+    setTimeout(() => positionTaskActionMenu(anchorElement), 320);
+  }
+  activeTaskActionMenu = { taskElement, anchorElement, hostColumn, overlayElement: overlay };
+}
 
 function getStablePreviewPosition(targetIndex, percent, draggedIndex, isSameContainer) {
   const existingTarget = mobileActiveDropTarget;
@@ -364,6 +468,11 @@ document.addEventListener("touchstart", (e) => {
   setMobileTaskReorderMode(false);
 }, { passive: true });
 
+document.addEventListener("pointerdown", (e) => {
+  if (e.target.closest(".task-actions-anchor")) return;
+  closeTaskActionMenu();
+});
+
 document.addEventListener("selectstart", (e) => {
   if (!isMobileViewport()) return;
   if (e.target.closest(".edit-input")) return;
@@ -372,6 +481,162 @@ document.addEventListener("selectstart", (e) => {
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseStoredAppData(rawData) {
+  if (!rawData || typeof rawData !== "object") {
+    return { tasks: {}, projects: {}, labels: [] };
+  }
+
+  const hasStructuredShape =
+    Object.prototype.hasOwnProperty.call(rawData, "tasks") ||
+    Object.prototype.hasOwnProperty.call(rawData, "projects") ||
+    Object.prototype.hasOwnProperty.call(rawData, "labels");
+
+  if (!hasStructuredShape) {
+    return {
+      tasks: rawData,
+      projects: {},
+      labels: []
+    };
+  }
+
+  return {
+    tasks: rawData.tasks || {},
+    projects: rawData.projects || {},
+    labels: Array.isArray(rawData.labels) ? rawData.labels : []
+  };
+}
+
+function normalizeTaskLabel(label) {
+  if (!label || typeof label !== "object") return null;
+
+  const name = typeof label.name === "string" ? label.name.trim() : "";
+  const color = typeof label.color === "string" ? label.color.trim() : "";
+  const id = typeof label.id === "string" ? label.id.trim() : "";
+
+  if (!name || !color || !id) return null;
+
+  return {
+    id,
+    name,
+    color,
+    createdAt: Number(label.createdAt) || Date.now()
+  };
+}
+
+function normalizeLabelCatalog(labels) {
+  if (!Array.isArray(labels)) return [];
+
+  const seen = new Set();
+
+  return labels
+    .map(normalizeTaskLabel)
+    .filter((label) => {
+      if (!label || seen.has(label.id)) return false;
+      seen.add(label.id);
+      return true;
+    })
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+
+function mergeLabelCatalog(...catalogs) {
+  return normalizeLabelCatalog(catalogs.flat());
+}
+
+function normalizeTaskScheduling(task) {
+  if (!task) return task;
+
+  if (typeof task.timeSlot !== "string" || !TASK_TIME_OPTIONS.includes(task.timeSlot)) {
+    task.timeSlot = null;
+  }
+
+  if (typeof task.tagId !== "string") {
+    task.tagId = "";
+  }
+
+  task.timeCategory = task.timeSlot ? "scheduled" : "all-day";
+  return task;
+}
+
+function getTaskLabelById(labelId) {
+  if (!labelId) return null;
+  return taskLabels.find((label) => label.id === labelId) || null;
+}
+
+function formatTaskLabelName(name) {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return "";
+
+  if (/^[a-záéíóúñ]/.test(trimmed)) {
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  }
+
+  return trimmed;
+}
+
+function createTaskLabel(name, color) {
+  const label = {
+    id: `label_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    name: formatTaskLabelName(name),
+    color,
+    createdAt: Date.now()
+  };
+
+  taskLabels = mergeLabelCatalog(taskLabels, [label]);
+  return label;
+}
+
+function removeTaskLabelEverywhere(labelId) {
+  if (!labelId) return;
+
+  taskLabels = taskLabels.filter((label) => label.id !== labelId);
+
+  Object.values(tasks).forEach((taskList) => {
+    if (!Array.isArray(taskList)) return;
+    taskList.forEach((task) => {
+      if (task?.tagId === labelId) task.tagId = "";
+    });
+  });
+
+  Object.values(projects).forEach((project) => {
+    if (!project?.tasks || !Array.isArray(project.tasks)) return;
+    project.tasks.forEach((task) => {
+      if (task?.tagId === labelId) task.tagId = "";
+    });
+  });
+}
+
+function addDaysToIsoDate(isoDate, daysToAdd) {
+  if (!isoDate) return null;
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const nextDate = new Date(year, month - 1, day);
+  nextDate.setDate(nextDate.getDate() + daysToAdd);
+  return formatLocalDate(nextDate);
+}
+
+function sortTaskList(taskList) {
+  taskList.sort((a, b) => {
+    const taskA = normalizeTaskScheduling(a);
+    const taskB = normalizeTaskScheduling(b);
+
+    if (!!taskA.done !== !!taskB.done) {
+      return taskA.done ? 1 : -1;
+    }
+
+    if (taskA.done && taskB.done) return 0;
+
+    const hasTimeA = !!taskA.timeSlot;
+    const hasTimeB = !!taskB.timeSlot;
+
+    if (hasTimeA !== hasTimeB) {
+      return hasTimeA ? -1 : 1;
+    }
+
+    if (!hasTimeA && !hasTimeB) return 0;
+
+    return taskA.timeSlot.localeCompare(taskB.timeSlot);
+  });
 }
 
 async function closeMobileKeyboardIfNeeded() {
@@ -521,6 +786,8 @@ onAuthStateChanged(auth, async (user) => {
   if (user) {
 
     currentUser = user;
+    document.body.classList.remove("logged-out");
+    authGate?.classList.remove("open");
     updateSettingsProfile(user);
     syncOfficeModeControls();
     // 🔥 Ocultar tooltip si estaba visible
@@ -588,10 +855,12 @@ onAuthStateChanged(auth, async (user) => {
 
         const cloudTasks = data.tasks || {};
         const cloudProjects = data.projects || {};
+        const cloudLabels = normalizeLabelCatalog(data.labels || []);
 
-        const localData = JSON.parse(localStorage.getItem(storeKey)) || {};
+        const localData = parseStoredAppData(JSON.parse(localStorage.getItem(storeKey)) || {});
         const localTasks = localData.tasks || {};
         const localProjects = localData.projects || {};
+        const localLabels = normalizeLabelCatalog(localData.labels || []);
 
         // 🔥 fusionar tareas
         tasks = { ...cloudTasks };
@@ -621,13 +890,17 @@ onAuthStateChanged(auth, async (user) => {
 
         });
 
+        taskLabels = mergeLabelCatalog(cloudLabels, localLabels);
+
         const hasLocalTasks = Object.keys(localTasks).length > 0;
         const hasLocalProjects = Object.keys(localProjects).length > 0;
+        const hasLocalLabels = localLabels.length > 0;
 
-        if(hasLocalTasks || hasLocalProjects){
+        if(hasLocalTasks || hasLocalProjects || hasLocalLabels){
           await setDoc(userRef,{
             tasks,
-            projects
+            projects,
+            labels: taskLabels
           },{ merge:true });
         }
 
@@ -668,9 +941,11 @@ onAuthStateChanged(auth, async (user) => {
       } else {
 
         // Si no tenía en la nube → subir lo local
-        const localTasks = JSON.parse(localStorage.getItem(storeKey)) || {};
-        tasks = localTasks;
-        await setDoc(userRef, { tasks }, { merge: true });
+        const localData = parseStoredAppData(JSON.parse(localStorage.getItem(storeKey)) || {});
+        tasks = localData.tasks || {};
+        projects = localData.projects || {};
+        taskLabels = normalizeLabelCatalog(localData.labels || []);
+        await setDoc(userRef, { tasks, projects, labels: taskLabels }, { merge: true });
       }
 
       // Limpiar local para evitar duplicados
@@ -706,6 +981,8 @@ onAuthStateChanged(auth, async (user) => {
         }
 
         currentUser = null;
+        document.body.classList.add("logged-out");
+        authGate?.classList.add("open");
         officeModeEnabled = false;
         officeModeTimeoutSeconds = 60;
         securityPinHash = "";
@@ -725,10 +1002,11 @@ onAuthStateChanged(auth, async (user) => {
         `;
         loginCircleBtn.classList.remove("logged-in");
 
-        const localData = JSON.parse(localStorage.getItem(storeKey)) || {};
+        const localData = parseStoredAppData(JSON.parse(localStorage.getItem(storeKey)) || {});
 
         tasks = localData.tasks || {};
         projects = localData.projects || {};
+        taskLabels = normalizeLabelCatalog(localData.labels || []);
         init();
 
         setStatusNotLogged(); 
@@ -744,6 +1022,12 @@ onAuthStateChanged(auth, async (user) => {
       }
 
     });
+
+authGateGoogleBtn?.addEventListener("click", async (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  await signInWithPopup(auth, provider);
+});
 
 function showLeaderboardModal(users){
 
@@ -1126,7 +1410,8 @@ async function save(){
 
     localStorage.setItem(storeKey, JSON.stringify({
       tasks,
-      projects
+      projects,
+      labels: taskLabels
     }));
 
     setStatusPending();
@@ -1145,6 +1430,7 @@ async function save(){
         {
           tasks: tasks,
           projects: projects,
+          labels: taskLabels,
           viewMode: currentViewMode
         }
       );
@@ -1167,7 +1453,8 @@ async function save(){
       // fallback local
       localStorage.setItem(storeKey, JSON.stringify({
         tasks,
-        projects
+        projects,
+        labels: taskLabels
       }));
 
       setStatusPending();
@@ -1250,6 +1537,8 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
   const iso = date ? formatLocalDate(date) : undefined;
 
   const isProject = projectId !== null;
+  const todayIso = formatLocalDate(new Date());
+  const isTodayColumn = !isProject && iso === todayIso;
   let dayTasks;
 
   if (isProject) {
@@ -1308,12 +1597,22 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
   // DRAG OVER LIST
   list.addEventListener("dragover", e => {
     e.preventDefault();
-
-    const tasksEls = list.querySelectorAll(".task");
-
-    if (tasksEls.length === 0) {
-      showIndicatorAtEnd();
+    if (e.target.closest(".task")) return;
+    const raw = e.dataTransfer.getData("text/plain");
+    if (raw) {
+      try {
+        const data = JSON.parse(raw);
+        if (
+          (data.fromProject && !projectId) ||
+          (!data.fromProject && projectId) ||
+          (data.fromProject && projectId && data.fromProject !== projectId)
+        ) {
+          removeIndicator();
+          return;
+        }
+      } catch {}
     }
+    showIndicatorAtEnd();
   });
 
   // DRAG LEAVE
@@ -1332,6 +1631,16 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
     if (!raw) return;
 
     const data = JSON.parse(raw);
+    if (
+      (data.fromProject && !projectId) ||
+      (!data.fromProject && projectId) ||
+      (data.fromProject && projectId && data.fromProject !== projectId)
+    ) {
+      showToast("No es posible mover tareas entre proyectos.");
+      if (draggedElement) draggedElement.style.opacity = "";
+      removeIndicator();
+      return;
+    }
     let originList;
 
     if (data.fromProject) {
@@ -1348,14 +1657,8 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
     const movedTask = originList[data.index];
     if (!movedTask) return;
 
-    // 🔥 usar el indicator SIEMPRE
+    // 🔥 usar el indicator si existe, si no insertar al final
     const indicator = list.querySelector(".drop-indicator");
-
-    // 🔒 evitar drop sin preview
-    if (!indicator) {
-      if (draggedElement) draggedElement.style.opacity = "";
-      return;
-    }
 
     originList.splice(data.index, 1);
 
@@ -1363,6 +1666,9 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
     if (insertIndex === null) {
       insertIndex = dayTasks.length;
+    }
+    if (!indicator) {
+      previewInsertIndex = null;
     }
 
     
@@ -1377,6 +1683,8 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
     if (indicator && draggedElement) {
       list.insertBefore(draggedElement, indicator);
+      draggedElement.style.opacity = "";
+    } else if (draggedElement) {
       draggedElement.style.opacity = "";
     }
 
@@ -1482,11 +1790,20 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
   });
 
   function render() {
+    closeTaskActionMenu();
     clearTaskMobileFocus();
     list.innerHTML = "";
     for (let i = dayTasks.length - 1; i >= 0; i--) {
       if (!dayTasks[i]) dayTasks.splice(i, 1);
     }
+    dayTasks.forEach((task) => {
+      normalizeTaskScheduling(task);
+      if (isProject) {
+        task.timeSlot = null;
+        task.timeCategory = "all-day";
+      }
+    });
+    sortTaskList(dayTasks);
     dayTasks.forEach((t, i) => {
       if (t.expGiven === undefined) t.expGiven = false;
       const el = document.createElement("div");
@@ -1513,6 +1830,16 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         if (!raw) return;
 
         const data = JSON.parse(raw);
+        if (
+          (data.fromProject && !projectId) ||
+          (!data.fromProject && projectId) ||
+          (data.fromProject && projectId && data.fromProject !== projectId)
+        ) {
+          showToast("No es posible mover tareas entre proyectos.");
+          if (draggedElement) draggedElement.style.opacity = "";
+          removeIndicator();
+          return;
+        }
         let originList;
 
         if (data.fromProject) {
@@ -1574,6 +1901,31 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
         if (el === draggedElement) return;
 
+        if (
+          draggedElement?.dataset?.project &&
+          projectId &&
+          draggedElement.dataset.project !== projectId
+        ) {
+          removeIndicator();
+          return;
+        }
+
+        if (
+          draggedElement?.dataset?.project &&
+          !projectId
+        ) {
+          removeIndicator();
+          return;
+        }
+
+        if (
+          !draggedElement?.dataset?.project &&
+          projectId
+        ) {
+          removeIndicator();
+          return;
+        }
+
         const rect = el.getBoundingClientRect();
         const offset = e.clientY - rect.top;
         const percent = offset / rect.height;
@@ -1612,20 +1964,97 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       });
 
       el.dataset.index = i;
+      const activeLabel = getTaskLabelById(t.tagId);
+      const taskLabelMarkup = activeLabel
+        ? `
+        <div class="task-label-badge" style="--task-label-color:${activeLabel.color}">
+          <button class="task-label-dot" type="button" aria-label="Quitar etiqueta"></button>
+          <span>${activeLabel.name}</span>
+        </div>
+      `
+        : "";
       
       el.innerHTML = `
         <div class="cb"></div>
+        ${!isProject && t.timeSlot ? `<span class="task-time">${t.timeSlot}</span>` : ""}
         <div class="tmain">
           <div class="ttext">${t.text}</div>
+          ${taskLabelMarkup}
         </div>
-        <button class="icon danger">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
+        <div class="task-actions-anchor">
+          <div class="task-menu-stack">
+            ${!isProject ? `
+            <button class="task-menu-btn" data-action="schedule" type="button">
+              <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="8"/>
+                <path d="M12 8v4l3 2"/>
+              </svg>
+              <span>Definir horario</span>
+              <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 3 5 5-5 5"/>
+              </svg>
+            </button>
+            ` : ""}
+            <button class="task-menu-btn" data-action="tag" type="button">
+              <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 10 10 20l-7-7V4h9l8 6Z"/>
+                <circle cx="7.5" cy="8.5" r="1"/>
+              </svg>
+              <span>Etiquetar tarea</span>
+              <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 3 5 5-5 5"/>
+              </svg>
+            </button>
+            ${!isProject ? `
+            <button class="task-menu-btn" data-action="postpone" type="button">
+              <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 9h4l-4 4h4"/>
+                <path d="M11 13h4l-4 4h4"/>
+                <path d="M17 9h2l-2 2h2"/>
+              </svg>
+              <span>Posponer tarea</span>
+              <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 3 5 5-5 5"/>
+              </svg>
+            </button>
+            ` : ""}
+            <button class="task-menu-btn danger" data-action="delete" type="button">
+              <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 7h16"/>
+                <path d="M9 7V5h6v2"/>
+                <path d="M7 7l1 12h8l1-12"/>
+                <path d="M10 11v5"/>
+                <path d="M14 11v5"/>
+              </svg>
+              <span>Borrar tarea</span>
+            </button>
+          </div>
+          ${!isProject ? `<div class="task-side-panel task-time-panel" aria-label="Seleccionar horario"></div>` : ""}
+          <div class="task-side-panel task-tag-panel" aria-label="Seleccionar etiqueta"></div>
+          <div class="task-side-panel task-tag-create-panel" aria-label="Crear etiqueta"></div>
+          ${!isProject ? `<div class="task-side-panel task-postpone-panel" aria-label="Posponer tarea"></div>` : ""}
+          <button class="icon task-action" aria-label="Editar tarea" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 20h9"/>
+              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+            </svg>
+          </button>
+        </div>
       `;
       const textDiv = el.querySelector(".ttext");
+      const taskLabelDot = el.querySelector(".task-label-dot");
+
+      if (taskLabelDot) {
+        taskLabelDot.addEventListener("click", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!t.tagId) return;
+          t.tagId = "";
+          await save();
+          render();
+          renderMiniCalendar();
+        });
+      }
 
       // DESKTOP
       textDiv.addEventListener("dblclick", () => {
@@ -1683,7 +2112,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           if (!isMobileTaskFocusEnabled()) return;
           if (isMobileTaskReorderEnabled()) return;
           if (e.touches.length !== 1) return;
-          if (e.target.closest(".cb") || e.target.closest(".icon.danger")) return;
+          if (e.target.closest(".cb") || e.target.closest(".task-actions-anchor")) return;
           if (activeTaskMobileFocus && activeTaskMobileFocus.taskElement !== el) return;
 
           longPressTriggered = false;
@@ -1756,7 +2185,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
         el.addEventListener("touchstart", (e) => {
           if (isMobileViewport() && !isMobileTaskReorderEnabled()) return;
-          if (e.target.closest(".cb") || e.target.closest(".icon.danger")) return;
+          if (e.target.closest(".cb") || e.target.closest(".task-actions-anchor")) return;
 
           e.stopPropagation();
 
@@ -1807,6 +2236,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
             const targetProject = targetList.dataset.project || null;
 
             if (!canDropTaskInTarget(dragData, targetDate, targetProject)) {
+              showToast("No es posible mover tareas entre proyectos.");
               removeActiveMobileDropIndicator();
               return;
             }
@@ -1969,7 +2399,393 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
       }
 
-      el.querySelector(".icon.danger").onclick = async () => {
+      const taskActionAnchor = el.querySelector(".task-actions-anchor");
+      const taskActionButton = el.querySelector(".task-action");
+      const taskScheduleButton = el.querySelector('[data-action="schedule"]');
+      const taskTagButton = el.querySelector('[data-action="tag"]');
+      const taskPostponeButton = el.querySelector('[data-action="postpone"]');
+      const taskDeleteButton = el.querySelector('[data-action="delete"]');
+      const taskTimePanel = el.querySelector(".task-time-panel");
+      const taskTagPanel = el.querySelector(".task-tag-panel");
+      const taskTagCreatePanel = el.querySelector(".task-tag-create-panel");
+      const taskPostponePanel = el.querySelector(".task-postpone-panel");
+
+      const persistTaskCompletion = async (
+        nextDone,
+        {
+          allowReward = true,
+          triggerSounds = true,
+          moveToBottomOnComplete = true,
+          cbElement = null
+        } = {}
+      ) => {
+        const wasDone = t.done;
+        if (wasDone === nextDone) {
+          return false;
+        }
+
+        let shouldSavePlayer = false;
+        let expShown = false;
+
+        t.done = nextDone;
+
+        if (allowReward) {
+          shouldSavePlayer = resetDailyExpIfNeeded() || shouldSavePlayer;
+
+          if (t.done && !t.expGiven) {
+            t.expGiven = true;
+
+            if (player.todayExpTasks < 5) {
+              const rewarded = rewardExp();
+
+              if (rewarded) {
+                shouldSavePlayer = true;
+                expShown = true;
+                if (cbElement) showExpGain(cbElement, 100);
+              }
+            } else if (!player.dailyLimitShown) {
+              player.dailyLimitShown = true;
+              shouldSavePlayer = true;
+              showToast("Límite diario de EXP alcanzado");
+            }
+          }
+        }
+
+        const total = dayTasks.length;
+        const completed = dayTasks.filter((task) => task.done).length;
+
+        if (triggerSounds && !wasDone && t.done && soundEnabled) {
+          if (total > 0 && completed === total) {
+            playDayCompleteSound();
+            launchConfetti();
+          } else {
+            playRewardSound();
+          }
+        }
+
+        t.done ? el.classList.add("done") : el.classList.remove("done");
+
+        if (!wasDone && t.done && moveToBottomOnComplete) {
+          const currentIndex = dayTasks.indexOf(t);
+          const isLast = currentIndex === dayTasks.length - 1;
+
+          if (currentIndex !== -1 && !isLast) {
+            const taskToMove = dayTasks.splice(currentIndex, 1)[0];
+            dayTasks.push(taskToMove);
+          }
+
+          if (!isLast) {
+            const delay = expShown ? 900 : 0;
+
+            setTimeout(async () => {
+              await save();
+              if (shouldSavePlayer) await savePlayer();
+              render();
+              renderMiniCalendar();
+            }, delay);
+
+            return true;
+          }
+        }
+
+        await save();
+        if (shouldSavePlayer) await savePlayer();
+        render();
+        renderMiniCalendar();
+        return true;
+      };
+
+      taskActionButton.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleTaskActionMenu(el, taskActionAnchor);
+      };
+
+      taskActionAnchor.querySelectorAll(".task-menu-btn").forEach((button) => {
+        button.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        });
+      });
+
+      if (taskScheduleButton && taskTimePanel) {
+        const visibleTimeOptions = TASK_TIME_OPTIONS.filter((slot) => {
+          if (!isTodayColumn) return true;
+          const [hours, minutes] = slot.split(":").map(Number);
+          const slotMinutes = (hours * 60) + minutes;
+          const now = new Date();
+          const currentMinutes = (now.getHours() * 60) + now.getMinutes();
+          return slotMinutes >= currentMinutes;
+        });
+
+        const scheduleOptions = t.timeSlot
+          ? [{ label: "Todo el dia", value: "" }, ...visibleTimeOptions.map((slot) => ({ label: slot, value: slot }))]
+          : visibleTimeOptions.map((slot) => ({ label: slot, value: slot }));
+
+        taskTimePanel.innerHTML = scheduleOptions.map((option) => `
+          <button
+            class="task-side-option${option.value === "" ? (!t.timeSlot ? " active" : "") : (t.timeSlot === option.value ? " active" : "")}"
+            type="button"
+            data-time-slot="${option.value}"
+          >${option.label}</button>
+        `).join("");
+
+        taskScheduleButton.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          taskActionAnchor.classList.remove("tag-open");
+          taskActionAnchor.classList.remove("tag-create-open");
+          taskActionAnchor.classList.remove("postpone-open");
+          taskActionAnchor.classList.toggle("schedule-open");
+          positionTaskActionMenu(taskActionAnchor);
+        };
+
+        taskTimePanel.querySelectorAll(".task-side-option").forEach((option) => {
+          option.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const selected = option.dataset.timeSlot || null;
+            t.timeSlot = selected;
+            t.timeCategory = selected ? "scheduled" : "all-day";
+            closeTaskActionMenu();
+            sortTaskList(dayTasks);
+            await save();
+            render();
+            renderMiniCalendar();
+          });
+        });
+      }
+
+      if (taskTagButton && taskTagPanel && taskTagCreatePanel) {
+        const renderTagPanel = () => {
+          const labelOptions = taskLabels.map((label) => `
+            <div class="task-tag-row">
+              <button
+                class="task-side-option task-tag-option${t.tagId === label.id ? " active" : ""}"
+                type="button"
+                data-label-id="${label.id}"
+              >
+                <span class="task-side-option-dot" style="--task-label-color:${label.color}"></span>
+                <span>${label.name}</span>
+              </button>
+              <button
+                class="task-tag-delete"
+                type="button"
+                data-label-delete="${label.id}"
+                aria-label="Borrar etiqueta ${label.name}"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 7h16"/>
+                  <path d="M9 7V5h6v2"/>
+                  <path d="M7 7l1 12h8l1-12"/>
+                  <path d="M10 11v5"/>
+                  <path d="M14 11v5"/>
+                </svg>
+              </button>
+            </div>
+          `).join("");
+
+          const createButtonMarkup = `
+            <button class="task-side-option task-tag-create-trigger" type="button" data-create-label="true">
+              <span class="task-side-option-plus">+</span>
+              <span>Crear etiqueta</span>
+            </button>
+          `;
+
+          taskTagPanel.innerHTML = labelOptions
+            ? `${labelOptions}${createButtonMarkup}`
+            : createButtonMarkup;
+
+          taskTagPanel.querySelectorAll("[data-label-id]").forEach((option) => {
+            option.addEventListener("click", async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              t.tagId = option.dataset.labelId || "";
+              closeTaskActionMenu();
+              await save();
+              render();
+              renderMiniCalendar();
+            });
+          });
+
+          taskTagPanel.querySelectorAll("[data-label-delete]").forEach((button) => {
+            button.addEventListener("click", async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const labelId = button.dataset.labelDelete || "";
+              if (!labelId) return;
+              const label = getTaskLabelById(labelId);
+              const labelName = label?.name || "esta etiqueta";
+              const shouldDelete = confirm(`¿Borrar "${labelName}"? Esta etiqueta se quitará de todas las tareas.`);
+              if (!shouldDelete) return;
+              removeTaskLabelEverywhere(labelId);
+              closeTaskActionMenu();
+              await save();
+              render();
+              renderMiniCalendar();
+            });
+          });
+
+          const createTrigger = taskTagPanel.querySelector("[data-create-label]");
+          if (createTrigger) {
+            createTrigger.addEventListener("click", (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              renderCreateTagPanel();
+              taskActionAnchor.classList.add("tag-open");
+              taskActionAnchor.classList.add("tag-create-open");
+              positionTaskActionMenu(taskActionAnchor);
+              taskTagCreatePanel.querySelector(".task-tag-input")?.focus();
+            });
+          }
+        };
+
+        const renderCreateTagPanel = () => {
+          const selectedColor = taskTagCreatePanel.dataset.selectedColor || TASK_LABEL_COLORS[0];
+          const draftName = taskTagCreatePanel.dataset.draftName || "";
+
+          taskTagCreatePanel.innerHTML = `
+            <div class="task-tag-create-shell">
+              <div class="task-tag-create-header">
+                <input class="task-tag-input" type="text" maxlength="24" placeholder="Nombre de etiqueta">
+                <button class="task-side-action" type="button" aria-label="Guardar etiqueta">✓</button>
+              </div>
+              <div class="task-color-grid">
+                ${TASK_LABEL_COLORS.map((color) => `
+                  <button
+                    class="task-color-option${color === selectedColor ? " active" : ""}"
+                    type="button"
+                    data-color="${color}"
+                    style="--task-label-color:${color}"
+                    aria-label="Seleccionar color ${color}"
+                  ></button>
+                `).join("")}
+              </div>
+            </div>
+          `;
+
+          const input = taskTagCreatePanel.querySelector(".task-tag-input");
+          const saveButton = taskTagCreatePanel.querySelector(".task-side-action");
+          if (input) input.value = draftName;
+
+          input?.addEventListener("input", () => {
+            taskTagCreatePanel.dataset.draftName = input.value;
+          });
+
+          taskTagCreatePanel.querySelectorAll(".task-color-option").forEach((button) => {
+            button.addEventListener("click", (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              taskTagCreatePanel.dataset.draftName = input?.value || "";
+              taskTagCreatePanel.dataset.selectedColor = button.dataset.color || TASK_LABEL_COLORS[0];
+              renderCreateTagPanel();
+            });
+          });
+
+          const submitNewLabel = async () => {
+            const name = formatTaskLabelName(input?.value || "");
+            const color = taskTagCreatePanel.dataset.selectedColor || TASK_LABEL_COLORS[0];
+
+            if (!name) {
+              input?.focus();
+              return;
+            }
+
+            const createdLabel = createTaskLabel(name, color);
+            taskTagCreatePanel.dataset.draftName = "";
+            t.tagId = createdLabel.id;
+            closeTaskActionMenu();
+            await save();
+            render();
+            renderMiniCalendar();
+          };
+
+          saveButton?.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            await submitNewLabel();
+          });
+
+          input?.addEventListener("keydown", async (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              await submitNewLabel();
+            }
+          });
+        };
+
+        renderTagPanel();
+
+        taskTagButton.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          renderTagPanel();
+          taskActionAnchor.classList.remove("schedule-open");
+          taskActionAnchor.classList.remove("postpone-open");
+          taskActionAnchor.classList.remove("tag-create-open");
+          taskActionAnchor.classList.toggle("tag-open");
+          positionTaskActionMenu(taskActionAnchor);
+        };
+      }
+
+      if (taskPostponeButton && taskPostponePanel) {
+        const postponeOptions = [
+          { label: "Posponer para manana", days: 1 },
+          { label: "Posponer por 2 dias", days: 2 },
+          { label: "Posponer por una semana", days: 7 }
+        ];
+
+        taskPostponePanel.innerHTML = postponeOptions.map((option) => `
+          <button
+            class="task-side-option"
+            type="button"
+            data-postpone-days="${option.days}"
+          >${option.label}</button>
+        `).join("");
+
+        taskPostponeButton.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          taskActionAnchor.classList.remove("tag-open");
+          taskActionAnchor.classList.remove("tag-create-open");
+          taskActionAnchor.classList.remove("schedule-open");
+          taskActionAnchor.classList.toggle("postpone-open");
+          positionTaskActionMenu(taskActionAnchor);
+        };
+
+        taskPostponePanel.querySelectorAll(".task-side-option").forEach((option) => {
+          option.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const daysToMove = Number(option.dataset.postponeDays || 0);
+            const targetIso = addDaysToIsoDate(iso, daysToMove);
+            if (!targetIso) return;
+
+            closeTaskActionMenu();
+            const moved = moveTaskToTarget(
+              {
+                fromDate: iso,
+                fromProject: null,
+                index: i
+              },
+              targetIso,
+              null
+            );
+
+            if (!moved) return;
+
+            await save();
+            init();
+            renderMiniCalendar();
+          });
+        });
+      }
+
+      taskDeleteButton.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeTaskActionMenu();
 
         if (soundEnabled) {
           playDeleteTaskSound();
@@ -1982,105 +2798,13 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         renderMiniCalendar();
 
         updateDayModalTaskCount(iso);
-
       };
 
       el.querySelector(".cb").onclick = async () => {
-
         const cb = el.querySelector(".cb");
-
-        const wasDone = t.done;
-        let shouldSavePlayer = false;
-
-        t.done = !t.done;
-
-        let expShown = false;
-
-        shouldSavePlayer = resetDailyExpIfNeeded() || shouldSavePlayer;
-
-        if(t.done && !t.expGiven){
-
-          t.expGiven = true;
-
-          if(player.todayExpTasks < 5){
-
-            const rewarded = rewardExp();
-
-            if(rewarded){
-              shouldSavePlayer = true;
-              expShown = true;
-              showExpGain(cb,100);
-            }
-
-          }else{
-
-            if(!player.dailyLimitShown){
-
-              player.dailyLimitShown = true;
-              shouldSavePlayer = true;
-
-              showToast("Límite diario de EXP alcanzado");
-            }
-
-          }
-
-        }
-
-
-        const total = dayTasks.length;
-        const completed = dayTasks.filter(task => task.done).length;
-
-        if (!wasDone && t.done && soundEnabled) {
-
-          if (total > 0 && completed === total) {
-            playDayCompleteSound();
-            launchConfetti();
-          } else {
-            playRewardSound();
-          }
-
-        }
-
-        t.done ? el.classList.add("done") : el.classList.remove("done");
-
-
-        if (!wasDone && t.done) {
-
-          const currentIndex = dayTasks.indexOf(t);
-          const isLast = currentIndex === dayTasks.length - 1;
-
-          if(currentIndex !== -1 && !isLast){
-            const taskToMove = dayTasks.splice(currentIndex,1)[0];
-            dayTasks.push(taskToMove);
-          }
-
-          if(!isLast){
-
-            const delay = expShown ? 900 : 0;
-
-            setTimeout(async ()=>{
-
-              await save();
-              if(shouldSavePlayer) await savePlayer();
-              render();
-              renderMiniCalendar();
-
-            },delay);
-
-          }else{
-            await save();
-            if(shouldSavePlayer) await savePlayer();
-            render();
-            renderMiniCalendar();
-          }
-
-        }else{
-          await save();
-          if(shouldSavePlayer) await savePlayer();
-          render();
-          renderMiniCalendar();
-        }
-
+        await persistTaskCompletion(!t.done, {
+          cbElement: cb,
+        });
       };
 
       list.appendChild(el);
@@ -2118,7 +2842,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       text = text.charAt(0).toUpperCase() + text.slice(1);
     }
 
-    const newTask = { text, done:false, expGiven:false };
+    const newTask = { text, done:false, expGiven:false, timeSlot:null, timeCategory:"all-day", tagId:"" };
     const firstDoneIndex = dayTasks.findIndex(t => t.done);
 
     if(firstDoneIndex === -1){
@@ -2126,6 +2850,8 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
     }else{
       dayTasks.splice(firstDoneIndex, 0, newTask);
     }
+
+    sortTaskList(dayTasks);
 
     if (iso) {
       updateDayModalTaskCount(iso);
@@ -2957,7 +3683,11 @@ function openThemeModal() {
   modal.innerHTML = `
     <div class="mhead">
       <strong>Seleccionar Tema</strong>
-      <button class="btn" id="closeThemeModal">Cerrar</button>
+      <button class="theme-close-btn" id="closeThemeModal" type="button" aria-label="Cerrar">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
     </div>
 
     <div class="mbody theme-grid">
