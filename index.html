@@ -4692,25 +4692,174 @@
     #loadingScreen{
       position:fixed;
       inset:0;
-      background:#000;
       display:flex;
       align-items:center;
       justify-content:center;
+      flex-direction:column;
+      gap:18px;
+      overflow:hidden;
       z-index:999999;
     }
 
-    .loader{
-      width:60px;
-      height:60px;
-      border-radius:50%;
-      border:4px solid rgba(255,255,255,.15);
-      border-top:4px solid white;
-      animation:spin 1s linear infinite;
+    .loading-bg{
+      position:absolute;
+      inset:-30%;
+      background:
+        radial-gradient(40% 40% at 20% 20%, rgba(88,173,255,.55), transparent 60%),
+        radial-gradient(35% 35% at 80% 30%, rgba(255,138,216,.45), transparent 60%),
+        radial-gradient(45% 45% at 35% 80%, rgba(140,255,214,.35), transparent 60%),
+        radial-gradient(50% 50% at 75% 75%, rgba(255,200,120,.35), transparent 60%);
+      animation: loadingBgMove 12s ease-in-out infinite alternate;
+      transform: translateZ(0);
+      filter: saturate(140%);
     }
 
-    @keyframes spin{
-      from{ transform:rotate(0deg); }
-      to{ transform:rotate(360deg); }
+    .loading-blur{
+      position:absolute;
+      inset:0;
+      background: rgba(0,0,0,.22);
+      backdrop-filter: blur(36px) saturate(160%);
+      -webkit-backdrop-filter: blur(36px) saturate(160%);
+    }
+
+    .loading-content{
+      position:relative;
+      z-index:1;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:16px;
+    }
+
+    .loading-brand{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:12px;
+      animation: loadingFloat 2.8s ease-in-out infinite;
+    }
+
+    .loading-logo{
+      width:64px;
+      height:64px;
+      border-radius:16px;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.25),
+        0 12px 24px rgba(0,0,0,.28);
+      animation: loadingPulse 2.2s ease-in-out infinite;
+      will-change: transform, filter;
+    }
+
+    .loading-title{
+      display:flex;
+      flex-direction:column;
+      line-height:1.05;
+      font-weight:900;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      font-size:clamp(22px, 4vw, 30px);
+      text-align:left;
+      isolation:isolate;
+    }
+
+    .loading-line{
+      display:block;
+      background: linear-gradient(90deg, #ffffff 0%, #b6d4ff 35%, #ffffff 70%);
+      background-size:200% 100%;
+      -webkit-background-clip:text;
+      background-clip:text;
+      color:transparent;
+      text-shadow: 0 6px 22px rgba(0,0,0,.55);
+      animation: loadingShimmer 2.1s linear infinite;
+    }
+
+    .loading-line:nth-child(2){
+      animation-delay:.35s;
+      letter-spacing:.18em;
+    }
+
+    .loading-progress{
+      width:min(220px, 62vw);
+      height:6px;
+      border-radius:999px;
+      background: transparent;
+      border:none;
+      overflow:hidden;
+      box-shadow:none;
+    }
+
+    .loading-progress-fill{
+      height:100%;
+      width:0%;
+      background:
+        linear-gradient(90deg, rgba(120,190,255,.85), rgba(255,255,255,.9), rgba(140,255,214,.85));
+      box-shadow: 0 0 18px rgba(120,190,255,.6);
+      transition: width .18s ease;
+    }
+
+    .loading-status{
+      font-size:12px;
+      letter-spacing:.18em;
+      font-weight:700;
+      color: rgba(255,255,255,.7);
+      text-shadow: 0 4px 14px rgba(0,0,0,.6);
+      text-transform: uppercase;
+    }
+
+    .loading-shine{
+      position:relative;
+      overflow:hidden;
+    }
+
+    .loading-shine::after{
+      content:"";
+      position:absolute;
+      top:-60%;
+      left:-140%;
+      width:70%;
+      height:220%;
+      background: linear-gradient(120deg, transparent 25%, rgba(255,255,255,.65) 50%, transparent 75%);
+      transform: translateX(0);
+      animation: loadingShine 2.8s ease-in-out infinite;
+      mix-blend-mode: screen;
+      pointer-events:none;
+    }
+
+    .loading-logo.loading-shine::after{
+      animation-delay:.3s;
+    }
+
+    .loading-title.loading-shine::after{
+      animation-delay:1s;
+    }
+
+    @keyframes loadingFloat{
+      0%, 100%{ transform: translateY(0); }
+      50%{ transform: translateY(-6px); }
+    }
+
+    @keyframes loadingPulse{
+      0%, 100%{ transform: scale(1); filter: brightness(1); }
+      50%{ transform: scale(1.04); filter: brightness(1.15); }
+    }
+
+    @keyframes loadingShimmer{
+      0%{ background-position:0% 50%; }
+      100%{ background-position:200% 50%; }
+    }
+
+
+    @keyframes loadingShine{
+      0%{ transform: translateX(-120%); opacity:0; }
+      20%{ opacity:1; }
+      50%{ transform: translateX(120%); opacity:.9; }
+      100%{ transform: translateX(120%); opacity:0; }
+    }
+
+    @keyframes loadingBgMove{
+      0%{ transform: translate(-4%, -3%) scale(1.05); filter: hue-rotate(0deg); }
+      50%{ transform: translate(3%, 4%) scale(1.12); filter: hue-rotate(12deg); }
+      100%{ transform: translate(-2%, 2%) scale(1.08); filter: hue-rotate(-8deg); }
     }
 
     .save-status{
@@ -5035,6 +5184,32 @@
         transform: translateX(-50%) translateY(0) scale(1);
       }
 
+      .task-side-panel{
+        position: fixed;
+        left: 50%;
+        right: auto;
+        top: 20px;
+        width: min(86vw, 300px);
+        max-width: 86vw;
+        transform: translate(-50%, 8px) scale(.98);
+        z-index: 10000;
+      }
+
+      .task-tag-panel{
+        width: min(86vw, 300px);
+      }
+
+      .task-tag-create-panel{
+        width: min(90vw, 320px);
+      }
+
+      .task-actions-anchor.schedule-open .task-time-panel,
+      .task-actions-anchor.tag-open .task-tag-panel,
+      .task-actions-anchor.tag-create-open .task-tag-create-panel,
+      .task-actions-anchor.postpone-open .task-postpone-panel{
+        transform: translate(-50%, 0) scale(1);
+      }
+
       #taskReorderBanner {
         position: fixed;
         top: max(14px, env(safe-area-inset-top, 0px) + 8px);
@@ -5335,7 +5510,21 @@
 
 <body class="app-loading">
   <div id="loadingScreen">
-    <div class="loader"></div>
+    <div class="loading-bg" aria-hidden="true"></div>
+    <div class="loading-blur" aria-hidden="true"></div>
+    <div class="loading-content">
+      <div class="loading-brand" aria-label="MULTITAREAS">
+        <img src="/flav-icon.png" alt="MultiTareas" class="loading-logo loading-shine">
+        <div class="loading-title loading-shine">
+          <span class="loading-line">MULTI-</span>
+          <span class="loading-line">TAREAS</span>
+        </div>
+      </div>
+      <div class="loading-progress" aria-hidden="true">
+        <div class="loading-progress-fill"></div>
+      </div>
+      <div class="loading-status" aria-live="polite">Cargando...</div>
+    </div>
   </div>
 
   <div id="settingsOverlay" class="settings-overlay">
@@ -5360,6 +5549,36 @@
             General
           </button>
 
+          <button class="settings-nav-item" data-settings-panel="account">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M12 12c2.7614 0 5-2.2386 5-5s-2.2386-5-5-5-5 2.2386-5 5 2.2386 5 5 5Z" stroke="currentColor" stroke-width="1.8"/>
+                <path d="M4 20c1.7-3.2 4.9-5 8-5s6.3 1.8 8 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </span>
+            Cuenta
+          </button>
+
+          <button class="settings-nav-item" data-settings-panel="notifications">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M6 9a6 6 0 0 1 12 0c0 4 2 5 2 5H4s2-1 2-5Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9.5 18a2.5 2.5 0 0 0 5 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </span>
+            Notificaciones
+          </button>
+
+          <button class="settings-nav-item" data-settings-panel="calendar">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" fill="none">
+                <rect x="4" y="5" width="16" height="15" rx="3" stroke="currentColor" stroke-width="1.8"/>
+                <path d="M8 3v4M16 3v4M4 9h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </span>
+            Vincular con Calendario
+          </button>
+
           <button class="settings-nav-item active" data-settings-panel="security">
             <span class="settings-nav-icon">
               <svg viewBox="0 0 24 24" fill="none">
@@ -5382,6 +5601,24 @@
         <div id="settingsPanelGeneral" class="settings-panel">
           <div class="settings-empty">
             Próximamente podrás administrar más preferencias desde este espacio.
+          </div>
+        </div>
+
+        <div id="settingsPanelAccount" class="settings-panel">
+          <div class="settings-empty">
+            Este apartado estará disponible pronto para que puedas gestionar tu cuenta.
+          </div>
+        </div>
+
+        <div id="settingsPanelNotifications" class="settings-panel">
+          <div class="settings-empty">
+            Este apartado estará disponible pronto para configurar tus notificaciones.
+          </div>
+        </div>
+
+        <div id="settingsPanelCalendar" class="settings-panel">
+          <div class="settings-empty">
+            Este apartado estará disponible pronto para vincular tu calendario.
           </div>
         </div>
 
@@ -5488,7 +5725,7 @@
         </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
-          <span class="version">v2.0</span>
+          <span class="version">v2.1</span>
         </div>
       </div>
 
@@ -5524,7 +5761,7 @@
     <div class="panel">
       <h3 class="changelog-title">
         NOTAS DE VERSIÓN
-        <span class="changelog-version">v2.0</span>
+        <span class="changelog-version">v2.1</span>
       </h3>
       <div class="muted changelog">
         <ul>
@@ -5854,6 +6091,36 @@
   </g>
   </svg>
   </button>
+
+<script>
+  (function(){
+    const screen = document.getElementById("loadingScreen");
+    const fill = screen?.querySelector(".loading-progress-fill");
+    if (!screen || !fill) return;
+
+    let progress = 0;
+    const update = () => {
+      fill.style.width = progress + "%";
+    };
+
+    const tick = setInterval(() => {
+      if (!document.getElementById("loadingScreen")) {
+        clearInterval(tick);
+        return;
+      }
+      if (progress < 92) {
+        progress = Math.min(92, progress + (Math.random() * 4 + 1));
+        update();
+      }
+    }, 180);
+
+    window.addEventListener("load", () => {
+      progress = 100;
+      update();
+      clearInterval(tick);
+    });
+  })();
+</script>
 
 <script type="module" src="app.js"></script>
 </body>

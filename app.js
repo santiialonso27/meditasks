@@ -175,6 +175,28 @@ function positionTaskActionMenu(anchorElement) {
     panel.style.overflowY = "auto";
   });
 
+  if (isMobileViewport()) {
+    sidePanels.forEach((panel) => {
+      const panelHeight = panel.offsetHeight || 0;
+      const preferBelowTop = anchorRect.bottom + 12;
+      const preferAboveTop = anchorRect.top - panelHeight - 12;
+      let top = preferBelowTop;
+
+      if (top + panelHeight > window.innerHeight - viewportPadding && preferAboveTop >= viewportPadding) {
+        top = preferAboveTop;
+      }
+
+      top = Math.min(
+        Math.max(viewportPadding, top),
+        Math.max(viewportPadding, window.innerHeight - panelHeight - viewportPadding)
+      );
+
+      panel.style.top = `${Math.round(top)}px`;
+    });
+
+    return;
+  }
+
   const spaceRight = window.innerWidth - anchorRect.right - viewportPadding;
   const spaceLeft = anchorRect.left - viewportPadding;
   const widestPanel = 228 + 206 + 14;
@@ -716,6 +738,17 @@ async function closeMobileKeyboardIfNeeded() {
 
   activeElement.blur();
   await delay(MOBILE_TASK_FOCUS_KEYBOARD_DELAY_MS);
+}
+
+async function scrollTaskIntoViewForMobile(taskElement){
+  if (!isMobileTaskFocusEnabled() || !taskElement) return;
+
+  taskElement.scrollIntoView({
+    block: "start",
+    behavior: "smooth"
+  });
+
+  await delay(280);
 }
 
 function normalizePlayer(raw = {}) {
@@ -1294,6 +1327,9 @@ const settingsProfileAvatar = document.getElementById("settingsProfileAvatar");
 const settingsNavItems = Array.from(document.querySelectorAll(".settings-nav-item"));
 const settingsPanels = {
   general: document.getElementById("settingsPanelGeneral"),
+  account: document.getElementById("settingsPanelAccount"),
+  notifications: document.getElementById("settingsPanelNotifications"),
+  calendar: document.getElementById("settingsPanelCalendar"),
   security: document.getElementById("settingsPanelSecurity")
 };
 
@@ -3301,6 +3337,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   closeTaskActionMenu();
   clearTaskMobileFocus();
   await closeMobileKeyboardIfNeeded();
+  await scrollTaskIntoViewForMobile(taskElement);
 
   if (!isMobileTaskFocusEnabled()) return;
 
