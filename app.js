@@ -718,13 +718,19 @@ async function closeMobileKeyboardIfNeeded() {
   await delay(MOBILE_TASK_FOCUS_KEYBOARD_DELAY_MS);
 }
 
-let player = JSON.parse(localStorage.getItem("mt_player")) || {
-  exp: 0,
-  level: 0,
-  todayExpTasks: 0,
-  lastExpDate: null,
-  dailyLimitShown: false
-};
+function normalizePlayer(raw = {}) {
+  return {
+    exp: 0,
+    level: 0,
+    todayExpTasks: 0,
+    lastExpDate: null,
+    dailyLimitShown: false,
+    updatedAt: 0,
+    ...raw
+  };
+}
+
+let player = normalizePlayer(JSON.parse(localStorage.getItem("mt_player")) || {});
 
 if(localStorage.getItem("mt_theme_mode")==="light"){
   document.documentElement.classList.add("light-mode");
@@ -974,14 +980,13 @@ onAuthStateChanged(auth, async (user) => {
         }
 
         if (data.player) {
-          player = data.player;
-        } else {
-          player = {
-            exp: 0,
-            level: 0,
-            todayExpTasks: 0,
-            lastExpDate: null
-          };
+          const remotePlayer = normalizePlayer(data.player);
+          const localPlayer = normalizePlayer(player || {});
+          player = remotePlayer.updatedAt >= localPlayer.updatedAt
+            ? remotePlayer
+            : localPlayer;
+        } else if (!player || typeof player.exp !== "number") {
+          player = normalizePlayer({});
         }
 
         // 🔥 cargar tema del usuario
@@ -1547,6 +1552,7 @@ function resetDailyExpIfNeeded(){
     player.todayExpTasks = 0;
     player.lastExpDate = today;
     player.dailyLimitShown = false;
+    player.updatedAt = Date.now();
     changed = true;
   }
 
@@ -1564,6 +1570,7 @@ function rewardExp(){
 
   player.exp += 100;
   player.todayExpTasks++;
+  player.updatedAt = Date.now();
 
   updateLevel();
   return true;
