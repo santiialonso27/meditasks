@@ -3358,19 +3358,6 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
   if (!isMobileTaskFocusEnabled()) return;
 
-  const boardScroll = getBoardScrollContainer();
-  const lockedScrollTop = boardScroll ? boardScroll.scrollTop : 0;
-  const keepMobileScrollPosition = () => {
-    if (!boardScroll) return;
-    boardScroll.scrollTop = lockedScrollTop;
-    requestAnimationFrame(() => {
-      if (boardScroll) boardScroll.scrollTop = lockedScrollTop;
-    });
-    setTimeout(() => {
-      if (boardScroll) boardScroll.scrollTop = lockedScrollTop;
-    }, 140);
-  };
-
   const overlay = document.createElement("div");
   overlay.id = "taskMobileOverlay";
 
@@ -3382,7 +3369,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   const menu = document.createElement("div");
   menu.id = "taskMobileMenu";
   const isProjectTask = !!taskElement.dataset.project;
-  menu.innerHTML = `
+  const mainMenuMarkup = `
     <button class="task-menu-btn" data-action="edit" type="button">
       <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 20h9"/>
@@ -3447,6 +3434,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
       <span>Borrar tarea</span>
     </button>
   `;
+  menu.innerHTML = mainMenuMarkup;
 
   document.body.appendChild(overlay);
   document.body.appendChild(clone);
@@ -3519,97 +3507,374 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   menu.addEventListener("touchstart", e => e.stopPropagation());
   menu.addEventListener("click", e => e.stopPropagation());
 
-  const openTaskActionPanel = (action) => {
-    const taskActionAnchor = taskElement.querySelector(".task-actions-anchor");
-    if (!taskActionAnchor) return;
-    toggleTaskActionMenu(taskElement, taskActionAnchor);
-    const actionButton = taskActionAnchor.querySelector(`.task-menu-btn[data-action="${action}"]`);
-    actionButton?.click();
-    keepMobileScrollPosition();
+  const renderMenuView = (markup, onMount) => {
+    menu.innerHTML = markup;
+    bindMobileTapToClick(menu);
+    positionFocusElements();
+    onMount?.();
   };
 
-  menu.querySelector('[data-action="edit"]').onclick = ()=>{
+  const showMainMenu = () => {
+    renderMenuView(mainMenuMarkup, bindMainMenuActions);
+  };
 
-    cleanup();
+  const showSubmenuHeader = (title) => `
+    <button class="task-menu-btn" data-action="back" type="button">
+      <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M15 18l-6-6 6-6"/>
+      </svg>
+      <span>${title}</span>
+    </button>
+  `;
 
-    const textDiv = taskElement.querySelector(".ttext");
-    if (!textDiv) return;
-
-    const oldText = taskData.text;
-
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = oldText;
-    input.className = "edit-input";
-
-    textDiv.replaceWith(input);
-
-    input.focus();
-    input.select();
-
-    function saveEdit(){
-
-      const newValue = input.value.trim();
-
-      if(newValue){
-        taskData.text = newValue;
-        save();
-      }
-
-      render();
-    }
-
-    function cancelEdit() {
-      render();
-    }
-
-    input.addEventListener("keydown", e=>{
-      if(e.key === "Enter") saveEdit();
-      if(e.key === "Escape") cancelEdit();
+  const openMobileSchedule = () => {
+    const todayIso = formatLocalDate(new Date());
+    const taskIso = taskElement.dataset.date || "";
+    const isToday = taskIso && taskIso === todayIso;
+    const visibleTimeOptions = TASK_TIME_OPTIONS.filter((slot) => {
+      if (!isToday) return true;
+      const [hours, minutes] = slot.split(":").map(Number);
+      const slotMinutes = (hours * 60) + minutes;
+      const now = new Date();
+      const currentMinutes = (now.getHours() * 60) + now.getMinutes();
+      return slotMinutes >= currentMinutes;
     });
 
-    input.addEventListener("blur", saveEdit);
+    const scheduleOptions = taskData.timeSlot
+      ? [{ label: "Todo el dia", value: "" }, ...visibleTimeOptions.map((slot) => ({ label: slot, value: slot }))]
+      : visibleTimeOptions.map((slot) => ({ label: slot, value: slot }));
 
+    const optionsMarkup = scheduleOptions.map((option) => `
+      <button
+        class="task-side-option${option.value === "" ? (!taskData.timeSlot ? " active" : "") : (taskData.timeSlot === option.value ? " active" : "")}"
+        type="button"
+        data-time-slot="${option.value}"
+      >${option.label}</button>
+    `).join("");
+
+    renderMenuView(`
+      ${showSubmenuHeader("Definir horario")}
+      <div class="task-side-panel task-time-panel" style="position:relative; opacity:1; transform:none; pointer-events:auto; width:100%; max-height:60vh;">
+        ${optionsMarkup}
+      </div>
+    `, () => {
+      menu.querySelector('[data-action="back"]')?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showMainMenu();
+      });
+
+      menu.querySelectorAll("[data-time-slot]").forEach((option) => {
+        option.addEventListener("click", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const selected = option.dataset.timeSlot || null;
+          taskData.timeSlot = selected;
+          taskData.timeCategory = selected ? "scheduled" : "all-day";
+          cleanup();
+          await save();
+          render();
+          renderMiniCalendar();
+        });
+      });
+    });
   };
 
-  menu.querySelector('[data-action="reorder"]').onclick = (e) => {
-    e.preventDefault();
-    cleanup();
-    setMobileTaskReorderMode(true);
+  const openMobileTags = () => {
+    const renderTagList = () => {
+      const labelOptions = taskLabels.map((label) => `
+        <div class="task-tag-row">
+          <button
+            class="task-side-option task-tag-option${taskData.tagId === label.id ? " active" : ""}"
+            type="button"
+            data-label-id="${label.id}"
+          >
+            <span class="task-side-option-dot" style="--task-label-color:${label.color}"></span>
+            <span>${label.name}</span>
+          </button>
+          <button
+            class="task-tag-delete"
+            type="button"
+            data-label-delete="${label.id}"
+            aria-label="Borrar etiqueta ${label.name}"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7h16"/>
+              <path d="M9 7V5h6v2"/>
+              <path d="M7 7l1 12h8l1-12"/>
+              <path d="M10 11v5"/>
+              <path d="M14 11v5"/>
+            </svg>
+          </button>
+        </div>
+      `).join("");
+
+      const createButtonMarkup = `
+        <button class="task-side-option task-tag-create-trigger" type="button" data-create-label="true">
+          <span class="task-side-option-plus">+</span>
+          <span>Crear etiqueta</span>
+        </button>
+      `;
+
+      renderMenuView(`
+        ${showSubmenuHeader("Etiquetar tarea")}
+        <div class="task-side-panel task-tag-panel" style="position:relative; opacity:1; transform:none; pointer-events:auto; width:100%; max-height:60vh;">
+          ${labelOptions ? `${labelOptions}${createButtonMarkup}` : createButtonMarkup}
+        </div>
+      `, () => {
+        menu.querySelector('[data-action="back"]')?.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          showMainMenu();
+        });
+
+        menu.querySelectorAll("[data-label-id]").forEach((option) => {
+          option.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            taskData.tagId = option.dataset.labelId || "";
+            cleanup();
+            await save();
+            render();
+            renderMiniCalendar();
+          });
+        });
+
+        menu.querySelectorAll("[data-label-delete]").forEach((button) => {
+          button.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const labelId = button.dataset.labelDelete || "";
+            if (!labelId) return;
+            const label = getTaskLabelById(labelId);
+            const labelName = label?.name || "esta etiqueta";
+            const shouldDelete = confirm(`¿Borrar "${labelName}"? Esta etiqueta se quitará de todas las tareas.`);
+            if (!shouldDelete) return;
+            removeTaskLabelEverywhere(labelId);
+            cleanup();
+            await save();
+            render();
+            renderMiniCalendar();
+          });
+        });
+
+        menu.querySelector("[data-create-label]")?.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          renderCreateTagPanel();
+        });
+      });
+    };
+
+    const renderCreateTagPanel = () => {
+      renderMenuView(`
+        ${showSubmenuHeader("Crear etiqueta")}
+        <div class="task-side-panel task-tag-create-panel" style="position:relative; opacity:1; transform:none; pointer-events:auto; width:100%; max-height:60vh;">
+          <div class="task-tag-create-shell">
+            <div class="task-tag-create-header">
+              <input class="task-tag-input" type="text" maxlength="24" placeholder="Nombre de etiqueta">
+              <button class="task-side-action" type="button" aria-label="Guardar etiqueta">✓</button>
+            </div>
+            <div class="task-color-grid">
+              ${TASK_LABEL_COLORS.map((color, index) => `
+                <button
+                  class="task-color-option${index === 0 ? " active" : ""}"
+                  type="button"
+                  data-color="${color}"
+                  style="--task-label-color:${color}"
+                  aria-label="Seleccionar color ${color}"
+                ></button>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+      `, () => {
+        menu.querySelector('[data-action="back"]')?.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          renderTagList();
+        });
+
+        let selected = TASK_LABEL_COLORS[0];
+        menu.querySelectorAll(".task-color-option").forEach((button) => {
+          button.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            selected = button.dataset.color || TASK_LABEL_COLORS[0];
+            menu.querySelectorAll(".task-color-option").forEach((btn) => btn.classList.remove("active"));
+            button.classList.add("active");
+          });
+        });
+
+        const input = menu.querySelector(".task-tag-input");
+        const saveButton = menu.querySelector(".task-side-action");
+
+        const submitNewLabel = async () => {
+          const name = formatTaskLabelName(input?.value || "");
+          if (!name) {
+            input?.focus();
+            return;
+          }
+          const createdLabel = createTaskLabel(name, selected);
+          taskData.tagId = createdLabel.id;
+          cleanup();
+          await save();
+          render();
+          renderMiniCalendar();
+        };
+
+        saveButton?.addEventListener("click", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          await submitNewLabel();
+        });
+
+        input?.addEventListener("keydown", async (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            await submitNewLabel();
+          }
+        });
+      });
+    };
+
+    renderTagList();
   };
 
-  const scheduleButton = menu.querySelector('[data-action="schedule"]');
-  if (scheduleButton) {
-    scheduleButton.onclick = (e) => {
-      e.preventDefault();
-      cleanup();
-      openTaskActionPanel("schedule");
-    };
-  }
+  const openMobilePostpone = () => {
+    const postponeOptions = [
+      { label: "Posponer para manana", days: 1 },
+      { label: "Posponer por 2 dias", days: 2 },
+      { label: "Posponer por una semana", days: 7 }
+    ];
 
-  const tagButton = menu.querySelector('[data-action="tag"]');
-  if (tagButton) {
-    tagButton.onclick = (e) => {
-      e.preventDefault();
-      cleanup();
-      openTaskActionPanel("tag");
-    };
-  }
+    renderMenuView(`
+      ${showSubmenuHeader("Posponer tarea")}
+      <div class="task-side-panel task-postpone-panel" style="position:relative; opacity:1; transform:none; pointer-events:auto; width:100%; max-height:60vh;">
+        ${postponeOptions.map((option) => `
+          <button class="task-side-option" type="button" data-postpone-days="${option.days}">
+            ${option.label}
+          </button>
+        `).join("")}
+      </div>
+    `, () => {
+      menu.querySelector('[data-action="back"]')?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showMainMenu();
+      });
 
-  const postponeButton = menu.querySelector('[data-action="postpone"]');
-  if (postponeButton) {
-    postponeButton.onclick = (e) => {
-      e.preventDefault();
-      cleanup();
-      openTaskActionPanel("postpone");
-    };
-  }
-
-  menu.querySelector('[data-action="delete"]').onclick = (e) => {
-    e.preventDefault();
-    cleanup();
-    openTaskActionPanel("delete");
+      menu.querySelectorAll("[data-postpone-days]").forEach((option) => {
+        option.addEventListener("click", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const daysToMove = Number(option.dataset.postponeDays || 0);
+          const taskIso = taskElement.dataset.date || null;
+          if (!taskIso) return;
+          const targetIso = addDaysToIsoDate(taskIso, daysToMove);
+          if (!targetIso) return;
+          const fromIndex = Number(taskElement.dataset.index || 0);
+          moveTaskToTarget(
+            { fromDate: taskIso, fromProject: null, index: fromIndex },
+            targetIso,
+            null
+          );
+          cleanup();
+          await save();
+          render();
+          renderMiniCalendar();
+        });
+      });
+    });
   };
+
+  const bindMainMenuActions = () => {
+    menu.querySelector('[data-action="edit"]').onclick = ()=>{
+
+      cleanup();
+
+      const textDiv = taskElement.querySelector(".ttext");
+      if (!textDiv) return;
+
+      const oldText = taskData.text;
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = oldText;
+      input.className = "edit-input";
+
+      textDiv.replaceWith(input);
+
+      input.focus();
+      input.select();
+
+      function saveEdit(){
+
+        const newValue = input.value.trim();
+
+        if(newValue){
+          taskData.text = newValue;
+          save();
+        }
+
+        render();
+      }
+
+      function cancelEdit() {
+        render();
+      }
+
+      input.addEventListener("keydown", e=>{
+        if(e.key === "Enter") saveEdit();
+        if(e.key === "Escape") cancelEdit();
+      });
+
+      input.addEventListener("blur", saveEdit);
+
+    };
+
+    menu.querySelector('[data-action="reorder"]').onclick = (e) => {
+      e.preventDefault();
+      cleanup();
+      setMobileTaskReorderMode(true);
+    };
+
+    const scheduleButton = menu.querySelector('[data-action="schedule"]');
+    if (scheduleButton) {
+      scheduleButton.onclick = (e) => {
+        e.preventDefault();
+        openMobileSchedule();
+      };
+    }
+
+    const tagButton = menu.querySelector('[data-action="tag"]');
+    if (tagButton) {
+      tagButton.onclick = (e) => {
+        e.preventDefault();
+        openMobileTags();
+      };
+    }
+
+    const postponeButton = menu.querySelector('[data-action="postpone"]');
+    if (postponeButton) {
+      postponeButton.onclick = (e) => {
+        e.preventDefault();
+        openMobilePostpone();
+      };
+    }
+
+    menu.querySelector('[data-action="delete"]').onclick = (e) => {
+      e.preventDefault();
+      cleanup();
+      const confirmDelete = confirm("¿Eliminar esta tarea?");
+      if (!confirmDelete) return;
+      removeTask(taskData);
+      save();
+      render();
+    };
+  };
+
+  bindMainMenuActions();
 
   window.addEventListener("resize", handleViewportChange);
   window.addEventListener("scroll", handleViewportChange, true);
