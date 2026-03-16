@@ -768,12 +768,154 @@ function bindMobileTapToClick(root){
   root.querySelectorAll("button").forEach((button) => {
     if (button.dataset.touchBound) return;
     button.dataset.touchBound = "true";
-    button.addEventListener("touchend", (e) => {
+    const trigger = (e) => {
+      if (button.dataset.touchFired === "true") return;
+      button.dataset.touchFired = "true";
+      setTimeout(() => {
+        button.dataset.touchFired = "false";
+      }, 0);
       e.preventDefault();
       e.stopPropagation();
       button.click();
+    };
+    button.addEventListener("touchend", trigger, { passive: false });
+    button.addEventListener("pointerup", (e) => {
+      if (e.pointerType !== "touch") return;
+      trigger(e);
     });
   });
+}
+
+function openTaskTimeQuickEditor(taskElement, taskData, render){
+  if (!taskElement || !taskData) return;
+  if (document.getElementById("taskTimeEditorPanel")) return;
+
+  const timePill = taskElement.querySelector(".task-time");
+  if (!timePill) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "taskTimeEditorOverlay";
+
+  const editor = document.createElement("div");
+  editor.className = "task-time-editor-float";
+  editor.id = "taskTimeEditorPanel";
+
+  const title = document.createElement("div");
+  title.className = "task-time-editor-title";
+  title.textContent = "Editar Horario";
+
+  const select = document.createElement("select");
+  select.className = "task-time-select";
+
+  const options = [{ label: "Todo el dia", value: "" }, ...TASK_TIME_OPTIONS.map((slot) => ({ label: slot, value: slot }))];
+  options.forEach((option) => {
+    const opt = document.createElement("option");
+    opt.value = option.value;
+    opt.textContent = option.label;
+    if ((taskData.timeSlot || "") === option.value) opt.selected = true;
+    select.appendChild(opt);
+  });
+
+  const confirmBtn = document.createElement("button");
+  confirmBtn.type = "button";
+  confirmBtn.className = "task-time-editor-btn confirm";
+  confirmBtn.innerHTML = "✓";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "task-time-editor-btn cancel";
+  cancelBtn.innerHTML = "✕";
+
+  const controls = document.createElement("div");
+  controls.className = "task-time-editor-controls";
+  const selectWrap = document.createElement("div");
+  selectWrap.className = "task-time-select-wrap";
+  const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  chevron.setAttribute("viewBox", "0 0 16 16");
+  chevron.setAttribute("fill", "none");
+  chevron.setAttribute("stroke", "currentColor");
+  chevron.setAttribute("stroke-width", "1.9");
+  chevron.setAttribute("stroke-linecap", "round");
+  chevron.setAttribute("stroke-linejoin", "round");
+  chevron.classList.add("task-time-select-icon");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "m3 6 5 5 5-5");
+  chevron.appendChild(path);
+  selectWrap.appendChild(select);
+  selectWrap.appendChild(chevron);
+  controls.appendChild(selectWrap);
+  controls.appendChild(confirmBtn);
+  controls.appendChild(cancelBtn);
+
+  editor.appendChild(title);
+  editor.appendChild(controls);
+
+  document.body.appendChild(overlay);
+  document.body.appendChild(editor);
+
+  const positionEditor = () => {
+    const rect = timePill.getBoundingClientRect();
+    const panelWidth = editor.offsetWidth || 260;
+    const panelHeight = editor.offsetHeight || 140;
+    const padding = 12;
+
+    let left = rect.left + (rect.width / 2) - (panelWidth / 2);
+    left = Math.min(Math.max(padding, left), window.innerWidth - panelWidth - padding);
+
+    let top = rect.bottom + 10;
+    if (top + panelHeight > window.innerHeight - padding) {
+      top = rect.top - panelHeight - 10;
+    }
+    top = Math.min(Math.max(padding, top), window.innerHeight - panelHeight - padding);
+
+    editor.style.left = `${Math.round(left)}px`;
+    editor.style.top = `${Math.round(top)}px`;
+  };
+
+  positionEditor();
+  requestAnimationFrame(() => {
+    editor.classList.add("open");
+  });
+
+  const cleanup = () => {
+    overlay.remove();
+    editor.remove();
+    render();
+  };
+
+  confirmBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const selected = select.value || null;
+    taskData.timeSlot = selected;
+    taskData.timeCategory = selected ? "scheduled" : "all-day";
+    await save();
+    overlay.remove();
+    editor.remove();
+    render();
+    renderMiniCalendar();
+  });
+
+  cancelBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    cleanup();
+  });
+
+  select.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+
+  select.addEventListener("change", (e) => {
+    e.stopPropagation();
+  });
+
+  if (isTouchDevice) {
+    bindMobileTapToClick(editor);
+  }
+
+  overlay.addEventListener("click", cleanup);
+  window.addEventListener("resize", positionEditor, { once: true });
 }
 
 let player = normalizePlayer(JSON.parse(localStorage.getItem("mt_player")) || {});
@@ -2165,6 +2307,15 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       `;
       const textDiv = el.querySelector(".ttext");
       const taskLabelDot = el.querySelector(".task-label-dot");
+      const timePill = el.querySelector(".task-time");
+
+      if (timePill) {
+        timePill.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openTaskTimeQuickEditor(el, t, render);
+        });
+      }
 
       if (taskLabelDot) {
         taskLabelDot.addEventListener("click", async (e) => {
@@ -2788,9 +2939,10 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
                     aria-label="Seleccionar color ${color}"
                   ></button>
                 `).join("")}
-              </div>
-            </div>
-          `;
+          </div>
+        </div>
+      `;
+
           bindMobileTapToClick(taskTagCreatePanel);
 
           const input = taskTagCreatePanel.querySelector(".task-tag-input");
@@ -3875,6 +4027,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   };
 
   bindMainMenuActions();
+  bindMobileTapToClick(menu);
 
   window.addEventListener("resize", handleViewportChange);
   window.addEventListener("scroll", handleViewportChange, true);
