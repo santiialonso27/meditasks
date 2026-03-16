@@ -3603,18 +3603,33 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     clone.style.height = `${rect.height}px`;
 
     const menuHeight = menu.offsetHeight;
-    const maxMenuSpace = Math.max(160, window.innerHeight - 48);
-    menu.style.maxHeight = `${maxMenuSpace}px`;
-    menu.style.overflowY = "auto";
-    const maxTop = window.innerHeight - menuHeight - 24;
+    const baseMaxMenuSpace = Math.max(160, window.innerHeight - 48);
     let menuTop = rect.bottom + 12;
+
     if (menu.classList.contains("submenu-open")) {
-      menuTop = Math.max(12, (window.innerHeight - menuHeight) / 2);
-    } else if (menuTop > maxTop) {
-      menuTop = Math.max(12, rect.top - menuHeight - 12);
+      const padding = 16;
+      const minPanelHeight = 200;
+      const spaceBelow = window.innerHeight - menuTop - padding;
+      const spaceAbove = rect.top - padding;
+
+      if (spaceBelow < minPanelHeight && spaceAbove > spaceBelow) {
+        menuTop = Math.max(padding, rect.top - menuHeight - 12);
+      }
+
+      const availableSpace = Math.max(minPanelHeight, window.innerHeight - menuTop - padding);
+      menu.style.maxHeight = `${availableSpace}px`;
+      menu.style.overflowY = "auto";
+    } else {
+      menu.style.maxHeight = `${baseMaxMenuSpace}px`;
+      menu.style.overflowY = "auto";
+      const maxTop = window.innerHeight - menuHeight - 24;
+      if (menuTop > maxTop) {
+        menuTop = Math.max(12, rect.top - menuHeight - 12);
+      }
     }
+
     const menuLeft = menu.classList.contains("submenu-open")
-      ? window.innerWidth / 2
+      ? Math.min(Math.max(rect.left + rect.width / 2, 24), window.innerWidth - 24)
       : Math.min(
           Math.max(rect.left + rect.width / 2, 24),
           window.innerWidth - 24
