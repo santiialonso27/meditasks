@@ -138,6 +138,7 @@ function positionTaskActionMenu(anchorElement) {
   const taskElement = anchorElement.closest(".task");
   const taskRect = taskElement?.getBoundingClientRect();
   anchorElement.classList.remove("open-upwards");
+  anchorElement.classList.remove("side-open-left");
 
   const anchorRect = anchorElement.getBoundingClientRect();
   const menuHeight = menuElement.offsetHeight;
@@ -159,6 +160,26 @@ function positionTaskActionMenu(anchorElement) {
 
   if (spaceBelow < menuHeight + gap && spaceAbove > spaceBelow) {
     anchorElement.classList.add("open-upwards");
+  }
+
+  const maxMenuSpace = anchorElement.classList.contains("open-upwards")
+    ? Math.max(140, spaceAbove)
+    : Math.max(140, spaceBelow);
+
+  menuElement.style.maxHeight = `${maxMenuSpace}px`;
+  menuElement.style.overflowY = "auto";
+
+  const sidePanels = anchorElement.querySelectorAll(".task-side-panel");
+  sidePanels.forEach((panel) => {
+    panel.style.maxHeight = `${Math.max(160, maxMenuSpace)}px`;
+    panel.style.overflowY = "auto";
+  });
+
+  const spaceRight = window.innerWidth - anchorRect.right - viewportPadding;
+  const spaceLeft = anchorRect.left - viewportPadding;
+  const widestPanel = 228 + 206 + 14;
+  if (spaceRight < widestPanel && spaceLeft > spaceRight) {
+    anchorElement.classList.add("side-open-left");
   }
 }
 
@@ -246,9 +267,51 @@ function clearTaskMobileFocus() {
   activeTaskMobileFocus = null;
 }
 
+function resetTransientOverlays() {
+  closeTaskActionMenu();
+  clearTaskMobileFocus();
+  document.getElementById("taskActionOverlay")?.remove();
+  document.getElementById("taskMobileOverlay")?.remove();
+  document.body.classList.remove("task-action-focus");
+}
+
+function ensureAuthGateVisible() {
+  if (!authGate) return;
+  if (!isMobileViewport()) return;
+  authGate.classList.add("open");
+  authGate.style.display = "flex";
+  authGate.style.pointerEvents = "auto";
+  authGate.style.zIndex = "100000";
+  const modal = authGate.querySelector(".modal");
+  if (modal) {
+    modal.style.opacity = "1";
+    modal.style.transform = "none";
+  }
+}
+
+function resetAuthGateStyles() {
+  if (!authGate) return;
+  authGate.style.display = "";
+  authGate.style.pointerEvents = "";
+  authGate.style.zIndex = "";
+  const modal = authGate.querySelector(".modal");
+  if (modal) {
+    modal.style.opacity = "";
+    modal.style.transform = "";
+  }
+}
+
 function isMobileTaskReorderEnabled() {
   return isMobileTaskFocusEnabled() && mobileTaskReorderMode;
 }
+
+window.addEventListener("pageshow", () => {
+  resetTransientOverlays();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) resetTransientOverlays();
+});
 
 function getDragOriginList(data) {
   if (data.fromProject) {
@@ -788,6 +851,7 @@ onAuthStateChanged(auth, async (user) => {
     currentUser = user;
     document.body.classList.remove("logged-out");
     authGate?.classList.remove("open");
+    resetAuthGateStyles();
     updateSettingsProfile(user);
     syncOfficeModeControls();
     // 🔥 Ocultar tooltip si estaba visible
@@ -983,6 +1047,8 @@ onAuthStateChanged(auth, async (user) => {
         currentUser = null;
         document.body.classList.add("logged-out");
         authGate?.classList.add("open");
+        resetTransientOverlays();
+        ensureAuthGateVisible();
         officeModeEnabled = false;
         officeModeTimeoutSeconds = 60;
         securityPinHash = "";
@@ -2498,6 +2564,10 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       taskActionButton.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (isMobileTaskFocusEnabled()) {
+          showTaskMobileMenu(el, t, render);
+          return;
+        }
         toggleTaskActionMenu(el, taskActionAnchor);
       };
 
@@ -3221,6 +3291,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
   if (!isMobileTaskFocusEnabled()) return;
 
+  closeTaskActionMenu();
   clearTaskMobileFocus();
   await closeMobileKeyboardIfNeeded();
 
@@ -3236,10 +3307,71 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
   const menu = document.createElement("div");
   menu.id = "taskMobileMenu";
+  const isProjectTask = !!taskElement.dataset.project;
   menu.innerHTML = `
-    <button id="taskEditBtn" type="button">Editar</button>
-    <span class="task-mobile-menu-separator">|</span>
-    <button id="taskReorderBtn" type="button">Reordenar</button>
+    <button class="task-menu-btn" data-action="edit" type="button">
+      <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 20h9"/>
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+      </svg>
+      <span>Editar</span>
+    </button>
+    <button class="task-menu-btn" data-action="reorder" type="button">
+      <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M8 5h11"/>
+        <path d="M8 12h11"/>
+        <path d="M8 19h11"/>
+        <path d="M5 4v16"/>
+        <path d="m3 6 2-2 2 2"/>
+        <path d="m3 18 2 2 2-2"/>
+      </svg>
+      <span>Reordenar</span>
+    </button>
+    ${!isProjectTask ? `
+    <button class="task-menu-btn" data-action="schedule" type="button">
+      <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="8"/>
+        <path d="M12 8v4l3 2"/>
+      </svg>
+      <span>Definir horario</span>
+      <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m6 3 5 5-5 5"/>
+      </svg>
+    </button>
+    ` : ""}
+    <button class="task-menu-btn" data-action="tag" type="button">
+      <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 10 10 20l-7-7V4h9l8 6Z"/>
+        <circle cx="7.5" cy="8.5" r="1"/>
+      </svg>
+      <span>Etiquetar tarea</span>
+      <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m6 3 5 5-5 5"/>
+      </svg>
+    </button>
+    ${!isProjectTask ? `
+    <button class="task-menu-btn" data-action="postpone" type="button">
+      <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M5 9h4l-4 4h4"/>
+        <path d="M11 13h4l-4 4h4"/>
+        <path d="M17 9h2l-2 2h2"/>
+      </svg>
+      <span>Posponer tarea</span>
+      <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m6 3 5 5-5 5"/>
+      </svg>
+    </button>
+    ` : ""}
+    <button class="task-menu-btn danger" data-action="delete" type="button">
+      <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 7h16"/>
+        <path d="M9 7V5h6v2"/>
+        <path d="M7 7l1 12h8l1-12"/>
+        <path d="M10 11v5"/>
+        <path d="M14 11v5"/>
+      </svg>
+      <span>Borrar tarea</span>
+    </button>
   `;
 
   document.body.appendChild(overlay);
@@ -3256,7 +3388,15 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     clone.style.width = `${rect.width}px`;
     clone.style.height = `${rect.height}px`;
 
-    const menuTop = Math.min(rect.bottom + 12, window.innerHeight - 24);
+    const menuHeight = menu.offsetHeight;
+    const maxMenuSpace = Math.max(160, window.innerHeight - 48);
+    menu.style.maxHeight = `${maxMenuSpace}px`;
+    menu.style.overflowY = "auto";
+    const maxTop = window.innerHeight - menuHeight - 24;
+    let menuTop = rect.bottom + 12;
+    if (menuTop > maxTop) {
+      menuTop = Math.max(12, rect.top - menuHeight - 12);
+    }
     const menuLeft = Math.min(
       Math.max(rect.left + rect.width / 2, 24),
       window.innerWidth - 24
@@ -3305,7 +3445,15 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   menu.addEventListener("touchstart", e => e.stopPropagation());
   menu.addEventListener("click", e => e.stopPropagation());
 
-  menu.querySelector("#taskEditBtn").onclick = ()=>{
+  const openTaskActionPanel = (action) => {
+    const taskActionAnchor = taskElement.querySelector(".task-actions-anchor");
+    if (!taskActionAnchor) return;
+    toggleTaskActionMenu(taskElement, taskActionAnchor);
+    const actionButton = taskActionAnchor.querySelector(`.task-menu-btn[data-action="${action}"]`);
+    actionButton?.click();
+  };
+
+  menu.querySelector('[data-action="edit"]').onclick = ()=>{
 
     cleanup();
 
@@ -3349,10 +3497,43 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
   };
 
-  menu.querySelector("#taskReorderBtn").onclick = (e) => {
+  menu.querySelector('[data-action="reorder"]').onclick = (e) => {
     e.preventDefault();
     cleanup();
     setMobileTaskReorderMode(true);
+  };
+
+  const scheduleButton = menu.querySelector('[data-action="schedule"]');
+  if (scheduleButton) {
+    scheduleButton.onclick = (e) => {
+      e.preventDefault();
+      cleanup();
+      openTaskActionPanel("schedule");
+    };
+  }
+
+  const tagButton = menu.querySelector('[data-action="tag"]');
+  if (tagButton) {
+    tagButton.onclick = (e) => {
+      e.preventDefault();
+      cleanup();
+      openTaskActionPanel("tag");
+    };
+  }
+
+  const postponeButton = menu.querySelector('[data-action="postpone"]');
+  if (postponeButton) {
+    postponeButton.onclick = (e) => {
+      e.preventDefault();
+      cleanup();
+      openTaskActionPanel("postpone");
+    };
+  }
+
+  menu.querySelector('[data-action="delete"]').onclick = (e) => {
+    e.preventDefault();
+    cleanup();
+    openTaskActionPanel("delete");
   };
 
   window.addEventListener("resize", handleViewportChange);
