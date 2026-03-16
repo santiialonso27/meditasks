@@ -4440,6 +4440,35 @@
         0 0 30px var(--accent);
     }
 
+    .level-menu-divider{
+      width: calc(100% - 24px);
+      height:1px;
+      margin:14px auto 10px;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.18), transparent);
+    }
+
+    .level-limit-title{
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      opacity:.85;
+      margin-bottom:6px;
+    }
+
+    .level-limit-desc{
+      font-size:12px;
+      opacity:.7;
+      line-height:1.35;
+      margin-bottom:6px;
+    }
+
+    .level-limit-status{
+      font-size:12px;
+      font-weight:600;
+      opacity:.85;
+    }
+
     .task.done{
       opacity:.75;
     }
@@ -5807,6 +5836,11 @@
         <button id="openLeaderboardFromLevel" class="level-leaderboard-btn">
           TABLA DE POSICIONES
         </button>
+
+        <div class="level-menu-divider"></div>
+        <div class="level-limit-title">Limites de Exp</div>
+        <div class="level-limit-desc">Limite Diario de Exp por completar tareas</div>
+        <div class="level-limit-status" id="levelDailyExpStatus"></div>
 
       </div>
 

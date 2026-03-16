@@ -763,6 +763,19 @@ function normalizePlayer(raw = {}) {
   };
 }
 
+function bindMobileTapToClick(root){
+  if (!root || !isTouchDevice) return;
+  root.querySelectorAll("button").forEach((button) => {
+    if (button.dataset.touchBound) return;
+    button.dataset.touchBound = "true";
+    button.addEventListener("touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      button.click();
+    });
+  });
+}
+
 let player = normalizePlayer(JSON.parse(localStorage.getItem("mt_player")) || {});
 
 if(localStorage.getItem("mt_theme_mode")==="light"){
@@ -2635,13 +2648,14 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           ? [{ label: "Todo el dia", value: "" }, ...visibleTimeOptions.map((slot) => ({ label: slot, value: slot }))]
           : visibleTimeOptions.map((slot) => ({ label: slot, value: slot }));
 
-        taskTimePanel.innerHTML = scheduleOptions.map((option) => `
+      taskTimePanel.innerHTML = scheduleOptions.map((option) => `
           <button
             class="task-side-option${option.value === "" ? (!t.timeSlot ? " active" : "") : (t.timeSlot === option.value ? " active" : "")}"
             type="button"
             data-time-slot="${option.value}"
           >${option.label}</button>
         `).join("");
+        bindMobileTapToClick(taskTimePanel);
 
         taskScheduleButton.onclick = (e) => {
           e.preventDefault();
@@ -2705,9 +2719,10 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
             </button>
           `;
 
-          taskTagPanel.innerHTML = labelOptions
-            ? `${labelOptions}${createButtonMarkup}`
-            : createButtonMarkup;
+        taskTagPanel.innerHTML = labelOptions
+          ? `${labelOptions}${createButtonMarkup}`
+          : createButtonMarkup;
+        bindMobileTapToClick(taskTagPanel);
 
           taskTagPanel.querySelectorAll("[data-label-id]").forEach((option) => {
             option.addEventListener("click", async (e) => {
@@ -2776,6 +2791,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               </div>
             </div>
           `;
+          bindMobileTapToClick(taskTagCreatePanel);
 
           const input = taskTagCreatePanel.querySelector(".task-tag-input");
           const saveButton = taskTagCreatePanel.querySelector(".task-side-action");
@@ -2855,6 +2871,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
             data-postpone-days="${option.days}"
           >${option.label}</button>
         `).join("");
+        bindMobileTapToClick(taskPostponePanel);
 
         taskPostponeButton.onclick = (e) => {
           e.preventDefault();
@@ -3341,6 +3358,19 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
   if (!isMobileTaskFocusEnabled()) return;
 
+  const boardScroll = getBoardScrollContainer();
+  const lockedScrollTop = boardScroll ? boardScroll.scrollTop : 0;
+  const keepMobileScrollPosition = () => {
+    if (!boardScroll) return;
+    boardScroll.scrollTop = lockedScrollTop;
+    requestAnimationFrame(() => {
+      if (boardScroll) boardScroll.scrollTop = lockedScrollTop;
+    });
+    setTimeout(() => {
+      if (boardScroll) boardScroll.scrollTop = lockedScrollTop;
+    }, 140);
+  };
+
   const overlay = document.createElement("div");
   overlay.id = "taskMobileOverlay";
 
@@ -3495,6 +3525,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     toggleTaskActionMenu(taskElement, taskActionAnchor);
     const actionButton = taskActionAnchor.querySelector(`.task-menu-btn[data-action="${action}"]`);
     actionButton?.click();
+    keepMobileScrollPosition();
   };
 
   menu.querySelector('[data-action="edit"]').onclick = ()=>{
@@ -4605,6 +4636,7 @@ document.addEventListener("click", ()=>{
 });
 
 function updateLevelMenu(){
+  resetDailyExpIfNeeded();
 
   let level = 0;
   let expRemaining = player.exp;
@@ -4631,6 +4663,16 @@ function updateLevelMenu(){
 
   document.getElementById("levelProgressText").textContent =
       `${expRemaining} / ${needed} EXP`;
+
+  const dailyStatus = document.getElementById("levelDailyExpStatus");
+  if (dailyStatus) {
+    const dailyLimit = 5;
+    const completed = Math.max(0, Number(player.todayExpTasks) || 0);
+    const remaining = Math.max(0, dailyLimit - completed);
+    dailyStatus.textContent = remaining === 0
+      ? `Límite alcanzado: ${completed}/${dailyLimit}`
+      : `Te quedan ${remaining} de ${dailyLimit} tareas con EXP hoy`;
+  }
 
 }
 
