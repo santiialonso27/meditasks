@@ -3608,7 +3608,9 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     menu.style.overflowY = "auto";
     const maxTop = window.innerHeight - menuHeight - 24;
     let menuTop = rect.bottom + 12;
-    if (menuTop > maxTop) {
+    if (menu.classList.contains("submenu-open")) {
+      menuTop = Math.max(12, (window.innerHeight - menuHeight) / 2);
+    } else if (menuTop > maxTop) {
       menuTop = Math.max(12, rect.top - menuHeight - 12);
     }
     const menuLeft = Math.min(
@@ -3662,6 +3664,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   const renderMenuView = (markup, onMount) => {
     menu.innerHTML = markup;
     bindMobileTapToClick(menu);
+    menu.classList.toggle("submenu-open", !!menu.querySelector(".task-side-panel"));
     positionFocusElements();
     onMount?.();
   };
