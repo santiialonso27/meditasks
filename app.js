@@ -3613,10 +3613,12 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     } else if (menuTop > maxTop) {
       menuTop = Math.max(12, rect.top - menuHeight - 12);
     }
-    const menuLeft = Math.min(
-      Math.max(rect.left + rect.width / 2, 24),
-      window.innerWidth - 24
-    );
+    const menuLeft = menu.classList.contains("submenu-open")
+      ? window.innerWidth / 2
+      : Math.min(
+          Math.max(rect.left + rect.width / 2, 24),
+          window.innerWidth - 24
+        );
 
     menu.style.left = `${menuLeft}px`;
     menu.style.top = `${menuTop}px`;
@@ -3709,7 +3711,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
     renderMenuView(`
       ${showSubmenuHeader("Definir horario")}
-      <div class="task-side-panel task-time-panel" style="position:relative; opacity:1; transform:none; pointer-events:auto; width:100%; max-height:60vh;">
+      <div class="task-side-panel task-time-panel task-mobile-subpanel">
         ${optionsMarkup}
       </div>
     `, () => {
@@ -3773,7 +3775,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
       renderMenuView(`
         ${showSubmenuHeader("Etiquetar tarea")}
-        <div class="task-side-panel task-tag-panel" style="position:relative; opacity:1; transform:none; pointer-events:auto; width:100%; max-height:60vh;">
+        <div class="task-side-panel task-tag-panel task-mobile-subpanel">
           ${labelOptions ? `${labelOptions}${createButtonMarkup}` : createButtonMarkup}
         </div>
       `, () => {
@@ -3824,7 +3826,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     const renderCreateTagPanel = () => {
       renderMenuView(`
         ${showSubmenuHeader("Crear etiqueta")}
-        <div class="task-side-panel task-tag-create-panel" style="position:relative; opacity:1; transform:none; pointer-events:auto; width:100%; max-height:60vh;">
+        <div class="task-side-panel task-tag-create-panel task-mobile-subpanel">
           <div class="task-tag-create-shell">
             <div class="task-tag-create-header">
               <input class="task-tag-input" type="text" maxlength="24" placeholder="Nombre de etiqueta">
@@ -3905,7 +3907,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
     renderMenuView(`
       ${showSubmenuHeader("Posponer tarea")}
-      <div class="task-side-panel task-postpone-panel" style="position:relative; opacity:1; transform:none; pointer-events:auto; width:100%; max-height:60vh;">
+      <div class="task-side-panel task-postpone-panel task-mobile-subpanel">
         ${postponeOptions.map((option) => `
           <button class="task-side-option" type="button" data-postpone-days="${option.days}">
             ${option.label}
