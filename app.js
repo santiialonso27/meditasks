@@ -48,6 +48,7 @@ let currentCalendarDate = new Date();
 let lastCarryDate = null;
 let tasks = {};
 let projects = {};
+let projectOrder = [];
 let taskLabels = [];
 let currentViewMode = localStorage.getItem("mt_view_mode") || "tasks";
 const storeKey = "mt_tasks_local";
@@ -82,6 +83,9 @@ let draggedElement = null;
 let currentTarget = null;
 let currentPosition = null;
 let previewInsertIndex = null;
+let draggedProjectId = null;
+let draggedProjectElement = null;
+let projectDragActive = false;
 let mobileTaskReorderMode = false;
 let activeMobileDropList = null;
 let mobileActiveDropTarget = null;
@@ -610,7 +614,7 @@ function delay(ms) {
 
 function parseStoredAppData(rawData) {
   if (!rawData || typeof rawData !== "object") {
-    return { tasks: {}, projects: {}, labels: [] };
+    return { tasks: {}, projects: {}, labels: [], projectOrder: [] };
   }
 
   const hasStructuredShape =
@@ -622,15 +626,36 @@ function parseStoredAppData(rawData) {
     return {
       tasks: rawData,
       projects: {},
-      labels: []
+      labels: [],
+      projectOrder: []
     };
   }
 
   return {
     tasks: rawData.tasks || {},
     projects: rawData.projects || {},
-    labels: Array.isArray(rawData.labels) ? rawData.labels : []
+    labels: Array.isArray(rawData.labels) ? rawData.labels : [],
+    projectOrder: Array.isArray(rawData.projectOrder) ? rawData.projectOrder : []
   };
+}
+
+function reconcileProjectOrder(order, projectMap) {
+  const safeOrder = Array.isArray(order) ? order : [];
+  const seen = new Set();
+  const result = [];
+
+  safeOrder.forEach((id) => {
+    if (!projectMap[id] || seen.has(id)) return;
+    seen.add(id);
+    result.push(id);
+  });
+
+  const missing = Object.keys(projectMap)
+    .filter((id) => !seen.has(id))
+    .sort((a, b) => (projectMap[a]?.createdAt || 0) - (projectMap[b]?.createdAt || 0));
+
+  result.push(...missing);
+  return result;
 }
 
 function normalizeTaskLabel(label) {
@@ -1162,11 +1187,13 @@ onAuthStateChanged(auth, async (user) => {
 
         const cloudTasks = data.tasks || {};
         const cloudProjects = data.projects || {};
+        const cloudProjectOrder = Array.isArray(data.projectOrder) ? data.projectOrder : [];
         const cloudLabels = normalizeLabelCatalog(data.labels || []);
 
         const localData = parseStoredAppData(JSON.parse(localStorage.getItem(storeKey)) || {});
         const localTasks = localData.tasks || {};
         const localProjects = localData.projects || {};
+        const localProjectOrder = Array.isArray(localData.projectOrder) ? localData.projectOrder : [];
         const localLabels = normalizeLabelCatalog(localData.labels || []);
 
         // 🔥 fusionar tareas
@@ -1197,17 +1224,23 @@ onAuthStateChanged(auth, async (user) => {
 
         });
 
+        projectOrder = reconcileProjectOrder(
+          cloudProjectOrder.length ? cloudProjectOrder : localProjectOrder,
+          projects
+        );
+
         taskLabels = mergeLabelCatalog(cloudLabels, localLabels);
 
         const hasLocalTasks = Object.keys(localTasks).length > 0;
         const hasLocalProjects = Object.keys(localProjects).length > 0;
         const hasLocalLabels = localLabels.length > 0;
 
-        if(hasLocalTasks || hasLocalProjects || hasLocalLabels){
+        if(hasLocalTasks || hasLocalProjects || hasLocalLabels || localProjectOrder.length > 0){
           await setDoc(userRef,{
             tasks,
             projects,
-            labels: taskLabels
+            labels: taskLabels,
+            projectOrder
           },{ merge:true });
         }
 
@@ -1250,8 +1283,13 @@ onAuthStateChanged(auth, async (user) => {
         const localData = parseStoredAppData(JSON.parse(localStorage.getItem(storeKey)) || {});
         tasks = localData.tasks || {};
         projects = localData.projects || {};
+        projectOrder = reconcileProjectOrder(localData.projectOrder || [], projects);
         taskLabels = normalizeLabelCatalog(localData.labels || []);
-        await setDoc(userRef, { tasks, projects, labels: taskLabels }, { merge: true });
+        await setDoc(
+          userRef,
+          { tasks, projects, labels: taskLabels, projectOrder },
+          { merge: true }
+        );
       }
 
       // Limpiar local para evitar duplicados
@@ -1314,6 +1352,7 @@ onAuthStateChanged(auth, async (user) => {
 
         tasks = localData.tasks || {};
         projects = localData.projects || {};
+        projectOrder = reconcileProjectOrder(localData.projectOrder || [], projects);
         taskLabels = normalizeLabelCatalog(localData.labels || []);
         init();
 
@@ -1722,7 +1761,8 @@ async function save(){
     localStorage.setItem(storeKey, JSON.stringify({
       tasks,
       projects,
-      labels: taskLabels
+      labels: taskLabels,
+      projectOrder
     }));
 
     setStatusPending();
@@ -1742,6 +1782,7 @@ async function save(){
           tasks: tasks,
           projects: projects,
           labels: taskLabels,
+          projectOrder,
           viewMode: currentViewMode
         }
       );
@@ -1765,7 +1806,8 @@ async function save(){
       localStorage.setItem(storeKey, JSON.stringify({
         tasks,
         projects,
-        labels: taskLabels
+        labels: taskLabels,
+        projectOrder
       }));
 
       setStatusPending();
@@ -1909,6 +1951,10 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
   // DRAG OVER LIST
   list.addEventListener("dragover", e => {
+    if (projectDragActive) {
+      e.preventDefault();
+      return;
+    }
     e.preventDefault();
     if (e.target.closest(".task")) return;
     const raw = e.dataTransfer.getData("text/plain");
@@ -1937,6 +1983,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
   // DROP EN LIST (al final)
   list.addEventListener("drop", e => {
+    if (projectDragActive) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -2136,6 +2183,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
       //FUNCION DE DROP//
       el.addEventListener("drop", e => {
+        if (projectDragActive) return;
         e.preventDefault();
         e.stopPropagation();
 
@@ -2210,6 +2258,10 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
       //FUNCION DRAGOVER//
       el.addEventListener("dragover", e => {
+        if (projectDragActive) {
+          e.preventDefault();
+          return;
+        }
         e.preventDefault();
 
         if (el === draggedElement) return;
@@ -3250,9 +3302,93 @@ function createProjectColumn(projectId){
 
 }
 
+function clearProjectDragState() {
+  projectDragActive = false;
+  draggedProjectId = null;
+  if (draggedProjectElement) {
+    draggedProjectElement.classList.remove("project-dragging");
+  }
+  draggedProjectElement = null;
+  document.querySelectorAll(".project-drop-target").forEach((el) => {
+    el.classList.remove("project-drop-target");
+  });
+}
+
+function swapProjectOrder(sourceId, targetId) {
+  projectOrder = reconcileProjectOrder(projectOrder, projects);
+  const sourceIndex = projectOrder.indexOf(sourceId);
+  const targetIndex = projectOrder.indexOf(targetId);
+  if (sourceIndex === -1 || targetIndex === -1) return;
+
+  [projectOrder[sourceIndex], projectOrder[targetIndex]] = [
+    projectOrder[targetIndex],
+    projectOrder[sourceIndex]
+  ];
+
+  save();
+  renderProjectsView();
+}
+
+function attachProjectDragHandlers(column, projectId) {
+  if (isTouchDevice) return;
+
+  column.draggable = true;
+  column.dataset.projectId = projectId;
+
+  column.addEventListener("dragstart", (e) => {
+    if (e.target.closest(".task")) return;
+    if (e.target.closest(".adder")) return;
+    if (e.target.closest(".edit-input")) return;
+    if (e.target.closest(".task-actions-anchor")) return;
+
+    projectDragActive = true;
+    draggedProjectId = projectId;
+    draggedProjectElement = column;
+    column.classList.add("project-dragging");
+
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", JSON.stringify({
+      type: "project",
+      id: projectId
+    }));
+  });
+
+  column.addEventListener("dragend", () => {
+    clearProjectDragState();
+  });
+
+  column.addEventListener("dragover", (e) => {
+    if (!projectDragActive) return;
+    if (draggedProjectId === projectId) return;
+    e.preventDefault();
+    column.classList.add("project-drop-target");
+  });
+
+  column.addEventListener("dragleave", (e) => {
+    if (!column.contains(e.relatedTarget)) {
+      column.classList.remove("project-drop-target");
+    }
+  });
+
+  column.addEventListener("drop", (e) => {
+    if (!projectDragActive) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (draggedProjectId && draggedProjectId !== projectId) {
+      swapProjectOrder(draggedProjectId, projectId);
+    }
+
+    clearProjectDragState();
+  });
+}
+
 function renderProjectsView(){
 
+  clearProjectDragState();
   board.innerHTML = "";
+
+  projectOrder = reconcileProjectOrder(projectOrder, projects);
 
   const container = document.createElement("div");
   container.className = "projects-container";
@@ -3285,6 +3421,8 @@ function renderProjectsView(){
       createdAt: Date.now()
     };
 
+    projectOrder = reconcileProjectOrder(projectOrder, projects);
+
     await save();
 
     renderProjectsView();
@@ -3293,11 +3431,12 @@ function renderProjectsView(){
 
 
   // RENDER PROYECTOS
-  Object.entries(projects)
-    .sort((a,b)=> (a[1].createdAt || 0) - (b[1].createdAt || 0))
-    .forEach(([id,project])=>{
+  projectOrder.forEach((id) => {
+    const project = projects[id];
+    if (!project) return;
 
     const column = createProjectColumn(id);
+    attachProjectDragHandlers(column, id);
 
     // cambiar título
     const title = column.querySelector(".col-title");
@@ -3397,6 +3536,7 @@ function renderProjectsView(){
       if(!confirmDelete) return;
 
       delete projects[id];
+      projectOrder = projectOrder.filter((projectId) => projectId !== id);
 
       await save();
 
@@ -5261,14 +5401,16 @@ async function syncLocalData(){
 
   if(!currentUser) return;
 
-  const localData = JSON.parse(localStorage.getItem(storeKey));
+  const rawLocalData = JSON.parse(localStorage.getItem(storeKey));
 
-  if(!localData){
+  if(!rawLocalData){
     return;
   }
 
+  const localData = parseStoredAppData(rawLocalData || {});
   const localTasks = localData.tasks || {};
   const localProjects = localData.projects || {};
+  const localProjectOrder = Array.isArray(localData.projectOrder) ? localData.projectOrder : [];
 
   try{
 
@@ -5279,6 +5421,7 @@ async function syncLocalData(){
 
     const cloudTasks = data.tasks || {};
     const cloudProjects = data.projects || {};
+    const cloudProjectOrder = Array.isArray(data.projectOrder) ? data.projectOrder : [];
 
     // merge tareas
     const mergedTasks = { ...cloudTasks };
@@ -5306,10 +5449,20 @@ async function syncLocalData(){
       }
     });
 
-    await setDoc(userRef,{
-      tasks: mergedTasks,
-      projects: mergedProjects
-    },{ merge:true });
+    const mergedProjectOrder = reconcileProjectOrder(
+      cloudProjectOrder.length ? cloudProjectOrder : localProjectOrder,
+      mergedProjects
+    );
+
+    await setDoc(
+      userRef,
+      {
+        tasks: mergedTasks,
+        projects: mergedProjects,
+        projectOrder: mergedProjectOrder
+      },
+      { merge:true }
+    );
 
     // limpiar localStorage
     localStorage.removeItem(storeKey);

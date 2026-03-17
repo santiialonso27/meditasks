@@ -4714,6 +4714,16 @@
       height: auto;
     }
 
+    .project-col.project-dragging{
+      opacity:.5;
+      transform:scale(.98);
+    }
+
+    .project-col.project-drop-target{
+      outline:2px dashed rgba(255,255,255,.35);
+      outline-offset:6px;
+    }
+
     .project-col .list{
       overflow:visible;
       flex:none;
@@ -5958,7 +5968,7 @@
         </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
-          <span class="version">v2.1</span>
+          <span class="version">v2.2</span>
         </div>
       </div>
 
@@ -5994,10 +6004,11 @@
     <div class="panel">
       <h3 class="changelog-title">
         NOTAS DE VERSIÓN
-        <span class="changelog-version">v2.1</span>
+        <span class="changelog-version">v2.2</span>
       </h3>
       <div class="muted changelog">
         <ul>
+          <li>Nuevo: Se puede editar el orden de tus proyectos.</li>
           <li>Se corrigio el error al completar una tarea no sumaba los puntos de experiencia.</li>
           <li>Nuevo: Definir horario para una tarea.</li>
           <li>Nuevo: Crear etiquetas personalizadas y agregarlas a tareas.</li>
