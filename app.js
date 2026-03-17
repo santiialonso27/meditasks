@@ -114,6 +114,7 @@ let mobileDragAutoScrollRaf = null;
 let mobileDragAutoScrollSpeed = 0;
 let mobileDragAutoScrollTouch = null;
 let mobileDragAutoScrollCallback = null;
+let mobileFocusScrollSnapshot = null;
 
 function closeTaskActionMenu() {
   if (!activeTaskActionMenu) return;
@@ -275,12 +276,33 @@ function isMobileTaskFocusEnabled() {
   return isTouchDevice && isMobileViewport();
 }
 
-function forceMobileRenderRefresh() {
+function forceMobileRenderRefresh(renderFn) {
   if (!isMobileViewport()) return;
   requestAnimationFrame(() => {
-    render();
+    renderFn?.();
     renderMiniCalendar();
   });
+}
+
+function captureMobileScrollSnapshot() {
+  if (!isMobileViewport()) return;
+  const host = document.querySelector(".board-scroll");
+  if (!host) return;
+  mobileFocusScrollSnapshot = {
+    host,
+    top: host.scrollTop,
+    left: host.scrollLeft
+  };
+}
+
+function restoreMobileScrollSnapshot() {
+  if (!mobileFocusScrollSnapshot) return;
+  const { host, top, left } = mobileFocusScrollSnapshot;
+  if (host) {
+    host.scrollTop = top;
+    host.scrollLeft = left;
+  }
+  mobileFocusScrollSnapshot = null;
 }
 
 function clearTaskMobileFocus() {
@@ -2374,13 +2396,15 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           }
           render();
           renderMiniCalendar();
-          forceMobileRenderRefresh();
+          forceMobileRenderRefresh(render);
+          restoreMobileScrollSnapshot();
         }
 
         function cancelEdit() {
           render();
           renderMiniCalendar();
-          forceMobileRenderRefresh();
+          forceMobileRenderRefresh(render);
+          restoreMobileScrollSnapshot();
         }
 
         input.addEventListener("keydown", e => {
@@ -3531,12 +3555,8 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   closeTaskActionMenu();
   clearTaskMobileFocus();
   await closeMobileKeyboardIfNeeded();
-  const scrollHost = document.querySelector(".board-scroll");
-  const scrollSnapshot = scrollHost ? {
-    top: scrollHost.scrollTop,
-    left: scrollHost.scrollLeft
-  } : null;
-  const didScroll = await scrollTaskIntoViewForMobile(taskElement);
+  captureMobileScrollSnapshot();
+  await scrollTaskIntoViewForMobile(taskElement);
 
   if (!isMobileTaskFocusEnabled()) return;
 
@@ -3672,11 +3692,8 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     clearTaskMobileFocus();
     window.removeEventListener("resize", handleViewportChange);
     window.removeEventListener("scroll", handleViewportChange, true);
-    if (didScroll && scrollHost && scrollSnapshot) {
-      scrollHost.scrollTop = scrollSnapshot.top;
-      scrollHost.scrollLeft = scrollSnapshot.left;
-    }
-    forceMobileRenderRefresh();
+    restoreMobileScrollSnapshot();
+    forceMobileRenderRefresh(render);
   };
 
   const handleViewportChange = () => {
@@ -4025,13 +4042,15 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
         render();
         renderMiniCalendar();
-        forceMobileRenderRefresh();
+        forceMobileRenderRefresh(render);
+        restoreMobileScrollSnapshot();
       }
 
       function cancelEdit() {
         render();
         renderMiniCalendar();
-        forceMobileRenderRefresh();
+        forceMobileRenderRefresh(render);
+        restoreMobileScrollSnapshot();
       }
 
       input.addEventListener("keydown", e=>{
