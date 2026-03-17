@@ -275,6 +275,14 @@ function isMobileTaskFocusEnabled() {
   return isTouchDevice && isMobileViewport();
 }
 
+function forceMobileRenderRefresh() {
+  if (!isMobileViewport()) return;
+  requestAnimationFrame(() => {
+    render();
+    renderMiniCalendar();
+  });
+}
+
 function clearTaskMobileFocus() {
   if (activeTaskMobileFocus) {
     const { taskElement, menuElement, overlayElement, cloneElement } = activeTaskMobileFocus;
@@ -2357,11 +2365,13 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           }
           render();
           renderMiniCalendar();
+          forceMobileRenderRefresh();
         }
 
         function cancelEdit() {
           render();
           renderMiniCalendar();
+          forceMobileRenderRefresh();
         }
 
         input.addEventListener("keydown", e => {
@@ -3598,7 +3608,6 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   document.body.appendChild(clone);
   document.body.appendChild(menu);
 
-  taskElement.classList.add("task-mobile-focus");
   taskElement.classList.add("task-mobile-focus-source");
 
   const positionFocusElements = () => {
@@ -3997,17 +4006,13 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
         render();
         renderMiniCalendar();
-        if (isMobileViewport()) {
-          requestAnimationFrame(() => render());
-        }
+        forceMobileRenderRefresh();
       }
 
       function cancelEdit() {
         render();
         renderMiniCalendar();
-        if (isMobileViewport()) {
-          requestAnimationFrame(() => render());
-        }
+        forceMobileRenderRefresh();
       }
 
       input.addEventListener("keydown", e=>{
