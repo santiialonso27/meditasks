@@ -276,17 +276,23 @@ function isMobileTaskFocusEnabled() {
 }
 
 function clearTaskMobileFocus() {
-  if (!activeTaskMobileFocus) return;
+  if (activeTaskMobileFocus) {
+    const { taskElement, menuElement, overlayElement, cloneElement } = activeTaskMobileFocus;
 
-  const { taskElement, menuElement, overlayElement, cloneElement } = activeTaskMobileFocus;
+    taskElement?.classList.remove("task-mobile-focus");
+    taskElement?.classList.remove("task-mobile-focus-source");
+    menuElement?.remove();
+    overlayElement?.remove();
+    cloneElement?.remove();
 
-  taskElement?.classList.remove("task-mobile-focus");
-  taskElement?.classList.remove("task-mobile-focus-source");
-  menuElement?.remove();
-  overlayElement?.remove();
-  cloneElement?.remove();
+    activeTaskMobileFocus = null;
+  }
 
-  activeTaskMobileFocus = null;
+  // Defensive cleanup: ensure no lingering focus classes remain on tasks.
+  document.querySelectorAll(".task.task-mobile-focus, .task.task-mobile-focus-source").forEach((el) => {
+    el.classList.remove("task-mobile-focus");
+    el.classList.remove("task-mobile-focus-source");
+  });
 }
 
 function resetTransientOverlays() {
