@@ -279,6 +279,10 @@ function isMobileTaskFocusEnabled() {
 function forceMobileRenderRefresh(renderFn) {
   if (!isMobileViewport()) return;
   requestAnimationFrame(() => {
+    if (currentViewMode === "tasks") {
+      init();
+      return;
+    }
     renderFn?.();
     renderMiniCalendar();
   });
@@ -3688,12 +3692,19 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     menu.style.top = `${menuTop}px`;
   };
 
-  const cleanup = () => {
+  const cleanup = ({ skipRefresh = false, keepScroll = false } = {}) => {
     clearTaskMobileFocus();
     window.removeEventListener("resize", handleViewportChange);
     window.removeEventListener("scroll", handleViewportChange, true);
-    restoreMobileScrollSnapshot();
-    forceMobileRenderRefresh(render);
+    if (!keepScroll) {
+      restoreMobileScrollSnapshot();
+    }
+    if (!skipRefresh) {
+      forceMobileRenderRefresh(render);
+      if (!keepScroll) {
+        restoreMobileScrollSnapshot();
+      }
+    }
   };
 
   const handleViewportChange = () => {
@@ -4014,7 +4025,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   const bindMainMenuActions = () => {
     menu.querySelector('[data-action="edit"]').onclick = ()=>{
 
-      cleanup();
+      cleanup({ skipRefresh: true, keepScroll: true });
 
       const textDiv = taskElement.querySelector(".ttext");
       if (!textDiv) return;
@@ -4064,7 +4075,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
     menu.querySelector('[data-action="reorder"]').onclick = (e) => {
       e.preventDefault();
-      cleanup();
+      cleanup({ skipRefresh: true, keepScroll: true });
       setMobileTaskReorderMode(true);
     };
 
