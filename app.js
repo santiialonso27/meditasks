@@ -3996,10 +3996,18 @@ async function showTaskMobileMenu(taskElement, taskData, render){
         }
 
         render();
+        renderMiniCalendar();
+        if (isMobileViewport()) {
+          requestAnimationFrame(() => render());
+        }
       }
 
       function cancelEdit() {
         render();
+        renderMiniCalendar();
+        if (isMobileViewport()) {
+          requestAnimationFrame(() => render());
+        }
       }
 
       input.addEventListener("keydown", e=>{
