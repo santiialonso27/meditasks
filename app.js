@@ -755,7 +755,15 @@ async function closeMobileKeyboardIfNeeded() {
 }
 
 async function scrollTaskIntoViewForMobile(taskElement){
-  if (!isMobileTaskFocusEnabled() || !taskElement) return;
+  if (!isMobileTaskFocusEnabled() || !taskElement) return false;
+
+  const rect = taskElement.getBoundingClientRect();
+  const topSafe = 110;
+  const bottomSafe = window.innerHeight - 180;
+
+  if (rect.top >= topSafe && rect.bottom <= bottomSafe) {
+    return false;
+  }
 
   taskElement.scrollIntoView({
     block: "start",
@@ -763,6 +771,7 @@ async function scrollTaskIntoViewForMobile(taskElement){
   });
 
   await delay(280);
+  return true;
 }
 
 function normalizePlayer(raw = {}) {
@@ -3522,7 +3531,12 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   closeTaskActionMenu();
   clearTaskMobileFocus();
   await closeMobileKeyboardIfNeeded();
-  await scrollTaskIntoViewForMobile(taskElement);
+  const scrollHost = document.querySelector(".board-scroll");
+  const scrollSnapshot = scrollHost ? {
+    top: scrollHost.scrollTop,
+    left: scrollHost.scrollLeft
+  } : null;
+  const didScroll = await scrollTaskIntoViewForMobile(taskElement);
 
   if (!isMobileTaskFocusEnabled()) return;
 
@@ -3658,6 +3672,11 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     clearTaskMobileFocus();
     window.removeEventListener("resize", handleViewportChange);
     window.removeEventListener("scroll", handleViewportChange, true);
+    if (didScroll && scrollHost && scrollSnapshot) {
+      scrollHost.scrollTop = scrollSnapshot.top;
+      scrollHost.scrollLeft = scrollSnapshot.left;
+    }
+    forceMobileRenderRefresh();
   };
 
   const handleViewportChange = () => {
