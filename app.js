@@ -78,6 +78,73 @@ const TASK_LABEL_COLORS = [
   "#ec4899"
 ];
 
+const ACHIEVEMENTS = [
+  {
+    id: "mate_metodo",
+    name: "Mate y método",
+    desc: "Completá 3 tareas en total",
+    exp: 120,
+    check: (stats) => stats.completedTasks >= 3
+  },
+  {
+    id: "bautismo_proyecto",
+    name: "Bautismo de proyecto",
+    desc: "Creá un proyecto",
+    exp: 160,
+    check: (stats) => stats.projectsCount >= 1
+  },
+  {
+    id: "dia_redondo",
+    name: "Día redondo",
+    desc: "Completá todas las tareas del día",
+    exp: 180,
+    check: (stats) => stats.todayAllDone
+  },
+  {
+    id: "trilogia_dia",
+    name: "Trilogía del día",
+    desc: "Completá todas las tareas del día durante 3 días consecutivos",
+    exp: 380,
+    check: () => player.allTasksStreak >= 3
+  },
+  {
+    id: "racha_multitareas",
+    name: "Racha multitareas",
+    desc: "Obtené una racha de 3 días usando MultiTareas por 3 días consecutivos",
+    exp: 260,
+    check: () => player.activeStreak >= 3
+  },
+  {
+    id: "quinto_escalon",
+    name: "Quinto escalón",
+    desc: "Alcanzá el nivel 5",
+    exp: 300,
+    check: () => player.level >= 5
+  },
+  {
+    id: "diez_a_fondo",
+    name: "Diez a fondo",
+    desc: "Completá 10 tareas en total",
+    exp: 220,
+    check: (stats) => stats.completedTasks >= 10
+  },
+  {
+    id: "barrio_proyectos",
+    name: "Barrio de proyectos",
+    desc: "Creá 3 proyectos",
+    exp: 240,
+    check: (stats) => stats.projectsCount >= 3
+  },
+  {
+    id: "agenda_fina",
+    name: "Agenda fina",
+    desc: "Programá 3 tareas con horario",
+    exp: 200,
+    check: (stats) => stats.scheduledTasks >= 3
+  }
+];
+
+const ACHIEVEMENT_IDS = new Set(ACHIEVEMENTS.map((achievement) => achievement.id));
 
 let draggedElement = null;
 let currentTarget = null;
@@ -826,15 +893,366 @@ async function scrollTaskIntoViewForMobile(taskElement){
 }
 
 function normalizePlayer(raw = {}) {
-  return {
+  const normalized = {
     exp: 0,
     level: 0,
     todayExpTasks: 0,
     lastExpDate: null,
     dailyLimitShown: false,
+    achievements: {},
+    allTasksStreak: 0,
+    lastAllTasksDate: null,
+    activeStreak: 0,
+    longestStreak: 0,
+    lastActiveDate: null,
     updatedAt: 0,
     ...raw
   };
+
+  if (!normalized.achievements || typeof normalized.achievements !== "object") {
+    normalized.achievements = {};
+  }
+  Object.keys(normalized.achievements).forEach((key) => {
+    if (!ACHIEVEMENT_IDS.has(key)) {
+      delete normalized.achievements[key];
+    }
+  });
+  if (typeof normalized.longestStreak !== "number") {
+    normalized.longestStreak = 0;
+  }
+  if (typeof normalized.activeStreak !== "number") {
+    normalized.activeStreak = 0;
+  }
+  normalized.longestStreak = Math.max(normalized.longestStreak, normalized.activeStreak);
+
+  return normalized;
+}
+
+function isDayFullyCompleted(dateStr){
+  if (!dateStr) return false;
+  const list = tasks?.[dateStr];
+  if (!Array.isArray(list) || list.length === 0) return false;
+  return list.every((task) => task.done);
+}
+
+function getAchievementStats(){
+  let completedTasks = 0;
+  let scheduledTasks = 0;
+  let totalTasks = 0;
+
+  Object.values(tasks || {}).forEach((list) => {
+    if (!Array.isArray(list)) return;
+    list.forEach((task) => {
+      totalTasks++;
+      if (task.done) completedTasks++;
+      if (task.timeSlot) scheduledTasks++;
+    });
+  });
+
+  Object.values(projects || {}).forEach((project) => {
+    if (!project || !Array.isArray(project.tasks)) return;
+    project.tasks.forEach((task) => {
+      totalTasks++;
+      if (task.done) completedTasks++;
+      if (task.timeSlot) scheduledTasks++;
+    });
+  });
+
+  const projectsCount = Object.keys(projects || {}).length;
+  const today = formatLocalDate(new Date());
+  const todayAllDone = isDayFullyCompleted(today);
+
+  return { completedTasks, scheduledTasks, totalTasks, projectsCount, todayAllDone };
+}
+
+function isPreviousDay(prevDateStr, nextDateStr){
+  if (!prevDateStr || !nextDateStr) return false;
+  const prev = new Date(`${prevDateStr}T00:00:00`);
+  const next = new Date(`${nextDateStr}T00:00:00`);
+  return next - prev === 86400000;
+}
+
+function updateActiveStreak(){
+  const today = formatLocalDate(new Date());
+  if (player.lastActiveDate === today) return false;
+
+  if (!player.lastActiveDate) {
+    player.activeStreak = 1;
+  } else if (isPreviousDay(player.lastActiveDate, today)) {
+    player.activeStreak = Math.max(1, Number(player.activeStreak) || 0) + 1;
+  } else {
+    player.activeStreak = 1;
+  }
+
+  player.longestStreak = Math.max(
+    Number(player.longestStreak) || 0,
+    Number(player.activeStreak) || 0
+  );
+
+  player.lastActiveDate = today;
+  player.updatedAt = Date.now();
+  return true;
+}
+
+function updateAllTasksStreakForDate(dateStr){
+  if (!dateStr) return false;
+  const today = formatLocalDate(new Date());
+  if (dateStr !== today) return false;
+  if (!isDayFullyCompleted(dateStr)) return false;
+  if (player.lastAllTasksDate === dateStr) return false;
+
+  if (player.lastAllTasksDate && new Date(`${dateStr}T00:00:00`) <= new Date(`${player.lastAllTasksDate}T00:00:00`)) {
+    return false;
+  }
+
+  if (!player.lastAllTasksDate) {
+    player.allTasksStreak = 1;
+  } else if (isPreviousDay(player.lastAllTasksDate, dateStr)) {
+    player.allTasksStreak = Math.max(1, Number(player.allTasksStreak) || 0) + 1;
+  } else {
+    player.allTasksStreak = 1;
+  }
+
+  player.lastAllTasksDate = dateStr;
+  player.updatedAt = Date.now();
+  return true;
+}
+
+function isAchievementUnlocked(id){
+  return !!player?.achievements?.[id]?.unlocked;
+}
+
+function unlockAchievement(achievement){
+  if (!achievement || !achievement.id) return false;
+  if (!player.achievements || typeof player.achievements !== "object") {
+    player.achievements = {};
+  }
+  if (isAchievementUnlocked(achievement.id)) return false;
+
+  const today = formatLocalDate(new Date());
+  player.achievements[achievement.id] = {
+    unlocked: true,
+    date: today,
+    exp: achievement.exp
+  };
+
+  player.exp += achievement.exp;
+  player.updatedAt = Date.now();
+  return true;
+}
+
+function getAchievementExpTotal(){
+  return ACHIEVEMENTS.reduce((sum, achievement) => {
+    if (!isAchievementUnlocked(achievement.id)) return sum;
+    const storedExp = Number(player.achievements?.[achievement.id]?.exp);
+    return sum + (Number.isFinite(storedExp) ? storedExp : achievement.exp);
+  }, 0);
+}
+
+function notifyAchievementUnlocks(unlockedNow){
+  if (!unlockedNow.length) return;
+  enqueueAchievementUnlocks(unlockedNow);
+}
+
+const achievementUnlockQueue = [];
+let achievementUnlockActive = null;
+
+function enqueueAchievementUnlocks(achievements, { preview = false } = {}){
+  if (!Array.isArray(achievements) || achievements.length === 0) return;
+  achievements.forEach((achievement) => {
+    if (!achievement || !achievement.id) return;
+    achievementUnlockQueue.push({ ...achievement, preview });
+  });
+  if (!achievementUnlockActive) {
+    showNextAchievementUnlock();
+  }
+}
+
+function showNextAchievementUnlock(){
+  if (achievementUnlockActive) return;
+  const next = achievementUnlockQueue.shift();
+  if (!next) return;
+  achievementUnlockActive = next;
+  openAchievementUnlockModal(next);
+}
+
+function openAchievementUnlockModal(achievement){
+  const existing = document.getElementById("achievementUnlockOverlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "achievement-unlock-overlay";
+  overlay.id = "achievementUnlockOverlay";
+
+  const modal = document.createElement("div");
+  modal.className = "achievement-unlock-card";
+  modal.innerHTML = `
+    <div class="achievement-unlock-badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M8 21h8"/>
+        <path d="M12 17v4"/>
+        <path d="M7 4h10v4a5 5 0 0 1-10 0z"/>
+        <path d="M5 6H3a2 2 0 0 0 2 3"/>
+        <path d="M19 6h2a2 2 0 0 1-2 3"/>
+      </svg>
+    </div>
+    <div class="achievement-unlock-title">Logro desbloqueado</div>
+    <div class="achievement-unlock-name">${achievement.name}</div>
+    <div class="achievement-unlock-desc">${achievement.desc}</div>
+    <div class="achievement-unlock-reward">+${achievement.exp} EXP</div>
+    <button class="btn primary achievement-unlock-btn" id="achievementUnlockNext">Genial</button>
+  `;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  requestAnimationFrame(() => {
+    overlay.classList.add("open");
+  });
+
+  const nextBtn = overlay.querySelector("#achievementUnlockNext");
+  nextBtn?.addEventListener("click", () => {
+    closeAchievementUnlockModal();
+  });
+
+  launchConfetti();
+}
+
+function closeAchievementUnlockModal(){
+  const overlay = document.getElementById("achievementUnlockOverlay");
+  if (overlay) overlay.remove();
+  achievementUnlockActive = null;
+  showNextAchievementUnlock();
+}
+
+function previewAchievementUnlocks(input){
+  let list = [];
+
+  if (typeof input === "number") {
+    const count = Math.max(1, Math.min(ACHIEVEMENTS.length, Math.floor(input)));
+    list = ACHIEVEMENTS.slice(0, count);
+  } else if (Array.isArray(input)) {
+    list = input
+      .map((id) => ACHIEVEMENTS.find((achievement) => achievement.id === id))
+      .filter(Boolean);
+  } else if (typeof input === "string") {
+    const found = ACHIEVEMENTS.find((achievement) => achievement.id === input);
+    if (found) list = [found];
+  } else {
+    list = ACHIEVEMENTS.slice(0, 3);
+  }
+
+  if (list.length) {
+    enqueueAchievementUnlocks(list, { preview: true });
+  }
+}
+
+function renderAchievementsMenu(){
+  const root = document.getElementById("settingsPanelAchievements");
+  if (!root) return;
+
+  const grid = root.querySelector("#achievementsGrid");
+  const countEl = root.querySelector("#achievementsUnlockedCount");
+  const expEl = root.querySelector("#achievementsExpTotal");
+  if (!grid) return;
+
+  const unlockedCount = ACHIEVEMENTS.filter((achievement) => isAchievementUnlocked(achievement.id)).length;
+  if (countEl) countEl.textContent = unlockedCount;
+  if (expEl) expEl.textContent = getAchievementExpTotal();
+  const stats = getAchievementStats();
+  const activeStreakEl = root.querySelector("#achievementsActiveStreak");
+  const longestStreakEl = root.querySelector("#achievementsLongestStreak");
+  const completedTasksEl = root.querySelector("#achievementsCompletedTasks");
+  const projectsCountEl = root.querySelector("#achievementsProjectsCount");
+  const scheduledTasksEl = root.querySelector("#achievementsScheduledTasks");
+
+  if (activeStreakEl) activeStreakEl.textContent = player.activeStreak || 0;
+  if (longestStreakEl) longestStreakEl.textContent = player.longestStreak || 0;
+  if (completedTasksEl) completedTasksEl.textContent = stats.completedTasks;
+  if (projectsCountEl) projectsCountEl.textContent = stats.projectsCount;
+  if (scheduledTasksEl) scheduledTasksEl.textContent = stats.scheduledTasks;
+
+  grid.innerHTML = ACHIEVEMENTS.map((achievement) => {
+    const unlocked = isAchievementUnlocked(achievement.id);
+    const info = player.achievements?.[achievement.id] || {};
+    const dateText = unlocked && info.date ? info.date : "";
+    const statusMarkup = unlocked
+      ? `
+        <span class="achievement-status-pill unlocked">Desbloqueado</span>
+        <span class="achievement-status-date">${dateText}</span>
+      `
+      : `<span class="achievement-status-pill locked">Bloqueado</span>`;
+    const statusClass = unlocked ? "unlocked" : "locked";
+    return `
+      <div class="achievement-card ${statusClass}">
+        <div class="achievement-top">
+          <div class="achievement-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M8 21h8"/>
+              <path d="M12 17v4"/>
+              <path d="M7 4h10v4a5 5 0 0 1-10 0z"/>
+              <path d="M5 6H3a2 2 0 0 0 2 3"/>
+              <path d="M19 6h2a2 2 0 0 1-2 3"/>
+            </svg>
+          </div>
+          <div class="achievement-reward">+${achievement.exp} EXP</div>
+        </div>
+        <div class="achievement-name">${achievement.name}</div>
+        <div class="achievement-desc">${achievement.desc}</div>
+        <div class="achievement-status">${statusMarkup}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function openAchievementsMenu(){
+  openSettingsOverlay("achievements");
+  renderAchievementsMenu();
+}
+
+function closeAchievementsMenu(){
+  closeSettingsOverlay();
+}
+
+function checkAchievements({ dateContext = null, silent = false } = {}){
+  let changed = false;
+  const unlockedNow = [];
+
+  if (updateActiveStreak()) {
+    changed = true;
+  }
+
+  if (dateContext && updateAllTasksStreakForDate(dateContext)) {
+    changed = true;
+  }
+
+  const stats = getAchievementStats();
+
+  ACHIEVEMENTS.forEach((achievement) => {
+    if (!ACHIEVEMENT_IDS.has(achievement.id)) return;
+    if (isAchievementUnlocked(achievement.id)) return;
+    if (achievement.check(stats)) {
+      if (unlockAchievement(achievement)) {
+        unlockedNow.push(achievement);
+        changed = true;
+      }
+    }
+  });
+
+  if (unlockedNow.length && !silent) {
+    notifyAchievementUnlocks(unlockedNow);
+  }
+
+  if (unlockedNow.length) {
+    updateLevel();
+  }
+
+  if (changed) {
+    savePlayer();
+  }
+
+  renderAchievementsMenu();
+  return changed;
 }
 
 function bindMobileTapToClick(root){
@@ -968,6 +1386,7 @@ function openTaskTimeQuickEditor(taskElement, taskData, render){
     editor.remove();
     render();
     renderMiniCalendar();
+    checkAchievements();
   });
 
   cancelBtn.addEventListener("click", (e) => {
@@ -1573,6 +1992,7 @@ const settingsPanels = {
   account: document.getElementById("settingsPanelAccount"),
   notifications: document.getElementById("settingsPanelNotifications"),
   calendar: document.getElementById("settingsPanelCalendar"),
+  achievements: document.getElementById("settingsPanelAchievements"),
   security: document.getElementById("settingsPanelSecurity")
 };
 
@@ -2831,6 +3251,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
         const total = dayTasks.length;
         const completed = dayTasks.filter((task) => task.done).length;
+        const dayCompleted = total > 0 && completed === total;
 
         if (triggerSounds && !wasDone && t.done && soundEnabled) {
           if (total > 0 && completed === total) {
@@ -2862,6 +3283,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               renderMiniCalendar();
             }, delay);
 
+            checkAchievements({ dateContext: dayCompleted ? iso : null });
             return true;
           }
         }
@@ -2870,6 +3292,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         if (shouldSavePlayer) await savePlayer();
         render();
         renderMiniCalendar();
+        checkAchievements({ dateContext: dayCompleted ? iso : null });
         return true;
       };
 
@@ -2935,6 +3358,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
             await save();
             render();
             renderMiniCalendar();
+            checkAchievements();
           });
         });
       }
@@ -3426,6 +3850,7 @@ function renderProjectsView(){
     await save();
 
     renderProjectsView();
+    checkAchievements();
 
   };
 
@@ -3559,6 +3984,7 @@ function renderProjectsView(){
 function init() {
 
   resetDailyExpIfNeeded();
+  checkAchievements();
 
   const todayStr = formatLocalDate(new Date());
 
@@ -3949,6 +4375,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
           await save();
           render();
           renderMiniCalendar();
+          checkAchievements();
         });
       });
     });
@@ -5371,9 +5798,22 @@ window.mt = {
     }
 
     init();
+  },
+  logros(){
+    openAchievementsMenu();
+  },
+  cerrarLogros(){
+    closeAchievementsMenu();
+  },
+  testLogros(input){
+    previewAchievementUnlocks(input);
   }
 
 };
+
+window.logros = openAchievementsMenu;
+window.cerrarLogros = closeAchievementsMenu;
+window.testLogros = previewAchievementUnlocks;
 
 function updateViewButtons(){
 
