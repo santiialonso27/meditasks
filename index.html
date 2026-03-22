@@ -577,6 +577,11 @@
     ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:999px; }
     ::-webkit-scrollbar-thumb:hover{ background:#3a3a3f; }
 
+    html{
+      -webkit-text-size-adjust:100%;
+      text-size-adjust:100%;
+    }
+
     html, body {
       touch-action: manipulation;
     }
@@ -6894,7 +6899,8 @@
     }
 
     .project-col{
-      flex:1 1 320px;
+      flex:0 0 320px;
+      max-width:320px;
       height: auto;
     }
 
@@ -7865,6 +7871,8 @@
 
       .board-title{
         font-size: 20px;
+        margin-left:auto;
+        text-align:right;
         text-shadow:
             0 2px 6px rgba(0,0,0,.55),
             0 6px 18px rgba(0,0,0,.35);
@@ -7872,6 +7880,8 @@
 
       .board-subtitle{
         font-size: 12px;
+        margin-left:auto;
+        text-align:right;
         text-shadow:
             0 2px 6px rgba(0,0,0,.55),
             0 6px 18px rgba(0,0,0,.35);
@@ -7882,6 +7892,7 @@
         display: flex;
         flex-direction: column;
         line-height: 1.1;
+        align-items:flex-end;
       }
 
       #greetingTitle::first-line {
@@ -7890,6 +7901,7 @@
 
       #greetingTitle span {
         display: block;
+        text-align:right;
       }
 
       .board-wrapper{
@@ -7901,8 +7913,12 @@
       .board-header{
         margin-bottom: 22px;
         padding-left: 6px;
-        padding-right: min(46vw, 156px);
-        padding-top: 26px;
+        padding-right: min(56vw, 198px);
+        padding-top: 8px;
+        display:flex;
+        flex-direction:column;
+        align-items:flex-end;
+        text-align:right;
       }
 
       /*NO MOSTRAR EL BOTON DE CLARO/OSCURO*/
@@ -7954,11 +7970,7 @@
         display:flex;
         flex-direction:column;
         gap:14px;
-        width:100%;
-        max-width:100%;
-        padding:0 4px max(16px, calc(env(safe-area-inset-bottom, 0px) + 8px));
-        overflow-x:hidden;
-        overflow-y:visible;
+        padding:0;
       }
 
       .projects-container .col{
@@ -7971,7 +7983,7 @@
 
       .projects-container .project-col{
         width:100%;
-        min-width:0;
+        min-width:100%;
         max-width:100%;
         flex:none;
       }
@@ -8478,11 +8490,9 @@
       </h3>
       <div class="muted changelog">
         <ul>
+          <li>Nuevo: Menu de ajustes renovado.</li>
           <li>Nuevo: Desbloquea logros para ganar puntos.</li>
           <li>Nuevo: Se puede editar el orden de tus proyectos.</li>
-          <li>Nuevo: Definir horario para una tarea.</li>
-          <li>Nuevo: Crear etiquetas personalizadas y agregarlas a tareas.</li>
-          <li>Nuevo: Posponer una tarea por un tiempo determinado.</li>
         </ul>
       </div>
     </div>
