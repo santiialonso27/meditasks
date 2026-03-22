@@ -7889,10 +7889,17 @@
 
       /* 👇 Separar saludo y nombre en mobile */
       #greetingTitle {
-        display:block;
+        display:flex;
+        flex-direction:column;
         line-height:1.15;
         flex:1 1 auto;
         min-width:0;
+      }
+
+      #greetingTitle .greeting-prefix,
+      #greetingTitle .greeting-name{
+        display:block;
+        max-width:100%;
         white-space:nowrap;
         overflow:hidden;
         text-overflow:ellipsis;
@@ -7914,7 +7921,7 @@
 
       .board-header-row{
         display:flex;
-        align-items:center;
+        align-items:flex-start;
         justify-content:space-between;
         gap:10px;
       }
@@ -7924,6 +7931,7 @@
         top:auto;
         right:auto;
         margin:0;
+        padding-top:2px;
         font-size:12px;
         flex:0 0 auto;
       }

@@ -1452,13 +1452,24 @@ function updateGreeting(user) {
     }
   }
 
-  const greetingText =
+  const greetingPrefix =
     hour >= 6 && hour <= 19
-      ? `Buen día, ${nameToShow}`
-      : `Buenas noches, ${nameToShow}`;
+      ? "Buen día,"
+      : "Buenas noches,";
+  const greetingText = `${greetingPrefix} ${nameToShow}`;
 
   if (window.innerWidth <= 900) {
-    greetingEl.textContent = greetingText;
+    greetingEl.textContent = "";
+
+    const prefix = document.createElement("span");
+    prefix.className = "greeting-prefix";
+    prefix.textContent = greetingPrefix;
+
+    const name = document.createElement("span");
+    name.className = "greeting-name";
+    name.textContent = nameToShow;
+
+    greetingEl.append(prefix, name);
   } else {
     greetingEl.textContent = greetingText;
   }
