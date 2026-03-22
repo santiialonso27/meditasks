@@ -7792,11 +7792,13 @@
       .board {
         flex-direction: column !important;
         min-width: 0 !important;
+        width: 100%;
       }
 
       .board-scroll {
         overflow-x: hidden !important;
         overflow-y: auto !important;
+        padding-bottom: max(20px, calc(env(safe-area-inset-bottom, 0px) + 10px));
       }
 
       .task-action{
@@ -7810,9 +7812,9 @@
     }
 
       .corner-container{
-        top: 12px;
+        top: max(8px, calc(env(safe-area-inset-top, 0px) + 4px));
         right: 10px;
-        width: min(86vw, 236px);
+        width: min(72vw, 228px);
       }
 
       .login-circle{
@@ -7890,6 +7892,19 @@
         display: block;
       }
 
+      .board-wrapper{
+        padding-top: 14px;
+        padding-right: 14px;
+        padding-left: 14px;
+      }
+
+      .board-header{
+        margin-bottom: 24px;
+        padding-left: 6px;
+        padding-right: min(72vw, 232px);
+        padding-top: 62px;
+      }
+
       /*NO MOSTRAR EL BOTON DE CLARO/OSCURO*/
       #modeToggle{
           display:none;
@@ -7939,7 +7954,11 @@
         display:flex;
         flex-direction:column;
         gap:14px;
-        padding:0;
+        width:100%;
+        max-width:100%;
+        padding:0 4px max(16px, calc(env(safe-area-inset-bottom, 0px) + 8px));
+        overflow-x:hidden;
+        overflow-y:visible;
       }
 
       .projects-container .col{
@@ -7952,7 +7971,7 @@
 
       .projects-container .project-col{
         width:100%;
-        min-width:100%;
+        min-width:0;
         max-width:100%;
         flex:none;
       }
