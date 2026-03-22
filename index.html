@@ -894,6 +894,10 @@
       min-width:0; 
     }
 
+    .mobile-top-brand{
+      display:none;
+    }
+
     .top-bar{
       width:100%; 
       height:80px;
@@ -7827,6 +7831,57 @@
         width: min(68vw, 220px);
       }
 
+      .mobile-top-brand{
+        position:fixed;
+        top: max(6px, calc(env(safe-area-inset-top, 0px) + 2px));
+        left: 12px;
+        z-index:115;
+        height:52px;
+        display:flex;
+        align-items:center;
+        gap:8px;
+        pointer-events:none;
+        user-select:none;
+      }
+
+      .mobile-top-brand-logo{
+        width:34px;
+        height:34px;
+        border-radius:10px;
+        flex:0 0 34px;
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.2),
+          0 8px 16px rgba(0,0,0,.24);
+      }
+
+      .mobile-top-brand-title{
+        display:flex;
+        flex-direction:column;
+        justify-content:center;
+        line-height:.86;
+        font-weight:900;
+        text-transform:uppercase;
+        letter-spacing:.12em;
+        font-size:12px;
+        isolation:isolate;
+      }
+
+      .mobile-top-brand-line{
+        display:block;
+        background: linear-gradient(90deg, #ffffff 0%, #b6d4ff 35%, #ffffff 70%);
+        background-size:200% 100%;
+        -webkit-background-clip:text;
+        background-clip:text;
+        color:transparent;
+        text-shadow: 0 4px 14px rgba(0,0,0,.5);
+        animation: loadingShimmer 2.1s linear infinite;
+      }
+
+      .mobile-top-brand-line:last-child{
+        letter-spacing:.18em;
+        animation-delay:.35s;
+      }
+
       .login-circle{
         width: 100%;
         height: 52px;
@@ -7950,7 +8005,7 @@
 
       .board-header #statusText .status-label{
         position:relative;
-        top:2px;
+        top:1px;
       }
 
       /*NO MOSTRAR EL BOTON DE CLARO/OSCURO*/
@@ -8539,6 +8594,14 @@
   </aside>
 
   <div class="main-area">
+
+    <div class="mobile-top-brand" aria-hidden="true">
+      <img src="/flav-icon.png" alt="" class="mobile-top-brand-logo">
+      <div class="mobile-top-brand-title">
+        <span class="mobile-top-brand-line">MULTI-</span>
+        <span class="mobile-top-brand-line">TAREAS</span>
+      </div>
+    </div>
 
     <div class="corner-container collapsed" id="cornerContainer">
 
