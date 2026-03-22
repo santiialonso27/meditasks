@@ -7889,25 +7889,17 @@
 
       /* 👇 Separar saludo y nombre en mobile */
       #greetingTitle {
-        display: flex;
-        flex-direction: column;
-        line-height: 1.1;
-        align-items:flex-start;
+        display:block;
+        line-height:1.15;
         flex:1 1 auto;
         min-width:0;
-      }
-
-      #greetingTitle::first-line {
-        white-space: nowrap;
-      }
-
-      #greetingTitle span {
-        display: block;
-        text-align:left;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
       }
 
       .board-wrapper{
-        padding-top: 8px;
+        padding-top: max(62px, calc(env(safe-area-inset-top, 0px) + 62px));
         padding-right: 14px;
         padding-left: 14px;
       }
@@ -7916,13 +7908,13 @@
         margin-bottom: 22px;
         padding-left: 6px;
         padding-right: 6px;
-        padding-top: max(74px, calc(env(safe-area-inset-top, 0px) + 64px));
+        padding-top: 0;
         text-align:left;
       }
 
       .board-header-row{
         display:flex;
-        align-items:flex-start;
+        align-items:center;
         justify-content:space-between;
         gap:10px;
       }
@@ -7940,6 +7932,9 @@
         font-size:12px;
         justify-content:flex-end;
         white-space:nowrap;
+        max-width:44vw;
+        overflow:hidden;
+        text-overflow:ellipsis;
       }
 
       /*NO MOSTRAR EL BOTON DE CLARO/OSCURO*/

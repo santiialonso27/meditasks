@@ -1458,11 +1458,7 @@ function updateGreeting(user) {
       : `Buenas noches, ${nameToShow}`;
 
   if (window.innerWidth <= 900) {
-    const parts = greetingText.split(", ");
-    greetingEl.innerHTML = `
-      <span>${parts[0]},</span>
-      <span>${parts[1]}</span>
-    `;
+    greetingEl.textContent = greetingText;
   } else {
     greetingEl.textContent = greetingText;
   }
