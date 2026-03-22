@@ -864,6 +864,10 @@
       padding-left: 10px;
     }
 
+    .board-header-row{
+      display:block;
+    }
+
     .board-title{
       font-size: 32px;
       font-weight: 600;
@@ -7871,8 +7875,6 @@
 
       .board-title{
         font-size: 20px;
-        margin-left:auto;
-        text-align:right;
         text-shadow:
             0 2px 6px rgba(0,0,0,.55),
             0 6px 18px rgba(0,0,0,.35);
@@ -7880,8 +7882,6 @@
 
       .board-subtitle{
         font-size: 12px;
-        margin-left:auto;
-        text-align:right;
         text-shadow:
             0 2px 6px rgba(0,0,0,.55),
             0 6px 18px rgba(0,0,0,.35);
@@ -7892,7 +7892,9 @@
         display: flex;
         flex-direction: column;
         line-height: 1.1;
-        align-items:flex-end;
+        align-items:flex-start;
+        flex:1 1 auto;
+        min-width:0;
       }
 
       #greetingTitle::first-line {
@@ -7901,7 +7903,7 @@
 
       #greetingTitle span {
         display: block;
-        text-align:right;
+        text-align:left;
       }
 
       .board-wrapper{
@@ -7913,12 +7915,31 @@
       .board-header{
         margin-bottom: 22px;
         padding-left: 6px;
-        padding-right: min(56vw, 198px);
-        padding-top: 8px;
+        padding-right: 6px;
+        padding-top: max(74px, calc(env(safe-area-inset-top, 0px) + 64px));
+        text-align:left;
+      }
+
+      .board-header-row{
         display:flex;
-        flex-direction:column;
-        align-items:flex-end;
-        text-align:right;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:10px;
+      }
+
+      .board-header .save-status{
+        position:static;
+        top:auto;
+        right:auto;
+        margin:0;
+        font-size:12px;
+        flex:0 0 auto;
+      }
+
+      .board-header #statusText{
+        font-size:12px;
+        justify-content:flex-end;
+        white-space:nowrap;
       }
 
       /*NO MOSTRAR EL BOTON DE CLARO/OSCURO*/
@@ -8662,14 +8683,15 @@
 
     </div>
 
-     <div class="save-status">
-         <span id="statusText"></span>
-     </div>
-
     <main class="board-wrapper">
 
       <div class="board-header">
-        <h1 class="board-title" id="greetingTitle"></h1>
+        <div class="board-header-row">
+          <h1 class="board-title" id="greetingTitle"></h1>
+          <div class="save-status">
+            <span id="statusText"></span>
+          </div>
+        </div>
         <p class="board-subtitle" id="dynamicSubtitle"></p>
       </div>
 
