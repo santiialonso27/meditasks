@@ -2808,6 +2808,7 @@ document.addEventListener("visibilitychange", ()=>{
 });
 
 window.addEventListener("resize", () => {
+  updateGreeting(currentUser);
   if(!isMobileSettingsViewport()){
     closeMobileSettingsNav();
     return;
