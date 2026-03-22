@@ -59,6 +59,7 @@
       --page-glow-c: color-mix(in srgb, var(--gradient-from) 16%, transparent);
       --page-core: rgba(28, 34, 48, .62);
       --page-shadow: rgba(14, 17, 26, .82);
+      --desktop-bottom-nav-reserved: 92px;
     }
     /*MODO CLARO*/
     :root.light-mode{
@@ -114,35 +115,46 @@
     }
 
     :root.light-mode .corner-container{
+      background:transparent;
+      border:none;
+      box-shadow:none;
+      backdrop-filter:none;
+      -webkit-backdrop-filter:none;
+    }
+
+    :root.light-mode .corner-dropdown{
       background:
-        radial-gradient(140% 120% at 0% 0%, rgba(255,255,255,.9), transparent 45%),
-        rgba(255,255,255,.55);
-      border:1px solid rgba(255,255,255,.7);
+        linear-gradient(180deg, rgba(255,255,255,.62), rgba(255,255,255,.42)),
+        rgba(255,255,255,.7);
+      border-color:rgba(255,255,255,.72);
       box-shadow:
-        inset 0 1px 0 rgba(255,255,255,.9),
-        0 18px 46px rgba(15,23,42,.18);
-      backdrop-filter: blur(22px) saturate(140%);
-      -webkit-backdrop-filter: blur(22px) saturate(140%);
+        0 24px 44px rgba(15,23,42,.18),
+        inset 0 1px 0 rgba(255,255,255,.9);
     }
 
-    :root.light-mode .corner-container svg{
-      color: rgba(0,0,0,.65);
+    :root.light-mode .corner-dropdown-arrow{
+      background:rgba(255,255,255,.68);
+      border-left-color:rgba(255,255,255,.72);
+      border-top-color:rgba(255,255,255,.72);
     }
 
-    :root.light-mode .corner-container button:hover svg{
-      color: #000;
+    :root.light-mode .login-circle{
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.96),
+        inset 0 -1px 0 rgba(255,255,255,.55),
+        0 16px 30px rgba(15,23,42,.14),
+        0 0 20px color-mix(in srgb, var(--gradient-from) 16%, transparent);
     }
 
-    :root.light-mode #closeMenuBtn svg{
-      color: rgba(0,0,0,.65);
+    :root.light-mode .login-circle .profile-trigger-avatar{
+      background:rgba(255,255,255,.78);
+      box-shadow:
+        inset 0 0 0 1px rgba(0,0,0,.08),
+        0 6px 12px rgba(15,23,42,.12);
     }
 
-    :root.light-mode #closeMenuBtn:hover svg{
-      color: #000;
-    }
-
-    :root.light-mode .corner-btn.active-style{
-      background: rgba(0,0,0,.06);
+    :root.light-mode .corner-menu-item.danger{
+      color:#b42318;
     }
 
     :root.light-mode .col{
@@ -252,12 +264,9 @@
     }
 
     :root.light-mode .corner-container{
-      background: rgba(255,255,255,.92);
-
-      border:1px solid #e6e6e6;
-
-      box-shadow:
-        0 10px 30px rgba(0,0,0,.75);
+      background:transparent;
+      border:none;
+      box-shadow:none;
     }
 
     :root.light-mode svg{
@@ -453,7 +462,8 @@
       background: #e9ecef;
     }
 
-    :root.light-mode #modeToggleMobile{
+    :root.light-mode #modeToggleMobile,
+    :root.light-mode #settingsToggleMobile{
       background:rgba(0,0,0,0.05);
       border:1px solid rgba(0,0,0,0.08);
       color:#111;
@@ -678,6 +688,12 @@
     .sidebar-calendar-btn:hover {
       background: var(--app-gradient-soft);
       border-color: var(--gradient-to);
+    }
+
+    .sidebar-help-btn{
+      margin-top:12px;
+      margin-bottom:0;
+      align-self:center;
     }
 
     /* 👇 Solo cuando sidebar está colapsada en desktop */
@@ -926,23 +942,98 @@
     .col-head{
       padding:22px 18px 16px;
       border-bottom:1px solid var(--panel-divider);
-      display:flex;
-      justify-content:space-between;
-      align-items:flex-start;
-      gap:12px;
+      display:block;
     }
-    .col-head > div:first-child{
+    .col-head-main{
       flex:1;
       min-width:0;
+    }
+    .col-topline{
+      margin-bottom:6px;
+    }
+    .col-topline.has-date{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+      align-items:center;
+      column-gap:12px;
+    }
+    .col-topline.no-date{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+    }
+    .col-topline-spacer{
+      width:94px;
+      justify-self:center;
+    }
+    .col-day-number{
+      justify-self:end;
+      display:inline-block;
+      min-width:0;
+      height:auto;
+      padding:0;
+      border:none;
+      background:none;
+      box-shadow:none;
+      font-size:clamp(1.22rem, 1.95vw, 1.62rem);
+      font-weight:800;
+      line-height:.95;
+      letter-spacing:-.03em;
+      font-variant-numeric: lining-nums tabular-nums;
+      color: transparent;
+      background-image: linear-gradient(
+        165deg,
+        color-mix(in srgb, #ffffff 66%, var(--gradient-to) 34%),
+        color-mix(in srgb, #ffffff 24%, var(--gradient-from) 76%)
+      );
+      -webkit-background-clip:text;
+      background-clip:text;
+      -webkit-text-fill-color: transparent;
+      opacity:.78;
+      text-shadow:
+        0 1px 0 rgba(255,255,255,.22),
+        0 10px 20px color-mix(in srgb, var(--gradient-to) 14%, transparent);
+    }
+    .col.today-highlight .col-day-number{
+      opacity:.92;
+      background-image: linear-gradient(
+        165deg,
+        color-mix(in srgb, #ffffff 78%, var(--gradient-to) 22%),
+        color-mix(in srgb, #ffffff 28%, var(--gradient-from) 72%)
+      );
+      text-shadow:
+        0 1px 0 rgba(255,255,255,.28),
+        0 0 18px color-mix(in srgb, var(--gradient-to) 18%, transparent),
+        0 10px 20px color-mix(in srgb, var(--gradient-from) 12%, transparent);
+    }
+    :root.light-mode .col-day-number{
+      opacity:.72;
+      background-image: linear-gradient(
+        165deg,
+        color-mix(in srgb, #ffffff 18%, var(--gradient-from) 82%),
+        color-mix(in srgb, #ffffff 8%, var(--gradient-to) 92%)
+      );
+      text-shadow:
+        0 1px 0 rgba(255,255,255,.45),
+        0 8px 18px color-mix(in srgb, var(--gradient-from) 14%, transparent);
+    }
+    :root.light-mode .col.today-highlight .col-day-number{
+      opacity:.84;
+      background-image: linear-gradient(
+        165deg,
+        color-mix(in srgb, #ffffff 28%, var(--gradient-from) 72%),
+        color-mix(in srgb, #ffffff 12%, var(--gradient-to) 88%)
+      );
     }
     .col-title{
       font-size:18px;
       font-weight:600;
       letter-spacing:-.03em;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap:8px;
+      min-width:0;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      justify-self:start;
     }
     .col-sub{
       font-size:14px;
@@ -1010,10 +1101,104 @@
       white-space:nowrap;
     }
     .pill.today{
-      border-color: var(--gradient-to);
-      background: var(--gradient-to-soft);
-      color: var(--text);
-      font-weight:600;
+      justify-self:center;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      position:relative;
+      overflow:hidden;
+      min-width:94px;
+      min-height:34px;
+      padding:8px 18px;
+      border:1px solid color-mix(in srgb, var(--gradient-to) 50%, rgba(255,255,255,.42));
+      background:
+        linear-gradient(
+          145deg,
+          color-mix(in srgb, var(--gradient-from) 34%, rgba(255,255,255,.28)),
+          color-mix(in srgb, var(--gradient-to) 38%, rgba(255,255,255,.18))
+        );
+      color: color-mix(in srgb, var(--text) 90%, #fff);
+      font-weight:700;
+      font-size:13px;
+      letter-spacing:.03em;
+      backdrop-filter: blur(16px) saturate(150%);
+      -webkit-backdrop-filter: blur(16px) saturate(150%);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.5),
+        inset 0 -1px 0 rgba(255,255,255,.14),
+        0 12px 26px color-mix(in srgb, var(--gradient-to) 26%, transparent),
+        0 0 0 1px color-mix(in srgb, var(--gradient-from) 18%, transparent);
+    }
+    .pill.today::before{
+      content:"";
+      position:absolute;
+      inset:1px;
+      border-radius:inherit;
+      pointer-events:none;
+      background:
+        radial-gradient(120% 100% at 20% 0%, rgba(255,255,255,.42), transparent 52%),
+        linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,.04));
+      mix-blend-mode:screen;
+      opacity:.92;
+    }
+    .pill.today::after{
+      content:"";
+      position:absolute;
+      top:-120%;
+      left:-45%;
+      width:42%;
+      height:260%;
+      pointer-events:none;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.65), transparent);
+      transform:rotate(24deg);
+      animation: todayPillShimmer 3.6s ease-in-out infinite;
+      opacity:.75;
+    }
+
+    @keyframes todayPillShimmer{
+      0%, 65%, 100%{
+        transform: translateX(0) rotate(24deg);
+        opacity:0;
+      }
+      75%{
+        opacity:.72;
+      }
+      85%{
+        transform: translateX(250%) rotate(24deg);
+        opacity:.35;
+      }
+    }
+
+    :root.light-mode .pill.today{
+      border-color: color-mix(in srgb, var(--gradient-to) 42%, rgba(17,24,39,.2));
+      background:
+        linear-gradient(
+          145deg,
+          color-mix(in srgb, var(--gradient-from) 20%, rgba(255,255,255,.94)),
+          color-mix(in srgb, var(--gradient-to) 24%, rgba(255,255,255,.88))
+        );
+      color: color-mix(in srgb, var(--gradient-from) 54%, #1f2937);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.96),
+        inset 0 -1px 0 rgba(255,255,255,.55),
+        0 10px 22px color-mix(in srgb, var(--gradient-from) 20%, rgba(15,23,42,.12)),
+        0 0 0 1px color-mix(in srgb, var(--gradient-to) 12%, rgba(15,23,42,.1));
+    }
+    :root.light-mode .pill.today::before{
+      background:
+        radial-gradient(120% 100% at 20% 0%, rgba(255,255,255,.9), transparent 52%),
+        linear-gradient(180deg, rgba(255,255,255,.66), rgba(255,255,255,.12));
+      opacity:1;
+    }
+    :root.light-mode .pill.today::after{
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.96), transparent);
+    }
+
+    @media (prefers-reduced-motion: reduce){
+      .pill.today::after{
+        animation:none;
+        opacity:0;
+      }
     }
 
     .list{
@@ -1572,6 +1757,7 @@
     body.task-action-focus #statusText,
     body.task-action-focus #modeToggle,
     body.task-action-focus #modeToggleMobile,
+    body.task-action-focus #settingsToggleMobile,
     body.task-action-focus .mode-toggle-mobile{
       opacity:0 !important;
       visibility:hidden !important;
@@ -1884,9 +2070,7 @@
         linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03)),
         color-mix(in srgb, var(--gradient-from) 6%, rgba(20,24,34,.76));
       color:var(--text);
-      display:flex;
-      align-items:center;
-      justify-content:center;
+      display:block;
       font-size:13px;
       font-weight:600;
       letter-spacing:.01em;
@@ -2513,7 +2697,8 @@
     }
 
     body.logged-out #modeToggle,
-    body.logged-out #modeToggleMobile{
+    body.logged-out #modeToggleMobile,
+    body.logged-out #settingsToggleMobile{
       display:none !important;
     }
 
@@ -2956,76 +3141,177 @@
       flex-shrink:0;
     }
 
-    /* 🔴 Botón circular */
+    /* Trigger perfil integrado al tema */
     .login-circle{
-      position: absolute;
-      right: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      width:48px;
-      height:48px;
-      border-radius:50%;
-      border:none;
-      cursor:pointer;
-      flex: 0 0 48px;
-
-      background: var(--app-gradient);
+      position: relative;
+      width: 100%;
+      height: 60px;
+      border: 1px solid transparent;
+      border-radius: 16px;
+      padding: 0 12px 0 9px;
+      cursor: pointer;
+      overflow: hidden;
 
       display:flex;
       align-items:center;
-      justify-content:center;
+      gap:8px;
 
-      overflow:hidden;
+      background:
+        linear-gradient(
+          165deg,
+          color-mix(in srgb, var(--card2) 88%, rgba(255,255,255,.08)),
+          color-mix(in srgb, var(--card2) 92%, rgba(255,255,255,.02))
+        ) padding-box,
+        var(--app-gradient) border-box;
+      color: var(--text);
+      backdrop-filter: blur(22px) saturate(150%);
+      -webkit-backdrop-filter: blur(22px) saturate(150%);
 
       box-shadow:
-        inset 0 2px 4px rgba(255,255,255,.35),
-        0 6px 18px rgba(0,0,0,.35);
+        inset 0 1px 0 rgba(255,255,255,.2),
+        inset 0 -1px 0 rgba(255,255,255,.04),
+        0 16px 30px rgba(0,0,0,.38),
+        0 0 24px var(--gradient-from-soft);
 
       transition: transform .2s ease, box-shadow .2s ease;
     }
 
-    /* Imagen de perfil */
+    .login-circle::before{
+      content:"";
+      position:absolute;
+      inset:1px;
+      border-radius:15px;
+      pointer-events:none;
+      background:
+        linear-gradient(
+          160deg,
+          rgba(255,255,255,.2) 0%,
+          rgba(255,255,255,.05) 34%,
+          rgba(255,255,255,.01) 62%,
+          rgba(255,255,255,.12) 100%
+        );
+      opacity:.42;
+    }
+
+    .login-circle .profile-trigger-avatar,
+    .login-circle .profile-trigger-copy,
+    .login-circle .profile-trigger-chevron{
+      position:relative;
+      z-index:1;
+    }
+
+    .login-circle:hover{
+      transform: translateY(-1px);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.26),
+        inset 0 -1px 0 rgba(255,255,255,.08),
+        0 18px 34px rgba(0,0,0,.42),
+        0 0 30px var(--gradient-to-soft);
+    }
+
+    .login-circle .profile-trigger-avatar{
+      width:32px;
+      height:32px;
+      border-radius:50%;
+      overflow:hidden;
+      background: rgba(255,255,255,.08);
+      flex:0 0 32px;
+      box-shadow:
+        inset 0 0 0 1px rgba(255,255,255,.12),
+        0 6px 16px rgba(0,0,0,.35);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+
     .login-circle img{
       width:100%;
       height:100%;
       object-fit:cover;
+      display:block;
     }
 
-    /* Ícono fallback */
-    .login-circle svg{
-      width:22px;
-      height:22px;
-      stroke:#000;
-      stroke-width:2;
+    .login-circle .profile-trigger-fallback{
+      width:18px;
+      height:18px;
+      stroke:var(--text);
+      stroke-width:1.9;
+      opacity:.78;
     }
 
-    .login-circle:hover{
-      box-shadow:
-        inset 0 2px 6px rgba(255,255,255,.45),
-        0 10px 28px var(--gradient-to-soft),
-        0 0 40px var(--gradient-from-soft);
+    .login-circle .profile-trigger-copy{
+      min-width:0;
+      flex:1 1 auto;
+      display:flex;
+      flex-direction:column;
+      gap:5px;
+      justify-content:center;
     }
 
-    /* Avatar cuando está logueado */
-    .login-circle.logged-in{
-      border: 1px solid transparent;
+    .login-circle .profile-trigger-name{
+      font-size:15px;
+      font-weight:600;
+      letter-spacing:-.4px;
+      line-height:1;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      text-align:left;
+      color:var(--text);
+    }
 
+    .login-circle .profile-trigger-level-row{
+      display:flex;
+      align-items:center;
+      gap:7px;
+      min-width:0;
+    }
+
+    .login-circle .profile-trigger-level-text{
+      font-size:9px;
+      font-weight:700;
+      letter-spacing:.8px;
+      white-space:nowrap;
+      opacity:.74;
+      line-height:1;
+    }
+
+    .login-circle .profile-trigger-level-bar{
+      flex:0 0 62px;
+      height:4px;
+      border-radius:999px;
       background:
-        linear-gradient(var(--card2), var(--card2)) padding-box,
-        var(--app-gradient) border-box;
-
-      backdrop-filter: blur(20px);
-
+        linear-gradient(
+          90deg,
+          color-mix(in srgb, var(--border) 76%, transparent),
+          color-mix(in srgb, var(--border) 88%, transparent)
+        );
+      overflow:hidden;
+      position:relative;
       box-shadow:
-        inset 0 1px 0 rgba(255,255,255,.05),
-        0 12px 30px rgba(0,0,0,.55);
+        inset 0 1px 0 rgba(255,255,255,.2),
+        inset 0 -1px 0 rgba(0,0,0,.2);
     }
 
-    .login-circle.logged-in:hover{
-      box-shadow:
-        0 0 25px var(--gradient-from-soft),
-        0 0 45px var(--gradient-to-soft),
-        0 12px 30px rgba(0,0,0,.55);
+    .login-circle .profile-trigger-level-fill{
+      position:absolute;
+      inset:0 auto 0 0;
+      width:0%;
+      border-radius:999px;
+      background: var(--app-gradient);
+      transition: width .35s ease;
+    }
+
+    .login-circle .profile-trigger-chevron{
+      width:16px;
+      height:16px;
+      flex:0 0 16px;
+      color: color-mix(in srgb, var(--text) 65%, transparent);
+      transition: transform .2s ease;
+    }
+
+    .corner-container.expanded .login-circle .profile-trigger-chevron{
+      transform: rotate(180deg);
     }
 
     /* Acortamos el botón original SIN cambiar estilo */
@@ -3255,6 +3541,7 @@
     .settings-shell{
       width:min(1060px, calc(100vw - 56px));
       height:min(680px, calc(100vh - 72px));
+      position:relative;
       display:grid;
       grid-template-columns:320px minmax(0,1fr);
       overflow:hidden;
@@ -3314,6 +3601,70 @@
       flex-direction:column;
       gap:8px;
       margin-top:6px;
+    }
+
+    .settings-mobile-nav-toggle{
+      display:none;
+      width:100%;
+      align-items:center;
+      gap:10px;
+      padding:10px 12px;
+      border-radius:16px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.06);
+      color:rgba(255,255,255,.94);
+      font-size:15px;
+      font-weight:700;
+      text-align:left;
+      cursor:pointer;
+      transition:background .18s ease, border-color .18s ease;
+    }
+
+    .settings-mobile-nav-toggle:hover{
+      background:rgba(255,255,255,.10);
+      border-color:rgba(255,255,255,.18);
+    }
+
+    .settings-mobile-nav-current-icon{
+      width:34px;
+      height:34px;
+      border-radius:11px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:rgba(12,15,20,.42);
+      border:1px solid rgba(255,255,255,.12);
+      flex:0 0 auto;
+    }
+
+    .settings-mobile-nav-current-icon svg{
+      width:16px;
+      height:16px;
+    }
+
+    .settings-mobile-nav-current-label{
+      flex:1 1 auto;
+      min-width:0;
+    }
+
+    .settings-mobile-nav-caret{
+      width:20px;
+      height:20px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:rgba(255,255,255,.78);
+      transition:transform .18s ease;
+      flex:0 0 auto;
+    }
+
+    .settings-mobile-nav-caret svg{
+      width:18px;
+      height:18px;
+    }
+
+    .settings-mobile-nav-toggle[aria-expanded="true"] .settings-mobile-nav-caret{
+      transform:rotate(180deg);
     }
 
     .settings-nav-item{
@@ -3381,6 +3732,7 @@
       position:absolute;
       top:18px;
       right:18px;
+      z-index:6;
       width:48px;
       height:48px;
       border:none;
@@ -3471,6 +3823,361 @@
       font-size:13px;
       line-height:1.4;
       font-weight:550;
+    }
+
+    .settings-account-hero{
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:8px;
+      padding-top:18px;
+      padding-bottom:18px;
+    }
+
+    .settings-account-avatar{
+      width:72px;
+      height:72px;
+      border-radius:50%;
+      object-fit:cover;
+      border:1px solid rgba(255,255,255,.2);
+      box-shadow:
+        0 16px 30px rgba(0,0,0,.28),
+        inset 0 1px 0 rgba(255,255,255,.25);
+      background:rgba(255,255,255,.08);
+    }
+
+    .settings-account-name{
+      margin:0;
+      font-size:28px;
+      line-height:1;
+      letter-spacing:-.04em;
+      font-weight:760;
+    }
+
+    .settings-account-mail{
+      margin:0;
+      font-size:13px;
+      font-weight:560;
+      color:rgba(255,255,255,.68);
+      line-height:1.3;
+      text-align:center;
+      max-width:100%;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+
+    .settings-account-stats-grid{
+      display:grid;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+      gap:8px;
+      padding:8px;
+    }
+
+    .settings-account-stat{
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.08);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)),
+        rgba(10,14,22,.3);
+      padding:10px 12px;
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+      min-height:64px;
+      justify-content:center;
+    }
+
+    .settings-account-stat-label{
+      font-size:11px;
+      letter-spacing:.7px;
+      text-transform:uppercase;
+      color:rgba(255,255,255,.54);
+      font-weight:700;
+    }
+
+    .settings-account-stat-value{
+      font-size:22px;
+      line-height:1;
+      letter-spacing:-.03em;
+      font-weight:760;
+    }
+
+    .settings-account-logout{
+      margin-top:12px;
+      width:100%;
+      border:none;
+      border-radius:16px;
+      padding:13px 16px;
+      font-size:15px;
+      font-weight:740;
+      letter-spacing:.1px;
+      color:#fff;
+      background:linear-gradient(135deg, #e33c3c, #f74b4b);
+      cursor:pointer;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.18),
+        0 14px 24px rgba(227,60,60,.26);
+      transition: transform .18s ease, filter .18s ease;
+    }
+
+    .settings-account-logout:hover{
+      transform: translateY(-1px);
+      filter: brightness(1.06);
+    }
+
+    .settings-help-desc{
+      margin-top:10px;
+      color:rgba(255,255,255,.66);
+      font-size:13px;
+      line-height:1.45;
+      text-align:center;
+      max-width:560px;
+      margin-left:auto;
+      margin-right:auto;
+    }
+
+    .settings-help-actions{
+      display:grid;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+      gap:12px;
+      padding:8px;
+      max-width:760px;
+      margin:0 auto;
+    }
+
+    .settings-help-btn{
+      width:100%;
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:16px;
+      padding:14px 16px;
+      min-height:94px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.02)),
+        rgba(255,255,255,.03);
+      color:var(--text);
+      display:flex;
+      flex-direction:column;
+      align-items:flex-start;
+      justify-content:center;
+      gap:8px;
+      text-align:left;
+      cursor:pointer;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.12),
+        0 12px 24px rgba(0,0,0,.14);
+      transition: transform .18s ease, border-color .18s ease, background .18s ease;
+    }
+
+    .settings-help-btn-title{
+      font-size:20px;
+      font-weight:760;
+      letter-spacing:-.03em;
+      line-height:1.05;
+      color:inherit;
+    }
+
+    .settings-help-btn-subtitle{
+      font-size:12px;
+      font-weight:560;
+      line-height:1.35;
+      color:rgba(255,255,255,.66);
+      max-width:36ch;
+    }
+
+    .settings-help-btn:hover{
+      transform: translateY(-1px);
+      border-color:color-mix(in srgb, var(--gradient-to) 42%, rgba(255,255,255,.18));
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.11), rgba(255,255,255,.04)),
+        rgba(255,255,255,.04);
+    }
+
+    .settings-help-btn.is-sent{
+      border-color:rgba(34,197,94,.34);
+      background:
+        linear-gradient(180deg, rgba(34,197,94,.2), rgba(16,185,129,.12)),
+        rgba(15,23,42,.22);
+      color:#eafff3;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.12),
+        0 12px 24px rgba(16,185,129,.18);
+    }
+
+    .feedback-modal{
+      width:min(560px, calc(100vw - 32px));
+      padding:24px;
+      border-radius:26px;
+      border:1px solid rgba(255,255,255,.1);
+      background:
+        radial-gradient(110% 120% at 0% 0%, rgba(70,124,255,.16), transparent 42%),
+        linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)),
+        rgba(13,20,31,.98);
+      color:var(--text);
+      box-shadow:
+        0 26px 70px rgba(0,0,0,.44),
+        inset 0 1px 0 rgba(255,255,255,.08);
+    }
+
+    .feedback-modal-header{
+      margin-bottom:18px;
+    }
+
+    .feedback-modal-badge{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:6px 10px;
+      border-radius:999px;
+      background:rgba(255,255,255,.08);
+      border:1px solid rgba(255,255,255,.08);
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:.04em;
+      text-transform:uppercase;
+      color:rgba(255,255,255,.78);
+    }
+
+    .feedback-modal-header h3{
+      margin:14px 0 8px;
+      font-size:24px;
+      line-height:1.05;
+      letter-spacing:-.04em;
+      color:#fff;
+    }
+
+    .feedback-modal-header p{
+      margin:0;
+      color:rgba(255,255,255,.68);
+      font-size:14px;
+      line-height:1.55;
+    }
+
+    .feedback-field{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      margin-top:14px;
+    }
+
+    .feedback-field span{
+      font-size:13px;
+      font-weight:700;
+      color:rgba(255,255,255,.82);
+    }
+
+    .feedback-input,
+    .feedback-textarea{
+      width:100%;
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:16px;
+      background:rgba(255,255,255,.04);
+      color:var(--text);
+      font:inherit;
+      outline:none;
+      transition:border-color .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+
+    .feedback-input{
+      min-height:48px;
+      padding:0 14px;
+    }
+
+    .feedback-textarea{
+      min-height:160px;
+      resize:vertical;
+      padding:14px;
+      line-height:1.5;
+    }
+
+    .feedback-input::placeholder,
+    .feedback-textarea::placeholder{
+      color:rgba(255,255,255,.38);
+    }
+
+    .feedback-input:focus,
+    .feedback-textarea:focus{
+      border-color:color-mix(in srgb, var(--gradient-to) 60%, rgba(255,255,255,.18));
+      box-shadow:0 0 0 4px rgba(70,124,255,.14);
+      background:rgba(255,255,255,.06);
+    }
+
+    .feedback-meta{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      margin-top:16px;
+    }
+
+    .feedback-meta-chip{
+      display:inline-flex;
+      align-items:center;
+      min-height:34px;
+      padding:0 12px;
+      border-radius:999px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.08);
+      color:rgba(255,255,255,.72);
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:.01em;
+    }
+
+    .feedback-status{
+      min-height:22px;
+      margin-top:14px;
+      font-size:13px;
+      font-weight:600;
+      color:#fca5a5;
+    }
+
+    .feedback-status.success{
+      color:#86efac;
+    }
+
+    .feedback-actions{
+      display:flex;
+      justify-content:flex-end;
+      gap:10px;
+      margin-top:18px;
+    }
+
+    .feedback-secondary-btn,
+    .feedback-primary-btn{
+      border:none;
+      border-radius:14px;
+      min-height:46px;
+      padding:0 18px;
+      font:inherit;
+      font-weight:700;
+      cursor:pointer;
+      transition:transform .18s ease, filter .18s ease, opacity .18s ease;
+    }
+
+    .feedback-secondary-btn{
+      background:rgba(255,255,255,.08);
+      color:rgba(255,255,255,.88);
+      border:1px solid rgba(255,255,255,.08);
+    }
+
+    .feedback-primary-btn{
+      background:linear-gradient(135deg, #3b82f6, #2563eb);
+      color:#fff;
+      box-shadow:0 14px 28px rgba(37,99,235,.28);
+    }
+
+    .feedback-secondary-btn:hover,
+    .feedback-primary-btn:hover{
+      transform:translateY(-1px);
+      filter:brightness(1.04);
+    }
+
+    .feedback-secondary-btn:disabled,
+    .feedback-primary-btn:disabled{
+      opacity:.7;
+      cursor:wait;
+      transform:none;
+      filter:none;
     }
 
     .settings-card{
@@ -3637,6 +4344,17 @@
       line-height:1.35;
     }
 
+    .settings-footnote-important{
+      color:#fb923c;
+      font-weight:700;
+    }
+
+    .settings-permission-ok{
+      color:#4ade80;
+      font-weight:780;
+      letter-spacing:.01em;
+    }
+
     .settings-empty{
       display:flex;
       align-items:center;
@@ -3729,6 +4447,19 @@
       color:#172033;
     }
 
+    :root.light-mode .settings-mobile-nav-toggle{
+      border-color:rgba(33,65,125,.12);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.9), rgba(245,248,255,.86)),
+        rgba(255,255,255,.86);
+      color:#172033;
+    }
+
+    :root.light-mode .settings-mobile-nav-current-icon{
+      background:rgba(255,255,255,.75);
+      border-color:rgba(33,65,125,.08);
+    }
+
     :root.light-mode .settings-hero{
       background:
         linear-gradient(180deg, rgba(255,255,255,.95), rgba(245,248,255,.86)),
@@ -3748,53 +4479,296 @@
       color:#664100;
     }
 
+    :root.light-mode .settings-account-avatar{
+      border-color:rgba(15,23,42,.12);
+      background:rgba(255,255,255,.9);
+      box-shadow:
+        0 14px 26px rgba(15,23,42,.12),
+        inset 0 1px 0 rgba(255,255,255,.95);
+    }
+
+    :root.light-mode .settings-account-mail{
+      color:rgba(15,23,42,.58);
+    }
+
+    :root.light-mode .settings-account-stat{
+      border-color:rgba(15,23,42,.1);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.9), rgba(255,255,255,.7)),
+        rgba(255,255,255,.84);
+    }
+
+    :root.light-mode .settings-account-stat-label{
+      color:rgba(15,23,42,.52);
+    }
+
+    :root.light-mode .settings-help-desc{
+      color:rgba(15,23,42,.64);
+    }
+
+    :root.light-mode .settings-help-btn{
+      border-color:rgba(15,23,42,.1);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.95), rgba(245,248,255,.9)),
+        rgba(255,255,255,.86);
+      color:#172033;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.95),
+        0 10px 18px rgba(15,23,42,.08);
+    }
+
+    :root.light-mode .settings-help-btn-subtitle{
+      color:rgba(23,32,51,.62);
+    }
+
+    :root.light-mode .settings-help-btn.is-sent{
+      border-color:rgba(22,163,74,.24);
+      background:
+        linear-gradient(180deg, rgba(236,253,245,.96), rgba(220,252,231,.92)),
+        rgba(255,255,255,.9);
+      color:#166534;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.95),
+        0 12px 20px rgba(22,163,74,.12);
+    }
+
+    :root.light-mode .feedback-modal{
+      background:
+        radial-gradient(110% 120% at 0% 0%, rgba(86,139,255,.12), transparent 42%),
+        linear-gradient(180deg, rgba(255,255,255,.98), rgba(243,247,255,.94)),
+        #fff;
+      color:#172033;
+      border-color:rgba(15,23,42,.08);
+      box-shadow:
+        0 28px 70px rgba(15,23,42,.16),
+        inset 0 1px 0 rgba(255,255,255,.95);
+    }
+
+    :root.light-mode .feedback-modal-badge,
+    :root.light-mode .feedback-meta-chip,
+    :root.light-mode .feedback-secondary-btn{
+      background:rgba(15,23,42,.04);
+      border-color:rgba(15,23,42,.08);
+      color:rgba(23,32,51,.72);
+    }
+
+    :root.light-mode .feedback-modal-header h3,
+    :root.light-mode .feedback-field span{
+      color:#172033;
+    }
+
+    :root.light-mode .feedback-modal-header p{
+      color:rgba(23,32,51,.64);
+    }
+
+    :root.light-mode .feedback-input,
+    :root.light-mode .feedback-textarea{
+      border-color:rgba(15,23,42,.1);
+      background:rgba(255,255,255,.94);
+      color:#172033;
+    }
+
+    :root.light-mode .feedback-input::placeholder,
+    :root.light-mode .feedback-textarea::placeholder{
+      color:rgba(23,32,51,.36);
+    }
+
+    :root.light-mode .settings-permission-ok{
+      color:#15803d;
+    }
+
+    :root.light-mode .settings-footnote-important{
+      color:#c2410c;
+    }
+
     @media (max-width: 980px){
+      .settings-overlay{
+        padding:14px;
+        align-items:stretch;
+      }
+
       .settings-shell{
-        width:min(100vw - 20px, 900px);
-        height:min(100vh - 20px, 880px);
+        width:min(100vw - 28px, 900px);
+        height:min(100dvh - 28px, 880px);
+        max-height:calc(100dvh - 28px);
         grid-template-columns:1fr;
+        grid-template-rows:auto minmax(0,1fr);
       }
 
       .settings-sidebar{
+        padding:16px 14px 12px;
+        gap:12px;
         border-right:none;
         border-bottom:1px solid rgba(255,255,255,.07);
       }
 
+      .settings-nav{
+        margin-top:0;
+        flex-direction:row;
+        gap:8px;
+        overflow-x:auto;
+        padding-bottom:2px;
+        scrollbar-width:none;
+      }
+
+      .settings-nav::-webkit-scrollbar{
+        display:none;
+      }
+
+      .settings-nav-item{
+        flex:0 0 auto;
+        min-width:max-content;
+        padding:10px 12px;
+        border-radius:14px;
+        font-size:14px;
+      }
+
+      .settings-nav-icon{
+        width:34px;
+        height:34px;
+        border-radius:10px;
+      }
+
       .settings-main{
-        padding:16px;
+        min-height:0;
+        padding:14px;
+      }
+
+      .settings-panel{
+        padding-right:0;
+      }
+
+      .settings-close{
+        top:12px;
+        right:12px;
+        width:42px;
+        height:42px;
       }
 
       .settings-hero h2{
         font-size:28px;
       }
+
+      .settings-account-name{
+        font-size:24px;
+      }
+
+      .settings-help-actions{
+        grid-template-columns:1fr;
+      }
+
+      .settings-help-btn{
+        min-height:88px;
+      }
+
+      .settings-help-btn-title{
+        font-size:18px;
+      }
+    }
+
+    @media (max-width: 900px){
+      .settings-mobile-nav-toggle{
+        display:flex;
+      }
+
+      .settings-nav{
+        display:none;
+        flex-direction:column;
+        gap:8px;
+        margin-top:10px;
+        overflow:visible;
+        padding-bottom:0;
+      }
+
+      .settings-nav.mobile-open{
+        display:flex;
+      }
+
+      .settings-nav-item{
+        width:100%;
+        min-width:0;
+        padding:10px 12px;
+        border-radius:14px;
+      }
+
+      .settings-nav-icon{
+        width:34px;
+        height:34px;
+        border-radius:10px;
+      }
     }
 
     @media (max-width: 640px){
       .settings-overlay{
-        padding:10px;
+        padding:8px;
       }
 
       .settings-shell{
         width:100%;
         height:100%;
-        border-radius:24px;
+        max-height:100dvh;
+        border-radius:22px;
       }
 
       .settings-sidebar{
-        padding:18px 14px 14px;
+        padding:14px 12px 10px;
+      }
+
+      .settings-profile{
+        gap:10px;
+      }
+
+      .settings-profile-avatar{
+        width:44px;
+        height:44px;
+      }
+
+      .settings-profile-name{
+        font-size:14px;
+      }
+
+      .settings-nav{
+        gap:6px;
       }
 
       .settings-nav-item{
-        padding:10px 12px;
+        padding:8px 10px;
+        border-radius:12px;
+        font-size:13px;
+      }
+
+      .settings-nav-icon{
+        width:30px;
+        height:30px;
+        border-radius:9px;
+      }
+
+      .settings-main{
+        padding:12px;
+      }
+
+      .settings-close{
+        top:10px;
+        right:10px;
+        width:38px;
+        height:38px;
       }
 
       .settings-hero{
-        margin-top:72px;
+        margin-top:56px;
         padding:16px 14px 14px;
       }
 
       .settings-hero h2{
         font-size:24px;
+      }
+
+      .settings-account-name{
+        font-size:22px;
+      }
+
+      .settings-account-stats-grid{
+        grid-template-columns:1fr;
       }
 
       .settings-row{
@@ -3850,6 +4824,200 @@
       transform: translateY(-1px);
     }
 
+    .project-dialog-modal{
+      width:min(480px, 92vw);
+      padding:24px 22px 20px;
+      border-radius:22px;
+      border:1px solid rgba(255,255,255,.12);
+      background:
+        radial-gradient(120% 140% at 0% 0%, rgba(73,124,255,.18), transparent 40%),
+        linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)),
+        rgba(15,22,36,.96);
+      box-shadow:
+        0 32px 80px rgba(0,0,0,.52),
+        inset 0 1px 0 rgba(255,255,255,.08);
+      color:var(--text);
+      animation: pop .16s ease-out;
+    }
+
+    .project-dialog-icon{
+      width:52px;
+      height:52px;
+      border-radius:16px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:rgba(66,133,244,.16);
+      border:1px solid rgba(96,165,250,.34);
+      color:#bfdbfe;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.18),
+        0 14px 28px rgba(37,99,235,.22);
+    }
+
+    .project-dialog-icon svg{
+      width:24px;
+      height:24px;
+    }
+
+    .project-dialog-modal h3{
+      margin:14px 0 8px;
+      font-size:28px;
+      line-height:1;
+      letter-spacing:-.04em;
+      color:#fff;
+    }
+
+    .project-dialog-modal p{
+      margin:0;
+      color:rgba(255,255,255,.7);
+      font-size:13px;
+      line-height:1.45;
+    }
+
+    .project-dialog-field{
+      display:block;
+      margin-top:14px;
+      margin-bottom:8px;
+      font-size:12px;
+      font-weight:700;
+      color:rgba(255,255,255,.82);
+      letter-spacing:.02em;
+    }
+
+    .project-dialog-input{
+      width:100%;
+      min-height:48px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.04);
+      color:var(--text);
+      padding:0 14px;
+      font:inherit;
+      outline:none;
+      transition:border-color .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+
+    .project-dialog-input::placeholder{
+      color:rgba(255,255,255,.38);
+    }
+
+    .project-dialog-input:focus{
+      border-color:color-mix(in srgb, var(--gradient-to) 60%, rgba(255,255,255,.22));
+      box-shadow:0 0 0 4px rgba(70,124,255,.16);
+      background:rgba(255,255,255,.06);
+    }
+
+    .project-dialog-error{
+      margin-top:8px;
+      min-height:18px;
+      font-size:12px;
+      font-weight:600;
+      color:#fca5a5;
+    }
+
+    .project-dialog-actions{
+      margin-top:10px;
+      display:flex;
+      gap:10px;
+    }
+
+    .project-dialog-primary,
+    .project-dialog-danger{
+      flex:1;
+      min-height:46px;
+      border:none;
+      border-radius:12px;
+      color:#fff;
+      font:inherit;
+      font-weight:740;
+      cursor:pointer;
+      transition:transform .16s ease, filter .16s ease;
+    }
+
+    .project-dialog-primary{
+      background:linear-gradient(135deg, #3b82f6, #2563eb);
+      box-shadow:0 14px 28px rgba(37,99,235,.26);
+    }
+
+    .project-dialog-danger{
+      background:linear-gradient(135deg, #ef4444, #dc2626);
+      box-shadow:0 14px 28px rgba(220,38,38,.24);
+    }
+
+    .project-dialog-primary:hover,
+    .project-dialog-danger:hover{
+      transform:translateY(-1px);
+      filter:brightness(1.04);
+    }
+
+    .project-dialog-modal-danger .project-dialog-icon{
+      background:rgba(239,68,68,.16);
+      border-color:rgba(248,113,113,.36);
+      color:#fecaca;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.18),
+        0 14px 28px rgba(220,38,38,.22);
+    }
+
+    .project-dialog-modal-danger p strong{
+      color:#fecaca;
+      font-weight:760;
+    }
+
+    :root.light-mode .project-dialog-modal{
+      background:
+        radial-gradient(120% 140% at 0% 0%, rgba(86,139,255,.12), transparent 40%),
+        linear-gradient(180deg, rgba(255,255,255,.98), rgba(243,247,255,.94)),
+        #fff;
+      border-color:rgba(15,23,42,.1);
+      box-shadow:
+        0 28px 70px rgba(15,23,42,.16),
+        inset 0 1px 0 rgba(255,255,255,.95);
+      color:#172033;
+    }
+
+    :root.light-mode .project-dialog-modal h3{
+      color:#172033;
+    }
+
+    :root.light-mode .project-dialog-modal p{
+      color:rgba(23,32,51,.66);
+    }
+
+    :root.light-mode .project-dialog-field{
+      color:rgba(23,32,51,.82);
+    }
+
+    :root.light-mode .project-dialog-input{
+      border-color:rgba(15,23,42,.1);
+      background:rgba(255,255,255,.94);
+      color:#172033;
+    }
+
+    :root.light-mode .project-dialog-input::placeholder{
+      color:rgba(23,32,51,.38);
+    }
+
+    :root.light-mode .project-dialog-modal-danger p strong{
+      color:#b91c1c;
+    }
+
+    @media (max-width: 640px){
+      .project-dialog-modal{
+        padding:20px 16px 16px;
+        border-radius:18px;
+      }
+
+      .project-dialog-modal h3{
+        font-size:24px;
+      }
+
+      .project-dialog-actions{
+        flex-direction:column;
+      }
+    }
+
     .floating-actions{
       position: fixed;
       top: 30px;
@@ -3861,137 +5029,341 @@
       z-index:150;
     }
 
-    .corner-container{
-      position:fixed;      
-      top:20px;
-      right:30px;
-      transform-origin: right center;   /* 🔥 clave */
-
-      display:flex;
-      align-items:center;
-      gap:22px;
-
-      padding:12px 20px;
-      padding-right: 70px;
-
-      border-radius: 999px;
-
-      background:
-        radial-gradient(140% 120% at 0% 0%, rgba(255,255,255,.08), transparent 45%),
-        rgba(18,18,20,.72);
-      backdrop-filter: blur(22px) saturate(140%);
-      -webkit-backdrop-filter: blur(22px) saturate(140%);
-
-      border:1px solid color-mix(in srgb, var(--gradient-to) 12%, rgba(255,255,255,.08));
-
-      box-shadow:
-        inset 0 1px 0 rgba(255,255,255,.12),
-        0 20px 60px rgba(0,0,0,.6);
-
-      z-index:120;
-      
-      height: 72px;
-      width: 320px; /* o el ancho real que ocupa expandido */
-      transition: width .55s cubic-bezier(.16,1,.3,1);
-    }
-
-    .corner-container.collapsed {
-      width: 74px;               /* mismo ancho que antes */
-      padding: 12px;             /* mantenemos fondo visible */
-      gap: 0;
-      justify-content: flex-end; /* botón pegado a la derecha */
-      overflow: hidden;
-      border-radius: 999px;
-    }
-
-    /* Ocultar TODOS los corner-btn cuando está colapsado */
-    .corner-container.collapsed:not(.expanded) .corner-btn {
-      opacity: 0;
-      transform: translateX(15px);
-      pointer-events: none;
-      visibility: hidden;
-      transition: none;
-    }
-
-    .corner-container.closing .corner-btn{
-      opacity: 0;
-      visibility: hidden;
-      pointer-events: none;
-      transition: none;
-    }
-
-    /* Estado expandido */
-    .corner-container.expanded {
-      width: 320px;
-    }
-
-    /* Mostrar botones cuando está abierto */
-    .corner-container.expanded .corner-btn {
-      opacity: 1;
-      transform: translateX(0);
-      pointer-events: auto;
-    }
-
     .corner-btn{
       width:36px;
       height:36px;
       border-radius:999px;
-
-      background:transparent;
       border:1px solid transparent;
-
+      background:rgba(255,255,255,.06);
       display:flex;
       align-items:center;
       justify-content:center;
-
       cursor:pointer;
       transition:.2s ease;
-      flex:0 0 36px;
     }
 
-    .corner-btn img{
+    .corner-btn svg{
       width:20px;
       height:20px;
-      opacity:.7;
+      color: rgba(255,255,255,.72);
       transition:.2s ease;
     }
 
     .corner-btn:hover{
-      background:rgba(255,255,255,.08);
-      border-color: color-mix(in srgb, var(--gradient-to) 18%, rgba(255,255,255,.18));
+      background:rgba(255,255,255,.12);
+      border-color:rgba(255,255,255,.22);
     }
 
-    .corner-btn:hover img{
+    .corner-btn:hover svg{
+      color:#fff;
+    }
+
+    .corner-btn.active-style{
+      background:rgba(255,255,255,.12);
+    }
+
+    .corner-container{
+      position:fixed;
+      top:20px;
+      right:30px;
+      z-index:120;
+
+      display:flex;
+      flex-direction:column;
+      align-items:flex-end;
+      gap:0;
+
+      width:244px;
+      height:auto;
+      padding:0;
+      background:transparent;
+      border:none;
+      box-shadow:none;
+      backdrop-filter:none;
+      -webkit-backdrop-filter:none;
+    }
+
+    .corner-dropdown{
+      position:absolute;
+      top:calc(100% - 1px);
+      right:0;
+      width:100%;
+      max-width:100%;
+      border-radius:0 0 16px 16px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.05), transparent 38%),
+        var(--card2);
+      color:var(--text);
+      border:1px solid var(--border);
+      border-top:none;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.12),
+        0 24px 52px rgba(0,0,0,.5);
+      backdrop-filter: blur(22px) saturate(145%);
+      -webkit-backdrop-filter: blur(22px) saturate(145%);
+      overflow:hidden;
+      transform-origin: top right;
+      transition: opacity .18s ease, transform .22s ease;
+    }
+
+    .corner-dropdown-arrow{
+      display:none;
+    }
+
+    .corner-container.collapsed .corner-dropdown{
+      opacity:0;
+      transform: translateY(-8px) scale(.98);
+      pointer-events:none;
+      visibility:hidden;
+    }
+
+    .corner-container.collapsed .login-circle{
+      justify-content:center;
+      padding:0 14px;
+    }
+
+    .corner-container.expanded .login-circle{
+      justify-content:center;
+      padding:0 14px;
+    }
+
+    .corner-container.collapsed .login-circle .profile-trigger-copy{
+      flex:0 1 auto;
+      max-width: clamp(120px, 40vw, 190px);
+      align-items:center;
+    }
+
+    .corner-container.expanded .login-circle .profile-trigger-copy{
+      flex:0 1 auto;
+      max-width: clamp(120px, 40vw, 190px);
+      align-items:center;
+    }
+
+    .corner-container.collapsed .login-circle .profile-trigger-name{
+      text-align:center;
+    }
+
+    .corner-container.expanded .login-circle .profile-trigger-name{
+      text-align:center;
+    }
+
+    .corner-container.collapsed .login-circle .profile-trigger-level-row{
+      justify-content:center;
+    }
+
+    .corner-container.expanded .login-circle .profile-trigger-level-row{
+      justify-content:center;
+    }
+
+    .corner-container.expanded .corner-dropdown{
       opacity:1;
-      transform:scale(1.05);
+      transform: translateY(0) scale(1);
+      pointer-events:auto;
+      visibility:visible;
+      border:1px solid transparent;
+      border-top:none;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.05), transparent 38%),
+        linear-gradient(var(--card2), var(--card2)) padding-box,
+        var(--app-gradient) border-box;
     }
 
-    #closeMenuBtn svg{
-      color: rgba(255,255,255,.6);
-      transition: .2s ease;
+    .corner-container.expanded .login-circle{
+      border-radius:16px 16px 0 0;
+      border-bottom:none;
+      transform:none;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.18),
+        0 10px 28px rgba(0,0,0,.34);
     }
 
-    #closeMenuBtn:hover svg{
-      color: white;
+    .corner-menu-quick-row{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      align-items:center;
+      gap:8px;
+      padding:10px 12px;
+      position:relative;
     }
 
-    .corner-container svg{
-      width:20px;
-      height:20px;
-      color: rgba(255,255,255,.6);
-      transition:.2s ease;
+    .corner-menu-quick-row::after{
+      content:"";
+      position:absolute;
+      left:50%;
+      top:8px;
+      bottom:8px;
+      width:1px;
+      transform: translateX(-50%);
+      background: color-mix(in srgb, var(--border) 84%, transparent);
+      pointer-events:none;
     }
 
-    .corner-container button:hover svg{
-      color:white;
+    .corner-menu-quick-slot{
+      min-height:auto;
+      border:none;
+      border-radius:0;
+      background:none;
+      color:var(--text);
+      padding:0;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      cursor:pointer;
+      transition: transform .18s ease, opacity .18s ease;
     }
 
-    .corner-btn.active-style {
-      background: rgba(255,255,255,.06);
+    .corner-menu-quick-slot:hover{
+      transform: translateY(-1px);
     }
 
-    .corner-btn.active-style svg {
-      color: white;
+    .corner-menu-quick-slot.level-slot{
+      cursor:default;
+    }
+
+    .corner-menu-quick-slot.level-slot:hover{
+      transform:none;
+    }
+
+    .corner-menu-quick-slot.settings-quick{
+      flex-direction:column;
+      justify-content:center;
+      align-items:center;
+      gap:3px;
+      text-align:center;
+      color:var(--text);
+      font-weight:600;
+      letter-spacing:.2px;
+    }
+
+    .corner-menu-quick-slot.settings-quick svg{
+      width:40px;
+      height:40px;
+      color:color-mix(in srgb, var(--text) 72%, transparent);
+    }
+
+    .corner-menu-quick-slot.settings-quick span{
+      font-size:9px;
+      line-height:1;
+      font-weight:700;
+      letter-spacing:.9px;
+    }
+
+    .corner-menu-sep{
+      height:1px;
+      background:color-mix(in srgb, var(--border) 86%, transparent);
+      margin:0;
+    }
+
+    .corner-menu-item{
+      width:100%;
+      border:none;
+      background:none;
+      color:var(--text);
+      padding:11px 14px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      font-size:14px;
+      text-align:left;
+      cursor:pointer;
+      transition: background .15s ease;
+    }
+
+    .corner-menu-item:hover{
+      background: color-mix(in srgb, var(--gradient-to) 14%, rgba(255,255,255,.06));
+    }
+
+    .corner-menu-item svg{
+      width:16px;
+      height:16px;
+      color:color-mix(in srgb, var(--text) 62%, transparent);
+      flex:0 0 16px;
+    }
+
+    .corner-menu-item-main{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      min-width:0;
+    }
+
+    .corner-menu-item-main svg{
+      width:18px;
+      height:18px;
+      flex:0 0 18px;
+    }
+
+    .corner-menu-item-main span{
+      white-space:nowrap;
+    }
+
+    .corner-menu-item-state{
+      font-size:11px;
+      font-weight:700;
+      letter-spacing:.8px;
+      opacity:.72;
+      text-transform:uppercase;
+    }
+
+    .corner-menu-item-theme{
+      border-top:1px solid color-mix(in srgb, var(--border) 86%, transparent);
+    }
+
+    .corner-theme-preview{
+      width:16px;
+      height:16px;
+      flex:0 0 16px;
+      border-width:1px;
+      opacity:.95;
+      box-shadow:
+        inset 0 1px 2px rgba(255,255,255,.22),
+        inset 0 -2px 3px rgba(0,0,0,.35);
+    }
+    .corner-mode-preview{
+      width:16px;
+      height:16px;
+      flex:0 0 16px;
+      border-radius:50%;
+      border:1px solid rgba(255,255,255,.56);
+      background:
+        radial-gradient(circle at 30% 30%, rgba(255,255,255,.42), transparent 40%),
+        linear-gradient(145deg, #0c1527, #17263e 45%, #050a13);
+      box-shadow:
+        inset 0 1px 2px rgba(255,255,255,.22),
+        inset 0 -2px 3px rgba(0,0,0,.45);
+    }
+    :root.light-mode .corner-mode-preview{
+      border-color: rgba(15,23,42,.22);
+      background:
+        radial-gradient(circle at 35% 30%, rgba(255,255,255,.95), transparent 40%),
+        linear-gradient(145deg, #f7fbff, #e7effb 45%, #d8e4f8);
+      box-shadow:
+        inset 0 1px 2px rgba(255,255,255,.95),
+        inset 0 -2px 3px rgba(148,163,184,.26);
+    }
+
+    .mobile-only-sep{
+      display:none;
+    }
+    #modeToggleTopMobile .mode-icon-sun{
+      display:none;
+    }
+    :root.light-mode #modeToggleTopMobile .mode-icon-moon{
+      display:none;
+    }
+    :root.light-mode #modeToggleTopMobile .mode-icon-sun{
+      display:block;
+    }
+
+    .corner-menu-item.danger{
+      color:#ff6b6b;
+      font-weight:600;
+    }
+
+    #profileLogoutBtn{
+      justify-content:center;
+      text-align:center;
     }
 
     .app-toast{
@@ -4200,11 +5572,225 @@
       display:block;
     }
 
-    .level-button{
+    .desktop-bottom-nav{
+      display:none;
+    }
 
-      position: fixed;
-      top: 18px;
-      right: 110px;
+    .desktop-bottom-nav-btn{
+      appearance:none;
+      border:0;
+      background:transparent;
+      color:var(--text);
+      cursor:pointer;
+    }
+
+    @media (min-width: 901px) {
+      .sidebar{
+        margin:16px 0 calc(16px + var(--desktop-bottom-nav-reserved)) 16px;
+        height:calc(100vh - 32px - var(--desktop-bottom-nav-reserved));
+      }
+
+      .main-area{
+        padding-bottom: var(--desktop-bottom-nav-reserved);
+      }
+
+      .board-wrapper{
+        padding-bottom:10px;
+      }
+
+      .board-scroll{
+        padding-bottom:4px;
+      }
+
+      .desktop-bottom-nav{
+        position:fixed;
+        left:16px;
+        right:16px;
+        bottom:10px;
+        z-index:205;
+
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:16px;
+        min-height:78px;
+        padding:10px 20px;
+
+        border-radius:20px;
+        border:1px solid rgba(255,255,255,.08);
+        background:linear-gradient(180deg, rgba(16,17,21,.97), rgba(10,11,15,.98));
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.04),
+          0 14px 28px rgba(0,0,0,.4);
+      }
+
+      .desktop-bottom-nav-left{
+        display:flex;
+        align-items:center;
+        gap:10px;
+      }
+
+      .desktop-bottom-nav-btn{
+        height:44px;
+        border-radius:12px;
+        border:1px solid transparent;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        gap:8px;
+        padding:0 14px;
+        color:rgba(244,244,245,.56);
+        font-size:14px;
+        font-weight:600;
+        letter-spacing:.1px;
+        transition: background .16s ease, border-color .16s ease, color .16s ease;
+      }
+
+      .desktop-bottom-nav-btn svg{
+        width:18px;
+        height:18px;
+      }
+
+      .desktop-bottom-nav-btn.is-active{
+        color:#f4f5f7;
+        border-color:rgba(255,255,255,.12);
+        background:rgba(255,255,255,.05);
+      }
+
+      .desktop-bottom-nav-btn:hover{
+        color:rgba(244,245,247,.84);
+      }
+
+      .desktop-bottom-nav-right{
+        display:flex;
+        align-items:center;
+        gap:12px;
+      }
+
+      .desktop-help-pill{
+        appearance:none;
+        height:54px;
+        min-width:252px;
+        border-radius:18px;
+        border:1px solid rgba(255,255,255,.1);
+        background:
+          radial-gradient(80% 120% at 95% 50%, color-mix(in srgb, var(--gradient-from) 26%, transparent), transparent 62%),
+          radial-gradient(80% 120% at 100% 50%, color-mix(in srgb, var(--gradient-to) 18%, transparent), transparent 66%),
+          linear-gradient(180deg, rgba(36,38,45,.96), rgba(26,28,34,.98));
+        color:#f4f5f7;
+        display:inline-flex;
+        align-items:center;
+        gap:10px;
+        padding:0 14px;
+        cursor:pointer;
+        transition: border-color .16s ease, transform .16s ease;
+      }
+
+      .desktop-help-pill:hover{
+        border-color:rgba(255,255,255,.18);
+        transform:translateY(-1px);
+      }
+
+      .desktop-help-counter{
+        width:36px;
+        height:36px;
+        border-radius:999px;
+        border:2px solid rgba(255,255,255,.14);
+        display:grid;
+        place-items:center;
+        font-size:13px;
+        font-weight:700;
+        color:rgba(255,255,255,.86);
+      }
+
+      .desktop-help-label{
+        font-size:14px;
+        font-weight:600;
+        color:#f4f5f7;
+      }
+
+      .desktop-help-icon{
+        width:22px;
+        height:22px;
+        color:rgba(255,255,255,.9);
+      }
+
+      .desktop-mascot-btn{
+        appearance:none;
+        width:54px;
+        height:54px;
+        border-radius:15px;
+        border:1px solid rgba(255,255,255,.14);
+        background:
+          radial-gradient(140% 120% at 30% 0%, rgba(255,255,255,.24), transparent 42%),
+          linear-gradient(135deg, #c084fc 0%, #8b5cf6 48%, #3b82f6 100%);
+        display:grid;
+        place-items:center;
+        cursor:pointer;
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.2),
+          0 10px 18px rgba(0,0,0,.32);
+        transition: transform .16s ease, box-shadow .16s ease;
+      }
+
+      .desktop-mascot-btn:hover{
+        transform:translateY(-1px);
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,.26),
+          0 14px 22px rgba(0,0,0,.34);
+      }
+
+      .desktop-mascot-icon{
+        width:30px;
+        height:30px;
+      }
+
+      .desktop-mascot-face{
+        fill:#120821;
+        opacity:.72;
+      }
+
+      .desktop-mascot-eye{
+        fill:#f8fafc;
+      }
+
+      .desktop-mascot-mouth{
+        stroke:#f8fafc;
+        stroke-width:2;
+        stroke-linecap:round;
+      }
+
+      :root.light-mode .desktop-bottom-nav{
+        border-color:rgba(255,255,255,.1);
+        background:linear-gradient(180deg, rgba(16,17,21,.95), rgba(10,11,15,.98));
+      }
+
+      #modeToggle{
+        display:none;
+      }
+    }
+
+    @media (min-width: 901px) {
+      .desktop-bottom-nav{
+        display:none !important;
+      }
+
+      .sidebar{
+        margin:16px 0 16px 16px !important;
+        height:calc(100vh - 32px) !important;
+      }
+
+      .main-area{
+        padding-bottom:0 !important;
+      }
+
+      #modeToggle{
+        display:flex !important;
+      }
+    }
+
+    .level-button{
+      position: relative;
 
       width: 76px;
       height: 76px;
@@ -5138,6 +6724,55 @@
       width:100%;
     }
 
+    @media (max-width: 640px){
+      .achievement-unlock-overlay{
+        align-items:flex-end;
+        padding:12px 12px calc(12px + env(safe-area-inset-bottom));
+      }
+
+      .achievement-unlock-card{
+        width:100%;
+        max-width:100%;
+        padding:18px 14px 14px;
+        border-radius:20px;
+        transform: translateY(24px) scale(.98);
+      }
+
+      .achievement-unlock-badge{
+        width:46px;
+        height:46px;
+        margin-bottom:10px;
+      }
+
+      .achievement-unlock-badge svg{
+        width:22px;
+        height:22px;
+      }
+
+      .achievement-unlock-title{
+        font-size:11px;
+      }
+
+      .achievement-unlock-name{
+        font-size:16px;
+        line-height:1.2;
+      }
+
+      .achievement-unlock-desc{
+        font-size:12px;
+        line-height:1.35;
+      }
+
+      .achievement-unlock-reward{
+        margin-top:10px;
+        font-size:12px;
+      }
+
+      .achievement-unlock-btn{
+        margin-top:14px;
+      }
+    }
+
     .task.done{
       opacity:.75;
     }
@@ -5198,7 +6833,17 @@
       background:rgba(255,255,255,.08);
     }
 
-    #modeToggleMobile{
+    .mobile-sidebar-actions{
+      display:none;
+      width:100%;
+      margin-top:10px;
+      gap:10px;
+      align-items:center;
+      justify-content:flex-start;
+    }
+
+    #modeToggleMobile,
+    #settingsToggleMobile{
       width:42px;
       height:42px;
       border-radius:12px;
@@ -5219,12 +6864,20 @@
       color:white;
     }
 
-    #modeToggleMobile:active{
+    #modeToggleMobile:active,
+    #settingsToggleMobile:active{
       transform:scale(.95);
     }
 
-    #modeToggleMobile{
+    #modeToggleMobile,
+    #settingsToggleMobile{
       display:none;
+    }
+
+    #settingsToggleMobile svg{
+      width:20px;
+      height:20px;
+      display:block;
     }
 
     .projects-container{
@@ -5259,6 +6912,24 @@
       overflow:visible;
       flex:none;
       max-height: none;
+    }
+
+    .project-col .col-topline.no-date{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+
+    .project-col .col-topline.no-date .col-title{
+      flex:1 1 auto;
+      min-width:0;
+    }
+
+    .project-col .project-delete{
+      margin-top:0;
+      margin-left:4px;
+      flex:0 0 auto;
     }
 
     .project-col,
@@ -5572,8 +7243,8 @@
 
     .save-status{
       position:absolute;
-      top:105px;
-      right:35px;
+      top:88px;
+      right:30px;
       font-size:14px;
       font-weight:600;
       color:#9c9c9c;
@@ -5804,6 +7475,29 @@
           0 12px 30px rgba(0,0,0,.08),
           0 4px 10px rgba(0,0,0,.04),
           inset 0 1px 0 rgba(255,255,255,.6);
+      }
+
+      .col-head{
+        padding:18px 16px 14px;
+      }
+
+      .col-topline.has-date{
+        column-gap:8px;
+      }
+
+      .col-topline-spacer{
+        width:86px;
+      }
+
+      .col-day-number{
+        font-size:clamp(1.04rem, 5.4vw, 1.32rem);
+      }
+
+      .pill.today{
+        min-width:86px;
+        min-height:32px;
+        font-size:12px;
+        padding:7px 14px;
       }
 
       .task:hover{
@@ -6115,8 +7809,56 @@
         box-shadow: none;
     }
 
+      .corner-container{
+        top: 12px;
+        right: 10px;
+        width: min(86vw, 236px);
+      }
+
+      .login-circle{
+        width: 100%;
+        height: 56px;
+        padding: 0 10px 0 8px;
+      }
+
+      .login-circle .profile-trigger-avatar{
+        width: 30px;
+        height: 30px;
+        flex: 0 0 30px;
+      }
+
+      .login-circle .profile-trigger-name{
+        font-size: 14px;
+      }
+
+      .login-circle .profile-trigger-level-text{
+        font-size: 8px;
+      }
+
+      .corner-dropdown{
+        width: 100%;
+      }
+
+      .corner-menu-quick-row{
+        padding:10px;
+        gap:6px;
+      }
+
+      .corner-menu-quick-slot{
+        min-height:auto;
+        padding:0;
+      }
+
+      .corner-menu-quick-slot.settings-quick span{
+        font-size:8px;
+      }
+
       .mobile-only-btn {
         display: flex;
+      }
+
+      .mobile-only-sep{
+        display:block;
       }
 
       .board-title{
@@ -6157,13 +7899,12 @@
           display:block;
       }
 
-      #modeToggleMobile{
+      .mobile-sidebar-actions{
         display:flex;
-        align-items: center;
-        justify-content: center;
       }
 
-      #modeToggleMobile{
+      #modeToggleMobile,
+      #settingsToggleMobile{
           display:flex;
 
           width:42px;
@@ -6182,6 +7923,10 @@
           cursor:pointer;
 
           transition:all .15s ease;
+      }
+
+      #settingsToggleMobile{
+        flex:0 0 auto;
       }
 
       #modeIconMobile svg{
@@ -6328,6 +8073,12 @@
 
   <div id="settingsOverlay" class="settings-overlay">
     <div class="settings-shell">
+      <button id="settingsCloseBtn" class="settings-close" aria-label="Cerrar ajustes">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+
       <aside class="settings-sidebar">
         <div class="settings-profile">
           <img id="settingsProfileAvatar" class="settings-profile-avatar" src="/flav-icon.png" alt="Perfil">
@@ -6337,17 +8088,17 @@
           </div>
         </div>
 
-        <nav class="settings-nav">
-          <button class="settings-nav-item" data-settings-panel="general">
-            <span class="settings-nav-icon">
-              <svg viewBox="0 0 24 24" fill="none">
-                <path d="M4 7C4 5.89543 4.89543 5 6 5H18C19.1046 5 20 5.89543 20 7V17C20 18.1046 19.1046 19 18 19H6C4.89543 19 4 18.1046 4 17V7Z" stroke="currentColor" stroke-width="1.8"/>
-                <path d="M8 9H16M8 13H13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-              </svg>
-            </span>
-            General
-          </button>
+        <button id="settingsMobileNavToggle" class="settings-mobile-nav-toggle" type="button" aria-expanded="false" aria-controls="settingsNav">
+          <span id="settingsMobileNavCurrentIcon" class="settings-mobile-nav-current-icon" aria-hidden="true"></span>
+          <span id="settingsMobileNavCurrentLabel" class="settings-mobile-nav-current-label">Cuenta</span>
+          <span class="settings-mobile-nav-caret" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M7 10L12 15L17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+        </button>
 
+        <nav id="settingsNav" class="settings-nav">
           <button class="settings-nav-item" data-settings-panel="account">
             <span class="settings-nav-icon">
               <svg viewBox="0 0 24 24" fill="none">
@@ -6366,16 +8117,6 @@
               </svg>
             </span>
             Notificaciones
-          </button>
-
-          <button class="settings-nav-item" data-settings-panel="calendar">
-            <span class="settings-nav-icon">
-              <svg viewBox="0 0 24 24" fill="none">
-                <rect x="4" y="5" width="16" height="15" rx="3" stroke="currentColor" stroke-width="1.8"/>
-                <path d="M8 3v4M16 3v4M4 9h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-              </svg>
-            </span>
-            Vincular con Calendario
           </button>
 
           <button class="settings-nav-item" data-settings-panel="achievements">
@@ -6400,37 +8141,146 @@
             </span>
             Seguridad
           </button>
+
+          <button class="settings-nav-item" data-settings-panel="help">
+            <span class="settings-nav-icon">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M12 18h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                <path d="M9.1 9.3a2.9 2.9 0 1 1 4.5 2.4c-.9.62-1.6 1.1-1.6 2.2v.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/>
+              </svg>
+            </span>
+            Ayuda
+          </button>
         </nav>
       </aside>
 
       <section class="settings-main">
-        <button id="settingsCloseBtn" class="settings-close" aria-label="Cerrar ajustes">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </button>
-
-        <div id="settingsPanelGeneral" class="settings-panel">
-          <div class="settings-empty">
-            Próximamente podrás administrar más preferencias desde este espacio.
+        <div id="settingsPanelAccount" class="settings-panel">
+          <div class="settings-hero settings-account-hero">
+            <img id="settingsAccountAvatar" class="settings-account-avatar" src="/flav-icon.png" alt="Cuenta">
+            <h2 id="settingsAccountName" class="settings-account-name">Invitado</h2>
+            <p id="settingsAccountEmail" class="settings-account-mail">Sin sesión iniciada</p>
           </div>
+
+          <div class="settings-card">
+            <div class="settings-account-stats-grid">
+              <div class="settings-account-stat">
+                <span class="settings-account-stat-label">Nivel</span>
+                <span id="settingsAccountLevel" class="settings-account-stat-value">0</span>
+              </div>
+              <div class="settings-account-stat">
+                <span class="settings-account-stat-label">EXP total</span>
+                <span id="settingsAccountExp" class="settings-account-stat-value">0</span>
+              </div>
+              <div class="settings-account-stat">
+                <span class="settings-account-stat-label">Tareas hechas</span>
+                <span id="settingsAccountCompletedTasks" class="settings-account-stat-value">0</span>
+              </div>
+              <div class="settings-account-stat">
+                <span class="settings-account-stat-label">Proyectos</span>
+                <span id="settingsAccountProjects" class="settings-account-stat-value">0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="settings-row-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 3a7 7 0 0 1 7 7v1.5c0 1.7.66 3.33 1.84 4.56L22 17.2H2l1.16-1.14A6.45 6.45 0 0 0 5 11.5V10a7 7 0 0 1 7-7Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M9.5 20a2.5 2.5 0 0 0 5 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+              </div>
+              <div class="settings-row-body">
+                <div class="settings-row-title">Estado de la cuenta</div>
+                <div id="settingsAccountStatus" class="settings-row-desc">Inicia sesión para sincronizar tus tareas y progreso.</div>
+              </div>
+            </div>
+          </div>
+
+          <button id="settingsAccountLogoutBtn" class="settings-account-logout" type="button">
+            Cerrar sesión
+          </button>
         </div>
 
-        <div id="settingsPanelAccount" class="settings-panel">
-          <div class="settings-empty">
-            Este apartado estará disponible pronto para que puedas gestionar tu cuenta.
+        <div id="settingsPanelHelp" class="settings-panel">
+          <div class="settings-hero">
+            <div class="settings-hero-icon">
+              <svg width="50" height="50" viewBox="0 0 24 24" fill="none">
+                <path d="M12 18h.01" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                <path d="M9.1 9.3a2.9 2.9 0 1 1 4.5 2.4c-.9.62-1.6 1.1-1.6 2.2v.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/>
+              </svg>
+            </div>
+            <h2>Ayuda</h2>
+            <p class="settings-help-desc">
+              Si encontrás un problema o tenés ideas para mejorar MultiTareas, podés enviarlas desde acá.
+            </p>
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-help-actions">
+              <button id="reportErrorBtn" class="settings-help-btn" type="button" data-feedback-type="error">
+                <span class="settings-help-btn-title">Reportar un error</span>
+                <span class="settings-help-btn-subtitle">Describe el problema y qué estabas haciendo cuando ocurrió.</span>
+              </button>
+              <button id="suggestFeatureBtn" class="settings-help-btn" type="button" data-feedback-type="suggestion">
+                <span class="settings-help-btn-title">Sugerir una mejora</span>
+                <span class="settings-help-btn-subtitle">Cuéntanos qué funcionalidad te gustaría ver en MultiTareas.</span>
+              </button>
+            </div>
           </div>
         </div>
 
         <div id="settingsPanelNotifications" class="settings-panel">
-          <div class="settings-empty">
-            Este apartado estará disponible pronto para configurar tus notificaciones.
+          <div class="settings-hero">
+            <div class="settings-hero-icon">
+              <svg width="50" height="50" viewBox="0 0 24 24" fill="none">
+                <path d="M6 9a6 6 0 0 1 12 0c0 4 2 5 2 5H4s2-1 2-5Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9.5 18a2.5 2.5 0 0 0 5 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <h2>Notificaciones</h2>
+            <p>Activa los recordatorios de navegador para no olvidar tus tareas con horario.</p>
           </div>
-        </div>
 
-        <div id="settingsPanelCalendar" class="settings-panel">
-          <div class="settings-empty">
-            Este apartado estará disponible pronto para vincular tu calendario.
+          <div class="settings-card">
+            <div class="settings-row">
+              <div class="settings-row-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <path d="M7 12h5m5 0h.01M12 7v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/>
+                </svg>
+              </div>
+
+              <div class="settings-row-body">
+                <div class="settings-row-head">
+                  <div class="settings-row-title">Recibir notificaciones de tus tareas con horario</div>
+
+                  <label class="ios-switch" aria-label="Activar notificaciones de tareas con horario">
+                    <input id="taskNotificationsToggle" type="checkbox" checked>
+                    <span class="ios-switch-track">
+                      <span class="ios-switch-thumb"></span>
+                    </span>
+                  </label>
+                </div>
+
+                <div class="settings-row-desc">
+                  Las tareas con horario te enviarán una notificación 30 minutos antes en este dispositivo.
+                </div>
+
+                <div class="settings-footnote">
+                  Debes permitir las notificaciones por separado en cada dispositivo (móvil o computadora).
+                </div>
+
+                <div class="settings-footnote settings-footnote-important">
+                  IMPORTANTE: por el momento, los avisos solo se envían si MultiTareas queda abierto en una pestaña del navegador.
+                </div>
+
+                <div id="settingsNotificationsPermission" class="settings-footnote"></div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -6573,7 +8423,7 @@
         </div>
         <div class="brand-meta">
           <span class="beta-pill">BETA</span>
-          <span class="version">v2.3</span>
+          <span class="version">v2.4</span>
         </div>
       </div>
 
@@ -6602,14 +8452,10 @@
       <div class="mini-calendar" id="miniCalendar"></div>
     </div>
 
-    <button id="modeToggleMobile">
-      <span id="modeIconMobile"></span>
-    </button>
-
     <div class="panel">
       <h3 class="changelog-title">
         NOTAS DE VERSIÓN
-        <span class="changelog-version">v2.3</span>
+        <span class="changelog-version">v2.4</span>
       </h3>
       <div class="muted changelog">
         <ul>
@@ -6622,140 +8468,168 @@
       </div>
     </div>
     </div>
+    <button class="sidebar-calendar-btn sidebar-help-btn" id="desktopCollapsedHelp" aria-label="Abrir ayuda">
+      <svg width="18px" height="18px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 18h.01" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+        <path d="M9.1 9.3a2.9 2.9 0 1 1 4.5 2.4c-.9.62-1.6 1.1-1.6 2.2v.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.9"/>
+      </svg>
+    </button>
   </aside>
 
   <div class="main-area">
 
-    <!-- Level Button -->
-    <div class="level-button" id="levelButton">
+    <div class="corner-container collapsed" id="cornerContainer">
 
-      <div id="levelMenu" class="level-menu">
+      <button class="login-circle" id="loginCircleBtn" type="button" aria-label="Menú de perfil" aria-controls="cornerDropdown" aria-expanded="false"></button>
 
-        <div class="level-menu-title">
-          Tu progreso
-        </div>
-
-        <div class="level-progress-row">
-
-          <div class="level-progress-bar">
-            <div class="level-progress-fill" id="levelProgressFill"></div>
-          </div>
-
-          <div class="level-progress-text" id="levelProgressText">
-            0 / 1000 EXP
-          </div>
-
-        </div>
-
-        <div class="level-menu-desc">
-          Completa tareas diarias y misiones para ganar EXP y subir de nivel
-          compitiendo en la tabla de posiciones
-        </div>
-
-        <button id="openLeaderboardFromLevel" class="level-leaderboard-btn">
-          TABLA DE POSICIONES
-        </button>
-
-        <div class="level-menu-divider"></div>
-        <div class="level-limit-title">Limites de Exp</div>
-        <div class="level-limit-desc">Limite Diario de Exp por completar tareas</div>
-        <div class="level-limit-status" id="levelDailyExpStatus"></div>
-
+      <div class="login-tooltip" id="loginTooltip">
+        INICIA SESIÓN PARA<br>
+        GUARDAR TUS TAREAS
       </div>
 
-      <svg class="level-ring" viewBox="0 0 100 100">
+      <div class="corner-dropdown" id="cornerDropdown">
+        <div class="corner-dropdown-arrow"></div>
 
-        <defs>
-          <linearGradient id="levelGradient" gradientUnits="userSpaceOnUse" x1="20" y1="75" x2="80" y2="75">
-            <stop offset="0%" stop-color="var(--accent)" />
-            <stop offset="100%" stop-color="var(--accent-soft)" />
-          </linearGradient>
-        </defs>
+        <div class="corner-menu-quick-row">
+          <div class="corner-menu-quick-slot level-slot">
+            <div class="level-button" id="levelButton">
 
-        <!-- arco gris -->
-        <path
-          class="level-ring-bg"
-          d="M20 75
-             A40 40 0 1 1 80 75"
-        />
+              <div id="levelMenu" class="level-menu">
 
-        <!-- progreso -->
-        <path
-          class="level-ring-progress"
-          stroke="url(#levelGradient)"
-          d="M20 75
-             A40 40 0 1 1 80 75"
-        />
+                <div class="level-menu-title">
+                  Tu progreso
+                </div>
 
-      </svg>
+                <div class="level-progress-row">
 
-      <div class="level-label">NIVEL</div>
-      <div class="level-number" id="levelNumber">0</div>
+                  <div class="level-progress-bar">
+                    <div class="level-progress-fill" id="levelProgressFill"></div>
+                  </div>
 
-    </div>
+                  <div class="level-progress-text" id="levelProgressText">
+                    0 / 1000 EXP
+                  </div>
 
-    <div class="corner-container" id="cornerContainer">
+                </div>
 
-        <!-- Close Button -->
-        <button class="corner-btn active-style" id="closeMenuBtn">
-          <svg viewBox="0 0 24 24" fill="none"
-               stroke="currentColor"
-               stroke-width="2.4"
-               stroke-linecap="round"
-               stroke-linejoin="round">
+                <div class="level-menu-desc">
+                  Completa tareas diarias y misiones para ganar EXP y subir de nivel
+                  compitiendo en la tabla de posiciones
+                </div>
+
+                <button id="openLeaderboardFromLevel" class="level-leaderboard-btn">
+                  TABLA DE POSICIONES
+                </button>
+
+                <div class="level-menu-divider"></div>
+                <div class="level-limit-title">Limites de Exp</div>
+                <div class="level-limit-desc">Limite Diario de Exp por completar tareas</div>
+                <div class="level-limit-status" id="levelDailyExpStatus"></div>
+
+              </div>
+
+              <svg class="level-ring" viewBox="0 0 100 100">
+
+                <defs>
+                  <linearGradient id="levelGradient" gradientUnits="userSpaceOnUse" x1="20" y1="75" x2="80" y2="75">
+                    <stop offset="0%" stop-color="var(--accent)" />
+                    <stop offset="100%" stop-color="var(--accent-soft)" />
+                  </linearGradient>
+                </defs>
+
+                <path
+                  class="level-ring-bg"
+                  d="M20 75
+                     A40 40 0 1 1 80 75"
+                />
+
+                <path
+                  class="level-ring-progress"
+                  stroke="url(#levelGradient)"
+                  d="M20 75
+                     A40 40 0 1 1 80 75"
+                />
+
+              </svg>
+
+              <div class="level-label">NIVEL</div>
+              <div class="level-number" id="levelNumber">0</div>
+
+            </div>
+          </div>
+          <button class="corner-menu-quick-slot settings-quick" id="settingsBtn" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3.2"></circle>
+              <path d="M19.4 15a1.6 1.6 0 0 0 .32 1.76l.05.05a1.9 1.9 0 1 1-2.69 2.69l-.05-.05a1.6 1.6 0 0 0-1.76-.32 1.6 1.6 0 0 0-.97 1.46V21a1.9 1.9 0 1 1-3.8 0v-.08a1.6 1.6 0 0 0-.97-1.46 1.6 1.6 0 0 0-1.76.32l-.05.05a1.9 1.9 0 0 1-2.69-2.69l.05-.05a1.6 1.6 0 0 0 .32-1.76 1.6 1.6 0 0 0-1.46-.97H3a1.9 1.9 0 1 1 0-3.8h.08a1.6 1.6 0 0 0 1.46-.97 1.6 1.6 0 0 0-.32-1.76l-.05-.05a1.9 1.9 0 0 1 2.69-2.69l.05.05a1.6 1.6 0 0 0 1.76.32h.01a1.6 1.6 0 0 0 .96-1.45V3a1.9 1.9 0 1 1 3.8 0v.08a1.6 1.6 0 0 0 .97 1.46 1.6 1.6 0 0 0 1.76-.32l.05-.05a1.9 1.9 0 1 1 2.69 2.69l-.05.05a1.6 1.6 0 0 0-.32 1.76v.01a1.6 1.6 0 0 0 1.45.96H21a1.9 1.9 0 1 1 0 3.8h-.08a1.6 1.6 0 0 0-1.52 1.56z"></path>
+            </svg>
+            <span>AJUSTES</span>
+          </button>
+        </div>
+
+        <div class="corner-menu-sep"></div>
+
+        <button class="corner-menu-item" id="soundToggleTop" type="button">
+          <span class="corner-menu-item-main">
+            <svg id="soundIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></svg>
+            <span>Sonido</span>
+          </span>
+          <span class="corner-menu-item-state" id="soundStateText">Activado</span>
+        </button>
+
+        <button class="corner-menu-item corner-menu-item-theme" id="themeToggleTop" type="button">
+          <span class="corner-menu-item-main">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M19.54 5.08A10.61 10.61 0 0 0 11.91 2a10 10 0 0 0-.05 20 2.58 2.58 0 0 0 2.53-1.89 2.52 2.52 0 0 0-.57-2.28.5.5 0 0 1 .37-.83h1.65A6.15 6.15 0 0 0 22 11.33a8.48 8.48 0 0 0-2.46-6.25zM15.88 15h-1.65a2.49 2.49 0 0 0-1.87 4.15.49.49 0 0 1 .12.49c-.05.21-.28.34-.59.36a8 8 0 0 1-7.82-9.11A8.1 8.1 0 0 1 11.92 4H12a8.47 8.47 0 0 1 6.1 2.48 6.5 6.5 0 0 1 1.9 4.77A4.17 4.17 0 0 1 15.88 15z"></path>
+              <circle cx="12" cy="6.5" r="1.5"></circle>
+              <path d="M15.25 7.2a1.5 1.5 0 1 0 2.05.55 1.5 1.5 0 0 0-2.05-.55z"></path>
+              <path d="M8.75 7.2a1.5 1.5 0 1 0 .55 2.05 1.5 1.5 0 0 0-.55-2.05z"></path>
+              <path d="M6.16 11.26a1.5 1.5 0 1 0 2.08.4 1.49 1.49 0 0 0-2.08-.4z"></path>
+            </svg>
+            <span>Tema</span>
+          </span>
+          <span class="theme-sphere corner-theme-preview" aria-hidden="true"></span>
+        </button>
+
+        <div class="corner-menu-sep mobile-only-sep"></div>
+
+        <button class="corner-menu-item mobile-only-btn" id="modeToggleTopMobile" type="button" aria-label="Cambiar modo claro u oscuro">
+          <span class="corner-menu-item-main">
+            <svg class="mode-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20.2 14.7A8.5 8.5 0 1 1 9.3 3.8a7 7 0 1 0 10.9 10.9z"></path>
+            </svg>
+            <svg class="mode-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4.2"></circle>
+              <path d="M12 2.8v2.3M12 18.9v2.3M21.2 12h-2.3M5.1 12H2.8M18.8 5.2l-1.6 1.6M6.8 17.2l-1.6 1.6M18.8 18.8l-1.6-1.6M6.8 6.8 5.2 5.2"></path>
+            </svg>
+            <span>Modo claro/oscuro</span>
+          </span>
+          <span class="corner-mode-preview" aria-hidden="true"></span>
+        </button>
+
+        <div class="corner-menu-sep mobile-only-sep"></div>
+
+        <button class="corner-menu-item mobile-only-btn" id="mobileSidebarOpen" type="button">
+          <span class="corner-menu-item-main">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3.5" y="5" width="17" height="15.5" rx="2.8"></rect>
+              <path d="M16.5 3.5V7"></path>
+              <path d="M7.5 3.5V7"></path>
+              <path d="M3.5 9.5h17"></path>
+            </svg>
+            <span>Calendario</span>
+          </span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <polyline points="9 6 15 12 9 18"></polyline>
           </svg>
         </button>
-      
-      <!-- Mobile Calendar Button -->
-      <button class="corner-btn mobile-only-btn" id="mobileSidebarOpen">
-        <svg width="18px" height="18px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M10 21H6.2C5.0799 21 4.51984 21 4.09202 20.782C3.71569 20.5903 3.40973 20.2843 3.21799 19.908C3 19.4802 3 18.9201 3 17.8V8.2C3 7.0799 3 6.51984 3.21799 6.09202C3.40973 5.71569 3.71569 5.40973 4.09202 5.21799C4.51984 5 5.0799 5 6.2 5H17.8C18.9201 5 19.4802 5 19.908 5.21799C20.2843 5.40973 20.5903 5.71569 20.782 6.09202C21 6.51984 21 7.0799 21 8.2V10M7 3V5M17 3V5M3 9H21M13.5 13.0001L7 13M10 17.0001L7 17M14 21L16.025 20.595C16.2015 20.5597 16.2898 20.542 16.3721 20.5097C16.4452 20.4811 16.5147 20.4439 16.579 20.399C16.6516 20.3484 16.7152 20.2848 16.8426 20.1574L21 16C21.5523 15.4477 21.5523 14.5523 21 14C20.4477 13.4477 19.5523 13.4477 19 14L14.8426 18.1574C14.7152 18.2848 14.6516 18.3484 14.601 18.421C14.5561 18.4853 14.5189 18.5548 14.4903 18.6279C14.458 18.7102 14.4403 18.7985 14.405 18.975L14 21Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
 
-      <!-- Sound -->
-      <button class="corner-btn" id="soundToggleTop">
-        <svg id="soundIcon" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-          <path d="M15 9a5 5 0 0 1 0 6"></path>
-          <path d="M18 7a9 9 0 0 1 0 10"></path>
-        </svg>
-      </button>
+        <div class="corner-menu-sep"></div>
 
-      <!-- 🎨 Theme -->
-      <button class="corner-btn" id="themeToggleTop">
-        <!-- Pegá acá tu SVG -->
-        <svg fill="currentColor" width="800px" height="800px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <g data-name="Layer 2">
-        <g data-name="color-palette">
-        <rect width="24" height="24" opacity="0"/>
-        <path d="M19.54 5.08A10.61 10.61 0 0 0 11.91 2a10 10 0 0 0-.05 20 2.58 2.58 0 0 0 2.53-1.89 2.52 2.52 0 0 0-.57-2.28.5.5 0 0 1 .37-.83h1.65A6.15 6.15 0 0 0 22 11.33a8.48 8.48 0 0 0-2.46-6.25zM15.88 15h-1.65a2.49 2.49 0 0 0-1.87 4.15.49.49 0 0 1 .12.49c-.05.21-.28.34-.59.36a8 8 0 0 1-7.82-9.11A8.1 8.1 0 0 1 11.92 4H12a8.47 8.47 0 0 1 6.1 2.48 6.5 6.5 0 0 1 1.9 4.77A4.17 4.17 0 0 1 15.88 15z"/>
-        <circle cx="12" cy="6.5" r="1.5"/>
-        <path d="M15.25 7.2a1.5 1.5 0 1 0 2.05.55 1.5 1.5 0 0 0-2.05-.55z"/>
-        <path d="M8.75 7.2a1.5 1.5 0 1 0 .55 2.05 1.5 1.5 0 0 0-.55-2.05z"/>
-        <path d="M6.16 11.26a1.5 1.5 0 1 0 2.08.4 1.49 1.49 0 0 0-2.08-.4z"/>
-        </g>
-        </g>
-        </svg>
-      </button>
-
-      <!-- ⚙️ Settings -->
-        <button class="corner-btn" id="settingsBtn">
-          <svg width="18px" height="18px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path fill-rule="evenodd" clip-rule="evenodd" d="M12 8.25C9.92894 8.25 8.25 9.92893 8.25 12C8.25 14.0711 9.92894 15.75 12 15.75C14.0711 15.75 15.75 14.0711 15.75 12C15.75 9.92893 14.0711 8.25 12 8.25ZM9.75 12C9.75 10.7574 10.7574 9.75 12 9.75C13.2426 9.75 14.25 10.7574 14.25 12C14.25 13.2426 13.2426 14.25 12 14.25C10.7574 14.25 9.75 13.2426 9.75 12Z" fill="currentColor"/>
-          <path fill-rule="evenodd" clip-rule="evenodd" d="M11.9747 1.25C11.5303 1.24999 11.1592 1.24999 10.8546 1.27077C10.5375 1.29241 10.238 1.33905 9.94761 1.45933C9.27379 1.73844 8.73843 2.27379 8.45932 2.94762C8.31402 3.29842 8.27467 3.66812 8.25964 4.06996C8.24756 4.39299 8.08454 4.66251 7.84395 4.80141C7.60337 4.94031 7.28845 4.94673 7.00266 4.79568C6.64714 4.60777 6.30729 4.45699 5.93083 4.40743C5.20773 4.31223 4.47642 4.50819 3.89779 4.95219C3.64843 5.14353 3.45827 5.3796 3.28099 5.6434C3.11068 5.89681 2.92517 6.21815 2.70294 6.60307L2.67769 6.64681C2.45545 7.03172 2.26993 7.35304 2.13562 7.62723C1.99581 7.91267 1.88644 8.19539 1.84541 8.50701C1.75021 9.23012 1.94617 9.96142 2.39016 10.5401C2.62128 10.8412 2.92173 11.0602 3.26217 11.2741C3.53595 11.4461 3.68788 11.7221 3.68786 12C3.68785 12.2778 3.53592 12.5538 3.26217 12.7258C2.92169 12.9397 2.62121 13.1587 2.39007 13.4599C1.94607 14.0385 1.75012 14.7698 1.84531 15.4929C1.88634 15.8045 1.99571 16.0873 2.13552 16.3727C2.26983 16.6469 2.45535 16.9682 2.67758 17.3531L2.70284 17.3969C2.92507 17.7818 3.11058 18.1031 3.28089 18.3565C3.45817 18.6203 3.64833 18.8564 3.89769 19.0477C4.47632 19.4917 5.20763 19.6877 5.93073 19.5925C6.30717 19.5429 6.647 19.3922 7.0025 19.2043C7.28833 19.0532 7.60329 19.0596 7.8439 19.1986C8.08452 19.3375 8.24756 19.607 8.25964 19.9301C8.27467 20.3319 8.31403 20.7016 8.45932 21.0524C8.73843 21.7262 9.27379 22.2616 9.94761 22.5407C10.238 22.661 10.5375 22.7076 10.8546 22.7292C11.1592 22.75 11.5303 22.75 11.9747 22.75H12.0252C12.4697 22.75 12.8407 22.75 13.1454 22.7292C13.4625 22.7076 13.762 22.661 14.0524 22.5407C14.7262 22.2616 15.2616 21.7262 15.5407 21.0524C15.686 20.7016 15.7253 20.3319 15.7403 19.93C15.7524 19.607 15.9154 19.3375 16.156 19.1985C16.3966 19.0596 16.7116 19.0532 16.9974 19.2042C17.3529 19.3921 17.6927 19.5429 18.0692 19.5924C18.7923 19.6876 19.5236 19.4917 20.1022 19.0477C20.3516 18.8563 20.5417 18.6203 20.719 18.3565C20.8893 18.1031 21.0748 17.7818 21.297 17.3969L21.3223 17.3531C21.5445 16.9682 21.7301 16.6468 21.8644 16.3726C22.0042 16.0872 22.1135 15.8045 22.1546 15.4929C22.2498 14.7697 22.0538 14.0384 21.6098 13.4598C21.3787 13.1586 21.0782 12.9397 20.7378 12.7258C20.464 12.5538 20.3121 12.2778 20.3121 11.9999C20.3121 11.7221 20.464 11.4462 20.7377 11.2742C21.0783 11.0603 21.3788 10.8414 21.6099 10.5401C22.0539 9.96149 22.2499 9.23019 22.1547 8.50708C22.1136 8.19546 22.0043 7.91274 21.8645 7.6273C21.7302 7.35313 21.5447 7.03183 21.3224 6.64695L21.2972 6.60318C21.0749 6.21825 20.8894 5.89688 20.7191 5.64347C20.5418 5.37967 20.3517 5.1436 20.1023 4.95225C19.5237 4.50826 18.7924 4.3123 18.0692 4.4075C17.6928 4.45706 17.353 4.60782 16.9975 4.79572C16.7117 4.94679 16.3967 4.94036 16.1561 4.80144C15.9155 4.66253 15.7524 4.39297 15.7403 4.06991C15.7253 3.66808 15.686 3.2984 15.5407 2.94762C15.2616 2.27379 14.7262 1.73844 14.0524 1.45933C13.762 1.33905 13.4625 1.29241 13.1454 1.27077C12.8407 1.24999 12.4697 1.24999 12.0252 1.25H11.9747ZM10.5216 2.84515C10.5988 2.81319 10.716 2.78372 10.9567 2.76729C11.2042 2.75041 11.5238 2.75 12 2.75C12.4762 2.75 12.7958 2.75041 13.0432 2.76729C13.284 2.78372 13.4012 2.81319 13.4783 2.84515C13.7846 2.97202 14.028 3.21536 14.1548 3.52165C14.1949 3.61826 14.228 3.76887 14.2414 4.12597C14.271 4.91835 14.68 5.68129 15.4061 6.10048C16.1321 6.51968 16.9974 6.4924 17.6984 6.12188C18.0143 5.9549 18.1614 5.90832 18.265 5.89467C18.5937 5.8514 18.9261 5.94047 19.1891 6.14228C19.2554 6.19312 19.3395 6.27989 19.4741 6.48016C19.6125 6.68603 19.7726 6.9626 20.0107 7.375C20.2488 7.78741 20.4083 8.06438 20.5174 8.28713C20.6235 8.50382 20.6566 8.62007 20.6675 8.70287C20.7108 9.03155 20.6217 9.36397 20.4199 9.62698C20.3562 9.70995 20.2424 9.81399 19.9397 10.0041C19.2684 10.426 18.8122 11.1616 18.8121 11.9999C18.8121 12.8383 19.2683 13.574 19.9397 13.9959C20.2423 14.186 20.3561 14.29 20.4198 14.373C20.6216 14.636 20.7107 14.9684 20.6674 15.2971C20.6565 15.3799 20.6234 15.4961 20.5173 15.7128C20.4082 15.9355 20.2487 16.2125 20.0106 16.6249C19.7725 17.0373 19.6124 17.3139 19.474 17.5198C19.3394 17.72 19.2553 17.8068 19.189 17.8576C18.926 18.0595 18.5936 18.1485 18.2649 18.1053C18.1613 18.0916 18.0142 18.045 17.6983 17.8781C16.9973 17.5075 16.132 17.4803 15.4059 17.8995C14.68 18.3187 14.271 19.0816 14.2414 19.874C14.228 20.2311 14.1949 20.3817 14.1548 20.4784C14.028 20.7846 13.7846 21.028 13.4783 21.1549C13.4012 21.1868 13.284 21.2163 13.0432 21.2327C12.7958 21.2496 12.4762 21.25 12 21.25C11.5238 21.25 11.2042 21.2496 10.9567 21.2327C10.716 21.2163 10.5988 21.1868 10.5216 21.1549C10.2154 21.028 9.97201 20.7846 9.84514 20.4784C9.80512 20.3817 9.77195 20.2311 9.75859 19.874C9.72896 19.0817 9.31997 18.3187 8.5939 17.8995C7.86784 17.4803 7.00262 17.5076 6.30158 17.8781C5.98565 18.0451 5.83863 18.0917 5.73495 18.1053C5.40626 18.1486 5.07385 18.0595 4.81084 17.8577C4.74458 17.8069 4.66045 17.7201 4.52586 17.5198C4.38751 17.314 4.22736 17.0374 3.98926 16.625C3.75115 16.2126 3.59171 15.9356 3.4826 15.7129C3.37646 15.4962 3.34338 15.3799 3.33248 15.2971C3.28921 14.9684 3.37828 14.636 3.5801 14.373C3.64376 14.2901 3.75761 14.186 4.0602 13.9959C4.73158 13.5741 5.18782 12.8384 5.18786 12.0001C5.18791 11.1616 4.73165 10.4259 4.06021 10.004C3.75769 9.81389 3.64385 9.70987 3.58019 9.62691C3.37838 9.3639 3.28931 9.03149 3.33258 8.7028C3.34348 8.62001 3.37656 8.50375 3.4827 8.28707C3.59181 8.06431 3.75125 7.78734 3.98935 7.37493C4.22746 6.96253 4.3876 6.68596 4.52596 6.48009C4.66055 6.27983 4.74468 6.19305 4.81093 6.14222C5.07395 5.9404 5.40636 5.85133 5.73504 5.8946C5.83873 5.90825 5.98576 5.95483 6.30173 6.12184C7.00273 6.49235 7.86791 6.51962 8.59394 6.10045C9.31998 5.68128 9.72896 4.91837 9.75859 4.12602C9.77195 3.76889 9.80512 3.61827 9.84514 3.52165C9.97201 3.21536 10.2154 2.97202 10.5216 2.84515Z" fill="currentColor"/>
-          </svg>
+        <button class="corner-menu-item danger" id="profileLogoutBtn" type="button">
+          Iniciar sesión
         </button>
-
-        <!-- 🔴 Botón circular login -->
-        <button class="login-circle" id="loginCircleBtn"></button>
-        <div class="login-tooltip" id="loginTooltip">
-          INICIA SESIÓN PARA<br>
-          GUARDAR TUS TAREAS
-        </div>
+      </div>
 
     </div>
 
@@ -6825,7 +8699,6 @@
       </button>
     </div>
   </div>
-
 
   <!-- 🔴 Botón claro/oscuro -->
   <button id="modeToggle" class="theme-mode-toggle">

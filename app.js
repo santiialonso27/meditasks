@@ -33,7 +33,7 @@ const db = getFirestore(app);
 const board = document.getElementById("board");
 const statusText = document.getElementById("statusText");
 const loginCircleBtn = document.getElementById("loginCircleBtn");
-const closeMenuBtn = document.getElementById("closeMenuBtn");
+const profileLogoutBtn = document.getElementById("profileLogoutBtn");
 const loginTooltip = document.getElementById("loginTooltip");
 const authGate = document.getElementById("authGate");
 const authGateGoogleBtn = document.getElementById("authGateGoogleBtn");
@@ -177,6 +177,21 @@ const MOBILE_DRAG_AUTOSCROLL_MAX_SPEED = 16;
 const MOBILE_DRAG_PREVIEW_STICKY_TOP = 0.38;
 const MOBILE_DRAG_PREVIEW_STICKY_BOTTOM = 0.62;
 const OFFICE_MODE_LOCK_STORAGE_KEY = "mt_office_mode_locked";
+const TASK_NOTIFICATION_SETTINGS_STORAGE_KEY = "mt_task_notifications_enabled";
+const TASK_NOTIFICATION_LEAD_MS = 30 * 60 * 1000;
+const MAX_SCHEDULE_TIMEOUT_MS = 2147483647;
+
+let taskNotificationsEnabled = true;
+try {
+  const storedTaskNotifications = JSON.parse(
+    localStorage.getItem(TASK_NOTIFICATION_SETTINGS_STORAGE_KEY)
+  );
+  if (typeof storedTaskNotifications === "boolean") {
+    taskNotificationsEnabled = storedTaskNotifications;
+  }
+} catch (err) {
+  console.error(err);
+}
 
 let activeTaskMobileFocus = null;
 let activeTaskActionMenu = null;
@@ -186,6 +201,8 @@ let mobileDragAutoScrollSpeed = 0;
 let mobileDragAutoScrollTouch = null;
 let mobileDragAutoScrollCallback = null;
 let mobileFocusScrollSnapshot = null;
+const scheduledTaskNotificationTimers = new Map();
+let taskNotificationAutoPromptAttempted = false;
 
 function closeTaskActionMenu() {
   if (!activeTaskActionMenu) return;
@@ -1531,6 +1548,79 @@ function setStatusNotLogged(){
 
 let hasRendered = false;
 
+function formatProfileTriggerName(displayName){
+  const raw = String(displayName || "Invitado").trim();
+  const parts = raw.split(/\s+/).filter(Boolean);
+
+  if(parts.length >= 3){
+    return `${parts[0]} ${parts[1]}`;
+  }
+
+  if(parts.length === 2){
+    return parts[0];
+  }
+
+  return parts[0] || "Invitado";
+}
+
+function renderLoginCircle(photoURL, displayName){
+  if(!loginCircleBtn) return;
+
+  const hasPhoto = !!photoURL;
+  const safeName = formatProfileTriggerName(displayName);
+
+  loginCircleBtn.innerHTML = `
+    <div class="profile-trigger-avatar">
+      ${
+        hasPhoto
+          ? `<img class="profile-trigger-photo" alt="Profile">`
+          : `<svg class="profile-trigger-fallback" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="8" r="4"></circle>
+              <path d="M4 20c2-4 6-6 8-6s6 2 8 6"></path>
+            </svg>`
+      }
+    </div>
+    <div class="profile-trigger-copy">
+      <div class="profile-trigger-name" id="profileTriggerName"></div>
+      <div class="profile-trigger-level-row">
+        <span class="profile-trigger-level-text">NIVEL <span id="profileTriggerLevel">0</span></span>
+        <span class="profile-trigger-level-bar">
+          <span class="profile-trigger-level-fill" id="profileTriggerProgress"></span>
+        </span>
+      </div>
+    </div>
+    <svg class="profile-trigger-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="6 9 12 15 18 9"></polyline>
+    </svg>
+  `;
+
+  const triggerName = document.getElementById("profileTriggerName");
+  if(triggerName){
+    triggerName.textContent = safeName;
+  }
+
+  const triggerPhoto = loginCircleBtn.querySelector(".profile-trigger-photo");
+  if(triggerPhoto){
+    triggerPhoto.src = photoURL;
+  }
+
+  const triggerLevel = document.getElementById("profileTriggerLevel");
+  const triggerProgress = document.getElementById("profileTriggerProgress");
+  const levelState = getLevelProgressState();
+
+  if(triggerLevel){
+    triggerLevel.textContent = String(levelState.level);
+  }
+
+  if(triggerProgress){
+    triggerProgress.style.width = `${levelState.progress * 100}%`;
+  }
+
+  if(profileLogoutBtn){
+    profileLogoutBtn.textContent = currentUser ? "Cerrar Sesion" : "Iniciar sesión";
+  }
+}
+
 onAuthStateChanged(auth, async (user) => {
 
   if (user) {
@@ -1546,9 +1636,7 @@ onAuthStateChanged(auth, async (user) => {
     clearTimeout(tooltipTimeout);
 
     // 🔥 Mostrar foto en botón circular
-    loginCircleBtn.innerHTML = `
-      <img src="${user.photoURL}" alt="Profile">
-    `;
+    renderLoginCircle(user.photoURL, user.displayName);
     loginCircleBtn.classList.add("logged-in");
 
     statusText.textContent = "Sincronizando tareas...";
@@ -1759,12 +1847,7 @@ onAuthStateChanged(auth, async (user) => {
         updateSettingsProfile(null);
         syncOfficeModeControls();
 
-        loginCircleBtn.innerHTML = `
-          <svg viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="8" r="4"></circle>
-            <path d="M4 20c2-4 6-6 8-6s6 2 8 6"></path>
-          </svg>
-        `;
+        renderLoginCircle("", "Invitado");
         loginCircleBtn.classList.remove("logged-in");
 
         const localData = parseStoredAppData(JSON.parse(localStorage.getItem(storeKey)) || {});
@@ -1894,17 +1977,14 @@ function showLeaderboardModal(users){
 let profileMenuOpen = false;
 const cornerContainer = document.getElementById("cornerContainer");
 
-cornerContainer.classList.add("collapsed");
+cornerContainer?.classList.add("collapsed");
 
 function closeCornerMenu() {
-  // Fase 1: ocultar iconos instantáneo
-  cornerContainer.classList.add("closing");
+  if(!cornerContainer) return;
 
-  // Fase 2: animar ancho en el siguiente frame
-  requestAnimationFrame(() => {
-    cornerContainer.classList.remove("expanded");
-    cornerContainer.classList.add("collapsed");
-  });
+  cornerContainer.classList.remove("expanded", "closing");
+  cornerContainer.classList.add("collapsed");
+  loginCircleBtn?.setAttribute("aria-expanded", "false");
 
   profileMenuOpen = false;
 
@@ -1913,54 +1993,57 @@ function closeCornerMenu() {
 }
 
 function openCornerMenu() {
+  if(!cornerContainer) return;
+
   cornerContainer.classList.remove("collapsed");
   cornerContainer.classList.add("expanded");
-
-  // esperar a que termine la transición antes de mostrar iconos
-  setTimeout(() => {
-    cornerContainer.classList.remove("closing");
-  }, 50); // tiempo que tarda en mostrar los iconos
+  loginCircleBtn?.setAttribute("aria-expanded", "true");
 
   profileMenuOpen = true;
 }
 
 
-loginCircleBtn.addEventListener("click", async (e) => {
+loginCircleBtn?.addEventListener("click", (e) => {
   e.stopPropagation();
 
   const isMobile = window.innerWidth <= 900;
 
-  // 🔥 Si es mobile y la sidebar está abierta → cerrarla primero
+  // Si es mobile y la sidebar está abierta, cerrarla primero
   if (isMobile && !sidebar.classList.contains("collapsed")) {
     sidebar.classList.add("collapsed");
   }
 
-  if (!profileMenuOpen) {
-    openCornerMenu();
-
-    if (!currentUser) {
-      clearTimeout(tooltipTimeout);
-      tooltipTimeout = setTimeout(() => {
-        loginTooltip.classList.add("show");
-      }, 1000);
-    }
-
+  if (profileMenuOpen) {
+    closeCornerMenu();
     return;
   }
 
+  openCornerMenu();
+
   if (!currentUser) {
-    await signInWithPopup(auth, provider);
-  } else {
-    logoutOverlay.classList.add("open");
+    clearTimeout(tooltipTimeout);
+    tooltipTimeout = setTimeout(() => {
+      loginTooltip.classList.add("show");
+    }, 900);
   }
 });
 
-closeMenuBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
+document.addEventListener("click", (e) => {
+  if(!profileMenuOpen) return;
+  if(cornerContainer?.contains(e.target)) return;
+  closeCornerMenu();
+});
 
-  if (profileMenuOpen) {
-    closeCornerMenu();
+profileLogoutBtn?.addEventListener("click", async (e) => {
+  e.stopPropagation();
+  closeCornerMenu();
+
+  if (!currentUser) {
+    await signInWithPopup(auth, provider);
+    return;
   }
+
+  logoutOverlay.classList.add("open");
 });
 
 cancelLogout.addEventListener("click", () => {
@@ -1983,18 +2066,38 @@ const settingsOverlay = document.getElementById("settingsOverlay");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 const officeModeToggle = document.getElementById("officeModeToggle");
 const officeModeTimeoutSelect = document.getElementById("officeModeTimeoutSelect");
+const taskNotificationsToggle = document.getElementById("taskNotificationsToggle");
+const settingsNotificationsPermission = document.getElementById("settingsNotificationsPermission");
 const settingsAuthNote = document.getElementById("settingsAuthNote");
+const settingsNav = document.getElementById("settingsNav");
+const settingsMobileNavToggle = document.getElementById("settingsMobileNavToggle");
+const settingsMobileNavCurrentIcon = document.getElementById("settingsMobileNavCurrentIcon");
+const settingsMobileNavCurrentLabel = document.getElementById("settingsMobileNavCurrentLabel");
 const settingsProfileName = document.getElementById("settingsProfileName");
 const settingsProfileAvatar = document.getElementById("settingsProfileAvatar");
+const settingsAccountAvatar = document.getElementById("settingsAccountAvatar");
+const settingsAccountName = document.getElementById("settingsAccountName");
+const settingsAccountEmail = document.getElementById("settingsAccountEmail");
+const settingsAccountStatus = document.getElementById("settingsAccountStatus");
+const settingsAccountLevel = document.getElementById("settingsAccountLevel");
+const settingsAccountExp = document.getElementById("settingsAccountExp");
+const settingsAccountCompletedTasks = document.getElementById("settingsAccountCompletedTasks");
+const settingsAccountProjects = document.getElementById("settingsAccountProjects");
+const settingsAccountLogoutBtn = document.getElementById("settingsAccountLogoutBtn");
+const reportErrorBtn = document.getElementById("reportErrorBtn");
+const suggestFeatureBtn = document.getElementById("suggestFeatureBtn");
 const settingsNavItems = Array.from(document.querySelectorAll(".settings-nav-item"));
 const settingsPanels = {
-  general: document.getElementById("settingsPanelGeneral"),
   account: document.getElementById("settingsPanelAccount"),
   notifications: document.getElementById("settingsPanelNotifications"),
-  calendar: document.getElementById("settingsPanelCalendar"),
   achievements: document.getElementById("settingsPanelAchievements"),
+  help: document.getElementById("settingsPanelHelp"),
   security: document.getElementById("settingsPanelSecurity")
 };
+const APP_VERSION = document.querySelector(".brand-meta .version")?.textContent?.trim()
+  || document.querySelector(".changelog-version")?.textContent?.trim()
+  || "v2.4";
+const FEEDBACK_FORM_ENDPOINT = "https://formsubmit.co/ajax/santiialonso27@gmail.com";
 
 const OFFICE_MODE_TIMEOUT_OPTIONS = [30, 60, 120, 300, 600, 1800];
 
@@ -2021,8 +2124,238 @@ function updateSettingsProfile(user = currentUser){
   }
 }
 
+function formatSettingsStat(value){
+  return Number(value || 0).toLocaleString("es-AR");
+}
+
+function renderSettingsAccountPanel(user = currentUser){
+  const stats = getAchievementStats();
+  const levelState = getLevelProgressState();
+  const hasSession = !!user;
+
+  if(settingsAccountAvatar){
+    settingsAccountAvatar.src = user?.photoURL || "/flav-icon.png";
+  }
+
+  if(settingsAccountName){
+    settingsAccountName.textContent = user?.displayName || "Invitado";
+  }
+
+  if(settingsAccountEmail){
+    settingsAccountEmail.textContent = user?.email || "Sin sesión iniciada";
+  }
+
+  if(settingsAccountStatus){
+    settingsAccountStatus.textContent = hasSession
+      ? "Tu cuenta está sincronizando tareas y progreso en tiempo real."
+      : "Inicia sesión para sincronizar tus tareas y progreso.";
+  }
+
+  if(settingsAccountLevel){
+    settingsAccountLevel.textContent = formatSettingsStat(levelState.level);
+  }
+
+  if(settingsAccountExp){
+    settingsAccountExp.textContent = formatSettingsStat(Math.max(0, Number(player?.exp) || 0));
+  }
+
+  if(settingsAccountCompletedTasks){
+    settingsAccountCompletedTasks.textContent = formatSettingsStat(stats.completedTasks);
+  }
+
+  if(settingsAccountProjects){
+    settingsAccountProjects.textContent = formatSettingsStat(stats.projectsCount);
+  }
+
+  if(settingsAccountLogoutBtn){
+    settingsAccountLogoutBtn.textContent = hasSession ? "Cerrar sesión" : "Iniciar sesión";
+  }
+}
+
 function setLocalOfficeLockState(locked){
   localStorage.setItem(OFFICE_MODE_LOCK_STORAGE_KEY, locked ? "true" : "false");
+}
+
+function persistTaskNotificationsPreference(){
+  localStorage.setItem(
+    TASK_NOTIFICATION_SETTINGS_STORAGE_KEY,
+    JSON.stringify(taskNotificationsEnabled)
+  );
+}
+
+function getBrowserNotificationPermission(){
+  if(!("Notification" in window)) return "unsupported";
+  return Notification.permission;
+}
+
+function updateNotificationPermissionHint(){
+  if(!settingsNotificationsPermission) return;
+
+  const permission = getBrowserNotificationPermission();
+
+  if(permission === "unsupported"){
+    settingsNotificationsPermission.textContent = "Tu navegador no soporta notificaciones web.";
+    return;
+  }
+
+  if(permission === "granted"){
+    settingsNotificationsPermission.innerHTML = 'Permiso en este dispositivo: <span class="settings-permission-ok">Autorizado</span>.';
+    return;
+  }
+
+  if(permission === "denied"){
+    settingsNotificationsPermission.textContent = "Permiso bloqueado en este dispositivo: habilítalo desde la configuración del navegador.";
+    return;
+  }
+
+  settingsNotificationsPermission.textContent = "Permiso pendiente en este dispositivo: al abrir la app se solicitará autorización. Debes permitirlo por separado en cada móvil o computadora.";
+}
+
+function clearScheduledTaskNotifications(){
+  scheduledTaskNotificationTimers.forEach((timerId) => {
+    clearTimeout(timerId);
+  });
+  scheduledTaskNotificationTimers.clear();
+}
+
+function parseTaskDateTime(dateStr, timeSlot){
+  if(!dateStr || !timeSlot) return null;
+
+  const [year, month, day] = String(dateStr).split("-").map(Number);
+  const [hours, minutes] = String(timeSlot).split(":").map(Number);
+
+  if(
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes)
+  ){
+    return null;
+  }
+
+  const parsedDate = new Date(year, month - 1, day, hours, minutes, 0, 0);
+
+  if(Number.isNaN(parsedDate.getTime())){
+    return null;
+  }
+
+  return parsedDate;
+}
+
+function showTaskReminderNotification({ taskText, timeSlot }){
+  if(!taskNotificationsEnabled) return;
+  if(getBrowserNotificationPermission() !== "granted") return;
+
+  try{
+    const notification = new Notification("Recordatorio de tarea", {
+      body: `${taskText}\nEmpieza a las ${timeSlot}.`,
+      tag: `mt-task-reminder-${timeSlot}-${taskText.slice(0, 40)}`
+    });
+
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+  }catch(err){
+    console.error(err);
+  }
+}
+
+function scheduleTaskNotifications(){
+  clearScheduledTaskNotifications();
+
+  if(!taskNotificationsEnabled) return;
+  if(getBrowserNotificationPermission() !== "granted") return;
+
+  const now = Date.now();
+
+  Object.entries(tasks || {}).forEach(([dateStr, taskList]) => {
+    if(!Array.isArray(taskList)) return;
+
+    taskList.forEach((task, index) => {
+      if(!task || !task.timeSlot || task.done) return;
+
+      const scheduledAt = parseTaskDateTime(dateStr, task.timeSlot);
+      if(!scheduledAt) return;
+
+      const reminderAt = scheduledAt.getTime() - TASK_NOTIFICATION_LEAD_MS;
+      const delay = reminderAt - now;
+
+      if(delay <= 0 || delay > MAX_SCHEDULE_TIMEOUT_MS) return;
+
+      const notificationKey = `${dateStr}|${task.timeSlot}|${index}|${task.text || ""}`;
+      const timerId = window.setTimeout(() => {
+        showTaskReminderNotification({
+          taskText: task.text || "Tienes una tarea programada",
+          timeSlot: task.timeSlot
+        });
+        scheduledTaskNotificationTimers.delete(notificationKey);
+      }, delay);
+
+      scheduledTaskNotificationTimers.set(notificationKey, timerId);
+    });
+  });
+}
+
+async function requestTaskNotificationPermissionIfNeeded(){
+  const permission = getBrowserNotificationPermission();
+
+  if(permission === "unsupported" || permission === "granted" || permission === "denied"){
+    return permission;
+  }
+
+  try{
+    return await Notification.requestPermission();
+  }catch(err){
+    console.error(err);
+    return getBrowserNotificationPermission();
+  }
+}
+
+async function maybeAutoRequestTaskNotificationsPermission(){
+  if(taskNotificationAutoPromptAttempted) return;
+  if(!taskNotificationsEnabled) return;
+  if(getBrowserNotificationPermission() !== "default") return;
+
+  taskNotificationAutoPromptAttempted = true;
+
+  const permission = await requestTaskNotificationPermissionIfNeeded();
+
+  if(permission === "granted"){
+    scheduleTaskNotifications();
+  }else if(permission === "denied"){
+    taskNotificationsEnabled = false;
+    persistTaskNotificationsPreference();
+    clearScheduledTaskNotifications();
+  }else if(permission === "default"){
+    taskNotificationAutoPromptAttempted = false;
+  }
+
+  syncTaskNotificationControls();
+}
+
+function bindAutoNotificationPermissionFallback(){
+  const tryWithGesture = async () => {
+    if(getBrowserNotificationPermission() !== "default"){
+      return;
+    }
+    await maybeAutoRequestTaskNotificationsPermission();
+  };
+
+  document.addEventListener("pointerdown", tryWithGesture, { once: true });
+  document.addEventListener("keydown", tryWithGesture, { once: true });
+}
+
+function syncTaskNotificationControls(){
+  const permission = getBrowserNotificationPermission();
+
+  if(taskNotificationsToggle){
+    taskNotificationsToggle.checked = taskNotificationsEnabled;
+    taskNotificationsToggle.disabled = permission === "unsupported";
+  }
+
+  updateNotificationPermissionHint();
 }
 
 function syncOfficeModeControls(){
@@ -2039,6 +2372,40 @@ function syncOfficeModeControls(){
   if(settingsAuthNote){
     settingsAuthNote.classList.toggle("show", !currentUser);
   }
+
+  syncTaskNotificationControls();
+}
+
+function isMobileSettingsViewport(){
+  return window.matchMedia("(max-width: 900px)").matches;
+}
+
+function getActiveSettingsNavItem(){
+  return settingsNavItems.find(item => item.classList.contains("active")) || settingsNavItems[0] || null;
+}
+
+function syncMobileSettingsNavState(){
+  if(!settingsMobileNavToggle) return;
+
+  const activeItem = getActiveSettingsNavItem();
+  const activeLabel = activeItem?.textContent?.trim() || "Cuenta";
+  const activeIcon = activeItem?.querySelector(".settings-nav-icon")?.innerHTML || "";
+  const isExpanded = Boolean(isMobileSettingsViewport() && settingsNav?.classList.contains("mobile-open"));
+
+  if(settingsMobileNavCurrentLabel){
+    settingsMobileNavCurrentLabel.textContent = activeLabel;
+  }
+
+  if(settingsMobileNavCurrentIcon){
+    settingsMobileNavCurrentIcon.innerHTML = activeIcon;
+  }
+
+  settingsMobileNavToggle.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+}
+
+function closeMobileSettingsNav(){
+  settingsNav?.classList.remove("mobile-open");
+  syncMobileSettingsNavState();
 }
 
 function openSettingsPanel(panelName = "security"){
@@ -2051,17 +2418,234 @@ function openSettingsPanel(panelName = "security"){
       panel.classList.toggle("active", name === panelName);
     }
   });
+
+  syncMobileSettingsNavState();
 }
 
 function openSettingsOverlay(panelName = "security"){
+  const effectivePanel = (isMobileSettingsViewport() && panelName === "security")
+    ? "account"
+    : panelName;
+
   updateSettingsProfile();
+  renderSettingsAccountPanel();
   syncOfficeModeControls();
-  openSettingsPanel(panelName);
+  openSettingsPanel(effectivePanel);
+  closeMobileSettingsNav();
   settingsOverlay.classList.add("open");
 }
 
 function closeSettingsOverlay(){
+  closeFeedbackModal();
+  closeMobileSettingsNav();
   settingsOverlay.classList.remove("open");
+}
+
+function getFeedbackConfig(type){
+  return type === "error"
+    ? {
+        typeLabel: "Reporte de error",
+        badge: "Soporte",
+        title: "Reportar un error",
+        description: "Contanos qué pasó y, si podés, incluí el momento exacto o los pasos para reproducirlo.",
+        fieldLabel: "Describe el error en detalle",
+        placeholder: "Ejemplo: al mover una tarea entre proyectos, desaparece después de recargar."
+      }
+    : {
+        typeLabel: "Sugerencia",
+        badge: "Ideas",
+        title: "Enviar una sugerencia",
+        description: "Compartí la mejora que te gustaría ver en MultiTareas y, si querés, cómo te imaginás el flujo.",
+        fieldLabel: "Describe tu sugerencia en detalle",
+        placeholder: "Ejemplo: me gustaría poder filtrar tareas por etiqueta y guardar vistas favoritas."
+      };
+}
+
+function updateHelpButtonSentState(button){
+  if(!button) return;
+
+  const originalHtml = button.dataset.originalHtml || button.innerHTML;
+  button.dataset.originalHtml = originalHtml;
+
+  const activeTimer = Number(button.dataset.sentTimerId || 0);
+  if(activeTimer){
+    clearTimeout(activeTimer);
+  }
+
+  button.classList.add("is-sent");
+  button.innerHTML = `
+    <span class="settings-help-btn-title">Enviado</span>
+    <span class="settings-help-btn-subtitle">Gracias por enviarnos tu aporte.</span>
+  `;
+
+  const nextTimer = window.setTimeout(() => {
+    button.classList.remove("is-sent");
+    button.innerHTML = originalHtml;
+    delete button.dataset.sentTimerId;
+  }, 2600);
+
+  button.dataset.sentTimerId = String(nextTimer);
+}
+
+async function sendFeedbackEmail({ type, message }){
+  if(FEEDBACK_FORM_ENDPOINT.includes("TU_GMAIL@gmail.com")){
+    throw new Error("FEEDBACK_ENDPOINT_NOT_CONFIGURED");
+  }
+
+  const reporterName = currentUser?.displayName?.trim() || "Invitado";
+
+  const details = [
+    `Tipo: ${type}`,
+    `Nombre: ${reporterName}`,
+    `Version: ${APP_VERSION}`,
+    `Nombre de cuenta: ${currentUser?.displayName || "Sin sesion iniciada"}`,
+    `Email de cuenta: ${currentUser?.email || "No disponible"}`,
+    `UID: ${currentUser?.uid || "No disponible"}`,
+    `Fecha local: ${new Date().toLocaleString("es-AR")}`,
+    `Origen: ${window.location.href}`,
+    "",
+    "Detalle:",
+    message
+  ].join("\n");
+
+  const formData = new FormData();
+  formData.append("name", reporterName);
+  if(currentUser?.email){
+    formData.append("email", currentUser.email);
+  }
+  formData.append("message", details);
+  formData.append("tipo", type);
+  formData.append("nombre_persona", reporterName);
+  formData.append("version_app", APP_VERSION);
+  formData.append("texto", message);
+  formData.append("nombre_cuenta", currentUser?.displayName || "Sin sesion iniciada");
+  formData.append("email_cuenta", currentUser?.email || "No disponible");
+  formData.append("_subject", `[MultiTareas ${APP_VERSION}] ${type} - ${reporterName}`);
+  formData.append("_template", "table");
+  formData.append("_captcha", "false");
+
+  const response = await fetch(FEEDBACK_FORM_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Accept: "application/json"
+    },
+    body: formData
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if(!response.ok || data?.success === false){
+    throw new Error(data?.message || "FEEDBACK_SEND_FAILED");
+  }
+}
+
+function closeFeedbackModal(){
+  document.getElementById("feedbackModalOverlay")?.remove();
+}
+
+function openFeedbackModal(type, triggerButton){
+  closeFeedbackModal();
+
+  const config = getFeedbackConfig(type);
+  const overlay = document.createElement("div");
+  overlay.className = "overlay open";
+  overlay.id = "feedbackModalOverlay";
+  overlay.innerHTML = `
+    <div class="feedback-modal" role="dialog" aria-modal="true" aria-labelledby="feedbackModalTitle">
+      <div class="feedback-modal-header">
+        <div class="feedback-modal-badge">${config.badge}</div>
+        <h3 id="feedbackModalTitle">${config.title}</h3>
+        <p>${config.description}</p>
+      </div>
+
+      <label class="feedback-field">
+        <span>${config.fieldLabel}</span>
+        <textarea id="feedbackMessageInput" class="feedback-textarea" maxlength="2000" placeholder="${config.placeholder}"></textarea>
+      </label>
+
+      <div class="feedback-meta">
+        <div class="feedback-meta-chip">Version ${APP_VERSION}</div>
+      </div>
+
+      <div id="feedbackStatus" class="feedback-status"></div>
+
+      <div class="feedback-actions">
+        <button id="feedbackCancelBtn" class="feedback-secondary-btn" type="button">Cancelar</button>
+        <button id="feedbackSubmitBtn" class="feedback-primary-btn" type="button">Enviar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const messageInput = overlay.querySelector("#feedbackMessageInput");
+  const status = overlay.querySelector("#feedbackStatus");
+  const cancelBtn = overlay.querySelector("#feedbackCancelBtn");
+  const submitBtn = overlay.querySelector("#feedbackSubmitBtn");
+
+  if(messageInput){
+    requestAnimationFrame(() => {
+      messageInput.focus();
+    });
+  }
+
+  const closeModal = () => closeFeedbackModal();
+
+  cancelBtn?.addEventListener("click", closeModal);
+
+  overlay.addEventListener("click", (event) => {
+    if(event.target === overlay){
+      closeModal();
+    }
+  });
+
+  overlay.addEventListener("keydown", (event) => {
+    if((event.metaKey || event.ctrlKey) && event.key === "Enter"){
+      submitBtn?.click();
+    }
+  });
+
+  submitBtn?.addEventListener("click", async () => {
+    const message = messageInput?.value.trim() || "";
+
+    status.classList.remove("success");
+
+    if(!message){
+      status.textContent = config.fieldLabel;
+      messageInput?.focus();
+      return;
+    }
+
+    submitBtn.disabled = true;
+    cancelBtn.disabled = true;
+    submitBtn.textContent = "Enviando...";
+    status.textContent = "";
+
+    try{
+      await sendFeedbackEmail({
+        type: config.typeLabel,
+        message
+      });
+
+      submitBtn.textContent = "Enviado";
+      status.textContent = "Enviado correctamente.";
+      status.classList.add("success");
+      updateHelpButtonSentState(triggerButton);
+      showToast("Enviado");
+
+      window.setTimeout(() => {
+        closeModal();
+      }, 550);
+    }catch(err){
+      console.error(err);
+      submitBtn.disabled = false;
+      cancelBtn.disabled = false;
+      submitBtn.textContent = "Enviar";
+      status.textContent = err.message === "FEEDBACK_ENDPOINT_NOT_CONFIGURED"
+        ? "Falta configurar el Gmail de destino en app.js."
+        : "No se pudo enviar. Intenta nuevamente.";
+    }
+  });
 }
 
 async function saveOfficeModePreferences(updates){
@@ -2076,7 +2660,8 @@ async function saveOfficeModePreferences(updates){
 
 settingsBtn.addEventListener("click", (e) => {
   e.stopPropagation();
-  openSettingsOverlay("security");
+  closeCornerMenu();
+  openSettingsOverlay("account");
 });
 
 settingsCloseBtn?.addEventListener("click", closeSettingsOverlay);
@@ -2087,10 +2672,46 @@ settingsOverlay?.addEventListener("click", e=>{
   }
 });
 
+settingsMobileNavToggle?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if(!isMobileSettingsViewport() || !settingsNav){
+    return;
+  }
+  settingsNav.classList.toggle("mobile-open");
+  syncMobileSettingsNavState();
+});
+
 settingsNavItems.forEach(item=>{
   item.addEventListener("click", ()=>{
+    renderSettingsAccountPanel();
+    syncTaskNotificationControls();
     openSettingsPanel(item.dataset.settingsPanel);
+    if(isMobileSettingsViewport()){
+      closeMobileSettingsNav();
+    }
   });
+});
+
+reportErrorBtn?.addEventListener("click", () => {
+  closeSettingsOverlay();
+  openFeedbackModal("error", reportErrorBtn);
+});
+
+suggestFeatureBtn?.addEventListener("click", () => {
+  closeSettingsOverlay();
+  openFeedbackModal("suggestion", suggestFeatureBtn);
+});
+
+settingsAccountLogoutBtn?.addEventListener("click", async (e) => {
+  e.stopPropagation();
+  closeSettingsOverlay();
+
+  if (!currentUser) {
+    await signInWithPopup(auth, provider);
+    return;
+  }
+
+  logoutOverlay.classList.add("open");
 });
 
 officeModeToggle?.addEventListener("change", async ()=>{
@@ -2127,11 +2748,72 @@ officeModeTimeoutSelect?.addEventListener("change", async ()=>{
   }
 });
 
+taskNotificationsToggle?.addEventListener("change", async ()=>{
+  if(!taskNotificationsToggle.checked){
+    taskNotificationsEnabled = false;
+    persistTaskNotificationsPreference();
+    clearScheduledTaskNotifications();
+    syncTaskNotificationControls();
+    showToast("Notificaciones de tareas desactivadas");
+    return;
+  }
+
+  const permission = await requestTaskNotificationPermissionIfNeeded();
+
+  if(permission !== "granted"){
+    taskNotificationsEnabled = false;
+    persistTaskNotificationsPreference();
+    clearScheduledTaskNotifications();
+    syncTaskNotificationControls();
+
+    if(permission === "denied"){
+      showToast("Permiso de notificaciones bloqueado");
+    }else if(permission === "unsupported"){
+      showToast("Este navegador no soporta notificaciones");
+    }else{
+      showToast("Permiso de notificaciones no concedido");
+    }
+    return;
+  }
+
+  taskNotificationsEnabled = true;
+  persistTaskNotificationsPreference();
+  syncTaskNotificationControls();
+  scheduleTaskNotifications();
+  showToast("Notificaciones de tareas activadas");
+});
+
 document.addEventListener("keydown", e=>{
+  if(e.key === "Escape" && document.getElementById("feedbackModalOverlay")){
+    closeFeedbackModal();
+    return;
+  }
+
   if(e.key === "Escape" && settingsOverlay?.classList.contains("open")){
     closeSettingsOverlay();
   }
 });
+
+document.addEventListener("visibilitychange", ()=>{
+  if(document.hidden) return;
+  syncTaskNotificationControls();
+  scheduleTaskNotifications();
+});
+
+window.addEventListener("resize", () => {
+  if(!isMobileSettingsViewport()){
+    closeMobileSettingsNav();
+    return;
+  }
+  syncMobileSettingsNavState();
+});
+
+syncMobileSettingsNavState();
+syncTaskNotificationControls();
+window.setTimeout(() => {
+  maybeAutoRequestTaskNotificationsPermission();
+}, 500);
+bindAutoNotificationPermissionFallback();
 
 
 if(tasksViewBtn){
@@ -2174,6 +2856,7 @@ let soundEnabled = JSON.parse(localStorage.getItem("soundEnabled"));
 if (soundEnabled === null) soundEnabled = true;
 
 async function save(){
+  scheduleTaskNotifications();
 
   // 🔴 si no hay internet → guardar directo en local
   if(!navigator.onLine){
@@ -2309,6 +2992,8 @@ function isToday(d) {
 
 function createDayColumn(date, externalTasks = null, projectId = null) {
   const dayIndex = date ? date.getDay() : null;
+  const dayName = dayIndex !== null ? DAYS[dayIndex].toUpperCase() : "";
+  const dayNumber = date ? date.getDate() : "";
   const iso = date ? formatLocalDate(date) : undefined;
 
   const isProject = projectId !== null;
@@ -2333,7 +3018,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
   const col = document.createElement("div");
   col.className = "col";
-  if (date && isToday(date)) {
+  if (isTodayColumn) {
     col.classList.add("today-highlight");
   } else {
     col.classList.add("not-today");
@@ -2341,8 +3026,12 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
   col.innerHTML = `
     <div class="col-head">
-      <div>
-        <div class="col-title">${DAYS[dayIndex]}</div>
+      <div class="col-head-main">
+        <div class="col-topline ${date ? "has-date" : "no-date"} ${isTodayColumn ? "is-today" : ""}">
+          <div class="col-title">${dayName}</div>
+          ${date ? (isTodayColumn ? `<span class="pill today">Hoy</span>` : `<span class="col-topline-spacer" aria-hidden="true"></span>`) : ""}
+          ${date ? `<span class="col-day-number" aria-hidden="true">${dayNumber}</span>` : ""}
+        </div>
         <div class="col-sub">${date ? date.toLocaleDateString() : ""}</div>
 
         <div class="progress-wrapper">
@@ -2352,10 +3041,6 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           <div class="progress-percent">0%</div>
         </div>
       </div>
-
-      ${date && isToday(date) ? `
-        <span class="pill today">Hoy</span>
-      ` : ""}
     </div>
 
     <div class="list"></div>
@@ -3833,7 +4518,7 @@ function renderProjectsView(){
 
   addCard.onclick = async ()=>{
 
-    const title = prompt("Nombre del proyecto");
+    const title = await openProjectNameDialog();
 
     if(!title) return;
 
@@ -3935,6 +4620,7 @@ function renderProjectsView(){
     }
 
     const titleRow = column.querySelector(".col-title");
+    const topLine = column.querySelector(".col-topline");
 
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "icon danger project-delete";
@@ -3949,14 +4635,18 @@ function renderProjectsView(){
     </svg>
     `;
 
-    titleRow.appendChild(deleteBtn);
+    const deleteHost = topLine || titleRow;
+    if (deleteHost) {
+      deleteHost.appendChild(deleteBtn);
+    }
 
-    deleteBtn.onclick = async ()=>{
+    deleteBtn.onclick = async (e)=>{
+      e.stopPropagation();
 
       draggedElement = null;
       previewInsertIndex = null;
 
-      const confirmDelete = confirm("¿Eliminar proyecto?");
+      const confirmDelete = await openProjectDeleteDialog(project.title);
 
       if(!confirmDelete) return;
 
@@ -4003,6 +4693,7 @@ function init() {
   if(currentViewMode === "projects"){
     renderProjectsView();
     renderMiniCalendar();
+    scheduleTaskNotifications();
     return;
   }
 
@@ -4016,6 +4707,164 @@ function init() {
 
   renderMiniCalendar();
   updateLevel();
+  scheduleTaskNotifications();
+}
+
+function closeProjectDialogOverlay(){
+  document.getElementById("projectDialogOverlay")?.remove();
+}
+
+function openProjectNameDialog(){
+  closeProjectDialogOverlay();
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "overlay open";
+    overlay.id = "projectDialogOverlay";
+    overlay.innerHTML = `
+      <div class="project-dialog-modal" role="dialog" aria-modal="true" aria-labelledby="projectDialogTitle">
+        <div class="project-dialog-icon">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h3.2c.5 0 1 .2 1.3.6l1 1.1c.3.3.8.6 1.3.6H17.5A2.5 2.5 0 0 1 20 9.8v6.7a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+            <path d="M12 10.5v5M9.5 13h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h3 id="projectDialogTitle">Nuevo proyecto</h3>
+        <p>Elige un nombre para organizar tus tareas dentro de una nueva columna.</p>
+
+        <label class="project-dialog-field" for="projectDialogNameInput">
+          Nombre del proyecto
+        </label>
+        <input id="projectDialogNameInput" class="project-dialog-input" type="text" maxlength="64" placeholder="Ejemplo: Trabajo, Universidad, Personal">
+        <div id="projectDialogError" class="project-dialog-error"></div>
+
+        <div class="project-dialog-actions">
+          <button id="projectDialogCancel" class="btn-cancel" type="button">Cancelar</button>
+          <button id="projectDialogConfirm" class="project-dialog-primary" type="button">Crear proyecto</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const input = overlay.querySelector("#projectDialogNameInput");
+    const errorEl = overlay.querySelector("#projectDialogError");
+    const cancelBtn = overlay.querySelector("#projectDialogCancel");
+    const confirmBtn = overlay.querySelector("#projectDialogConfirm");
+    let settled = false;
+    const handleEscape = (e) => {
+      if (e.key === "Escape") {
+        finish(null);
+      }
+    };
+
+    const finish = (value = null) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", handleEscape);
+      overlay.remove();
+      resolve(value);
+    };
+
+    const submit = () => {
+      const value = input?.value.trim() || "";
+      if (!value) {
+        if (errorEl) errorEl.textContent = "Escribe un nombre para continuar.";
+        input?.focus();
+        return;
+      }
+
+      finish(value);
+    };
+
+    requestAnimationFrame(() => {
+      input?.focus();
+    });
+
+    input?.addEventListener("input", () => {
+      if (errorEl) errorEl.textContent = "";
+    });
+
+    cancelBtn?.addEventListener("click", () => finish(null));
+    confirmBtn?.addEventListener("click", submit);
+
+    input?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submit();
+      }
+    });
+
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) {
+        finish(null);
+      }
+    });
+
+    document.addEventListener("keydown", handleEscape);
+  });
+}
+
+function openProjectDeleteDialog(projectTitle){
+  closeProjectDialogOverlay();
+
+  return new Promise((resolve) => {
+    const safeTitle = (projectTitle || "este proyecto").trim();
+    const overlay = document.createElement("div");
+    overlay.className = "overlay open";
+    overlay.id = "projectDialogOverlay";
+    overlay.innerHTML = `
+      <div class="project-dialog-modal project-dialog-modal-danger" role="dialog" aria-modal="true" aria-labelledby="projectDeleteDialogTitle">
+        <div class="project-dialog-icon project-dialog-icon-danger">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M4 7h16M9 7V5h6v2M7 7l1 12h8l1-12M10 11v5M14 11v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h3 id="projectDeleteDialogTitle">Eliminar proyecto</h3>
+        <p>Se eliminará <strong id="projectDeleteName"></strong> y todas sus tareas. Esta acción no se puede deshacer.</p>
+
+        <div class="project-dialog-actions">
+          <button id="projectDeleteCancel" class="btn-cancel" type="button">Cancelar</button>
+          <button id="projectDeleteConfirm" class="project-dialog-danger" type="button">Eliminar</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const cancelBtn = overlay.querySelector("#projectDeleteCancel");
+    const confirmBtn = overlay.querySelector("#projectDeleteConfirm");
+    const projectName = overlay.querySelector("#projectDeleteName");
+    let settled = false;
+    const handleEscape = (e) => {
+      if (e.key === "Escape") {
+        finish(false);
+      }
+    };
+
+    if (projectName) {
+      projectName.textContent = safeTitle;
+    }
+
+    const finish = (confirmed = false) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", handleEscape);
+      overlay.remove();
+      resolve(confirmed);
+    };
+
+    cancelBtn?.addEventListener("click", () => finish(false));
+    confirmBtn?.addEventListener("click", () => finish(true));
+
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) {
+        finish(false);
+      }
+    });
+
+    document.addEventListener("keydown", handleEscape);
+  });
 }
 
 const completeSound = new Audio("/sounds/task_complete.wav");
@@ -4326,6 +5175,52 @@ async function showTaskMobileMenu(taskElement, taskData, render){
       <span>${title}</span>
     </button>
   `;
+
+  const removeMobileTaskFromSource = () => {
+    const sourceProjectId = taskElement.dataset.project || null;
+    const sourceDate = taskElement.dataset.date || null;
+    const sourceList = sourceProjectId
+      ? projects[sourceProjectId]?.tasks
+      : tasks[sourceDate];
+
+    if (!Array.isArray(sourceList)) return false;
+
+    let taskIndex = sourceList.indexOf(taskData);
+
+    if (taskIndex === -1) {
+      const renderedIndex = Number(taskElement.dataset.index);
+      if (
+        Number.isInteger(renderedIndex) &&
+        renderedIndex >= 0 &&
+        renderedIndex < sourceList.length &&
+        sourceList[renderedIndex] === taskData
+      ) {
+        taskIndex = renderedIndex;
+      }
+    }
+
+    if (taskIndex === -1) {
+      taskIndex = sourceList.findIndex((task) => {
+        if (task === taskData) return true;
+        if (!task || !taskData) return false;
+        return (
+          task.text === taskData.text &&
+          !!task.done === !!taskData.done &&
+          (task.timeSlot || null) === (taskData.timeSlot || null)
+        );
+      });
+    }
+
+    if (taskIndex === -1) return false;
+
+    sourceList.splice(taskIndex, 1);
+
+    if (!sourceProjectId && sourceDate && sourceList.length === 0) {
+      delete tasks[sourceDate];
+    }
+
+    return true;
+  };
 
   const openMobileSchedule = () => {
     const todayIso = formatLocalDate(new Date());
@@ -4670,14 +5565,33 @@ async function showTaskMobileMenu(taskElement, taskData, render){
       };
     }
 
-    menu.querySelector('[data-action="delete"]').onclick = (e) => {
+    menu.querySelector('[data-action="delete"]').onclick = async (e) => {
       e.preventDefault();
-      cleanup();
+      e.stopPropagation();
       const confirmDelete = confirm("¿Eliminar esta tarea?");
       if (!confirmDelete) return;
-      removeTask(taskData);
-      save();
+      cleanup({ skipRefresh: true });
+
+      if (soundEnabled) {
+        playDeleteTaskSound();
+      }
+
+      const removed = removeMobileTaskFromSource();
+      if (!removed) {
+        showToast("No se pudo eliminar la tarea.");
+        render();
+        renderMiniCalendar();
+        return;
+      }
+
+      await save();
       render();
+      renderMiniCalendar();
+
+      const sourceDate = taskElement.dataset.date || "";
+      if (sourceDate) {
+        updateDayModalTaskCount(sourceDate);
+      }
     };
   };
 
@@ -4692,17 +5606,27 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
 const soundToggle = document.getElementById("soundToggleTop");
 const soundIcon = document.getElementById("soundIcon");
+const soundStateText = document.getElementById("soundStateText");
 
 updateSoundIcon();
 
 soundToggle.addEventListener("click", (e) => {
   e.stopPropagation();
+  const wasEnabled = soundEnabled;
   soundEnabled = !soundEnabled;
   localStorage.setItem("soundEnabled", soundEnabled);
   updateSoundIcon();
+
+  if (!wasEnabled && soundEnabled) {
+    playAddTaskSound();
+  }
 });
 
 function updateSoundIcon() {
+  if(soundStateText){
+    soundStateText.textContent = soundEnabled ? "Activado" : "Desactivado";
+  }
+
   if (soundEnabled) {
     soundIcon.innerHTML = `
       <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
@@ -5119,6 +6043,7 @@ let currentTheme = "theme-default";
 
 themeToggle.addEventListener("click", (e) => {
   e.stopPropagation();
+  closeCornerMenu();
   openThemeModal();
 });
 
@@ -5191,11 +6116,20 @@ sidebarToggle.addEventListener("click", () => {
 const mobileSidebarOpen = document.getElementById("mobileSidebarOpen");
 
 const desktopCollapsedCalendar = document.getElementById("desktopCollapsedCalendar");
+const desktopCollapsedHelp = document.getElementById("desktopCollapsedHelp");
 
 if (desktopCollapsedCalendar && sidebar) {
   desktopCollapsedCalendar.addEventListener("click", (e) => {
     e.stopPropagation();
     sidebar.classList.remove("collapsed");
+  });
+}
+
+if (desktopCollapsedHelp) {
+  desktopCollapsedHelp.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeCornerMenu();
+    openSettingsOverlay("help");
   });
 }
 
@@ -5229,12 +6163,32 @@ setInterval(() => {
 }, 600000); // cada 10 minutos
 
 const modeBtn = document.getElementById("modeToggle");
+const modeToggleTopMobile = document.getElementById("modeToggleTopMobile");
 
 const modeBtnMobile = document.getElementById("modeToggleMobile");
+const settingsBtnMobile = document.getElementById("settingsToggleMobile");
+
+if (modeToggleTopMobile && modeBtn) {
+  modeToggleTopMobile.addEventListener("click", (e) => {
+    e.stopPropagation();
+    modeBtn.click();
+  });
+}
 
 if(modeBtnMobile){
   modeBtnMobile.addEventListener("click", ()=>{
     modeBtn.click();
+  });
+}
+
+if(settingsBtnMobile){
+  settingsBtnMobile.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    closeCornerMenu();
+    if(sidebar && window.matchMedia("(max-width: 900px)").matches){
+      sidebar.classList.add("collapsed");
+    }
+    openSettingsOverlay("security");
   });
 }
 
@@ -5548,28 +6502,12 @@ function updateModeIcon() {
 
 }
 
-function updateLevelButton(level, progress){
-
-  const circle = document.querySelector(".level-ring-progress");
-  const number = document.getElementById("levelNumber");
-  if(!circle || !number) return;
-
-  const arcLength = circle.getTotalLength();
-
-  circle.style.strokeDasharray = arcLength;
-  circle.style.strokeDashoffset =
-      arcLength - (progress * arcLength);
-
-  number.textContent = level;
-}
-
-function updateLevel(){
-
+function getLevelProgressState(){
+  const totalExp = Math.max(0, Number(player?.exp) || 0);
   let level = 0;
-  let expRemaining = player.exp;
+  let expRemaining = totalExp;
 
   while(true){
-
     const needed = getExpForLevel(level);
 
     if(expRemaining >= needed){
@@ -5578,8 +6516,44 @@ function updateLevel(){
     }else{
       break;
     }
-
   }
+
+  const needed = getExpForLevel(level);
+  const rawProgress = needed > 0 ? expRemaining / needed : 0;
+  const progress = Math.max(0, Math.min(1, rawProgress));
+
+  return { level, expRemaining, needed, progress };
+}
+
+function updateLevelButton(level, progress){
+  const safeProgress = Math.max(0, Math.min(1, Number(progress) || 0));
+
+  const number = document.getElementById("levelNumber");
+  if(number) number.textContent = level;
+
+  const triggerLevel = document.getElementById("profileTriggerLevel");
+  if(triggerLevel) triggerLevel.textContent = String(level);
+
+  const triggerProgress = document.getElementById("profileTriggerProgress");
+  if(triggerProgress){
+    triggerProgress.style.width = `${safeProgress * 100}%`;
+  }
+
+  const ringProgress = document.querySelector(".level-ring-progress");
+  if(ringProgress){
+    const cachedLength = Number(ringProgress.dataset.arcLength) || 0;
+    const arcLength = cachedLength > 0 ? cachedLength : ringProgress.getTotalLength();
+
+    if(Number.isFinite(arcLength) && arcLength > 0){
+      ringProgress.dataset.arcLength = String(arcLength);
+      ringProgress.style.strokeDasharray = `${arcLength}`;
+      ringProgress.style.strokeDashoffset = `${arcLength * (1 - safeProgress)}`;
+    }
+  }
+}
+
+function updateLevel(){
+  const { level, progress } = getLevelProgressState();
 
   if(level > player.level){
 
@@ -5598,9 +6572,6 @@ function updateLevel(){
     launchConfetti();
     savePlayer();
   }
-
-  const needed = getExpForLevel(level);
-  const progress = expRemaining / needed;
 
   updateLevelButton(level, progress);
 
@@ -5687,49 +6658,51 @@ function getExpForLevel(level){
 const levelButton = document.getElementById("levelButton");
 const levelMenu = document.getElementById("levelMenu");
 
-document.body.appendChild(levelMenu);
-
-levelButton.addEventListener("click", (e)=>{
-
-  e.stopPropagation();
-
-  const rect = levelButton.getBoundingClientRect();
-
-  levelMenu.style.top = rect.bottom + 12 + "px";
-  levelMenu.style.left = rect.left - 170 + "px";
-
-  levelMenu.classList.toggle("open");
-
-  updateLevelMenu();
-
-});
-
-document.addEventListener("click", ()=>{
+function closeLevelMenu() {
+  if (!levelMenu) return;
   levelMenu.classList.remove("open");
+}
+
+if (levelMenu) {
+  document.body.appendChild(levelMenu);
+}
+
+if (levelButton && levelMenu) {
+  levelButton.addEventListener("click", (e)=>{
+
+    e.stopPropagation();
+
+    const rect = levelButton.getBoundingClientRect();
+
+    levelMenu.style.top = rect.bottom + 12 + "px";
+    levelMenu.style.left = rect.left - 170 + "px";
+
+    levelMenu.classList.toggle("open");
+
+    updateLevelMenu();
+
+  });
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (!levelMenu || !levelButton) return;
+  if (!levelMenu.classList.contains("open")) return;
+  if (levelMenu.contains(e.target)) return;
+  if (levelButton.contains(e.target)) return;
+  closeLevelMenu();
+}, true);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeLevelMenu();
+  }
 });
 
 function updateLevelMenu(){
   resetDailyExpIfNeeded();
 
-  let level = 0;
-  let expRemaining = player.exp;
-
-  while(true){
-
-    const needed = getExpForLevel(level);
-
-    if(expRemaining >= needed){
-      expRemaining -= needed;
-      level++;
-    }else{
-      break;
-    }
-
-  }
-
-  const needed = getExpForLevel(level);
-
-  const percent = (expRemaining / needed) * 100;
+  const { expRemaining, needed, progress } = getLevelProgressState();
+  const percent = progress * 100;
 
   document.getElementById("levelProgressFill").style.width =
       percent + "%";
@@ -5758,7 +6731,7 @@ if(leaderboardFromLevelBtn){
 
     e.stopPropagation();
 
-    levelMenu.classList.remove("open");
+    closeLevelMenu();
 
     openLeaderboard();
 
