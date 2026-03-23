@@ -3974,9 +3974,8 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               if (shouldSavePlayer) await savePlayer();
               render();
               renderMiniCalendar();
+              checkAchievements({ dateContext: dayCompleted ? iso : null });
             }, delay);
-
-            checkAchievements({ dateContext: dayCompleted ? iso : null });
             return true;
           }
         }
