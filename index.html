@@ -3165,9 +3165,10 @@
       cursor: pointer;
       overflow: hidden;
 
-      display:flex;
+      display:grid;
+      grid-template-columns:auto minmax(0,1fr) auto;
       align-items:center;
-      gap:8px;
+      column-gap:8px;
 
       background:
         linear-gradient(
@@ -3319,6 +3320,7 @@
       width:16px;
       height:16px;
       flex:0 0 16px;
+      justify-self:end;
       color: color-mix(in srgb, var(--text) 65%, transparent);
       transition: transform .2s ease;
     }
@@ -5130,42 +5132,26 @@
       visibility:hidden;
     }
 
-    .corner-container.collapsed .login-circle{
-      justify-content:center;
-      padding:0 14px;
-    }
-
+    .corner-container.collapsed .login-circle,
     .corner-container.expanded .login-circle{
-      justify-content:center;
       padding:0 14px;
     }
 
-    .corner-container.collapsed .login-circle .profile-trigger-copy{
-      flex:0 1 auto;
-      max-width: clamp(120px, 40vw, 190px);
-      align-items:center;
-    }
-
+    .corner-container.collapsed .login-circle .profile-trigger-copy,
     .corner-container.expanded .login-circle .profile-trigger-copy{
-      flex:0 1 auto;
-      max-width: clamp(120px, 40vw, 190px);
-      align-items:center;
+      flex:1 1 auto;
+      max-width:none;
+      align-items:flex-start;
     }
 
-    .corner-container.collapsed .login-circle .profile-trigger-name{
-      text-align:center;
-    }
-
+    .corner-container.collapsed .login-circle .profile-trigger-name,
     .corner-container.expanded .login-circle .profile-trigger-name{
-      text-align:center;
+      text-align:left;
     }
 
-    .corner-container.collapsed .login-circle .profile-trigger-level-row{
-      justify-content:center;
-    }
-
+    .corner-container.collapsed .login-circle .profile-trigger-level-row,
     .corner-container.expanded .login-circle .profile-trigger-level-row{
-      justify-content:center;
+      justify-content:flex-start;
     }
 
     .corner-container.expanded .corner-dropdown{
