@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="mtGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C38CFF"/>
+      <stop offset="52%" stop-color="#8EE8FF"/>
+      <stop offset="100%" stop-color="#FFD46A"/>
+    </linearGradient>
+  </defs>
+  <rect x="28" y="28" width="456" height="456" rx="116" fill="url(#mtGradient)"/>
+  <path
+    d="M148 276 L226 354 L366 214"
+    fill="none"
+    stroke="#F8FAFC"
+    stroke-width="56"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M148 276 L226 354 L366 214"
+    fill="none"
+    stroke="#111827"
+    stroke-width="36"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

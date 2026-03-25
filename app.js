@@ -2809,6 +2809,7 @@ document.addEventListener("visibilitychange", ()=>{
 
 window.addEventListener("resize", () => {
   updateGreeting(currentUser);
+  fitAllTodayLongDayTitles();
   if(!isMobileSettingsViewport()){
     closeMobileSettingsNav();
     return;
@@ -2998,6 +2999,44 @@ function isToday(d) {
   return d.toDateString() === t.toDateString();
 }
 
+function fitTodayLongDayTitle(column) {
+  const title = column?.querySelector(".col-topline.is-today .col-title.col-title-long-today");
+  if (!title) return;
+
+  title.style.removeProperty("font-size");
+  title.style.removeProperty("letter-spacing");
+
+  const isMobile = window.matchMedia("(max-width: 900px)").matches;
+  if (isMobile) return;
+
+  if (title.clientWidth <= 0) return;
+
+  const computed = window.getComputedStyle(title);
+  let fontSize = parseFloat(computed.fontSize) || 15;
+  const minFontSize = 13;
+  let guard = 0;
+
+  while (title.scrollWidth > title.clientWidth && fontSize > minFontSize && guard < 30) {
+    fontSize -= 0.25;
+    title.style.fontSize = `${fontSize}px`;
+    guard += 1;
+  }
+
+  if (title.scrollWidth > title.clientWidth) {
+    title.style.letterSpacing = "-.05em";
+    guard = 0;
+    while (title.scrollWidth > title.clientWidth && fontSize > minFontSize - 0.8 && guard < 20) {
+      fontSize -= 0.2;
+      title.style.fontSize = `${fontSize}px`;
+      guard += 1;
+    }
+  }
+}
+
+function fitAllTodayLongDayTitles() {
+  document.querySelectorAll(".col").forEach((column) => fitTodayLongDayTitle(column));
+}
+
 function createDayColumn(date, externalTasks = null, projectId = null) {
   const dayIndex = date ? date.getDay() : null;
   const dayName = dayIndex !== null ? DAYS[dayIndex].toUpperCase() : "";
@@ -3059,6 +3098,12 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       <input class="input" placeholder="Nueva tarea…" enterkeyhint="done" />
     </div>
   `;
+
+  if (isTodayColumn && isLongDayName) {
+    requestAnimationFrame(() => {
+      fitTodayLongDayTitle(col);
+    });
+  }
 
   const list = col.querySelector(".list");
   list.dataset.date = iso || "";
