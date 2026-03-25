@@ -3001,13 +3001,14 @@ function isToday(d) {
 function createDayColumn(date, externalTasks = null, projectId = null) {
   const dayIndex = date ? date.getDay() : null;
   const dayName = dayIndex !== null ? DAYS[dayIndex].toUpperCase() : "";
-  const isLongDayName = dayName.length >= 9;
+  const isLongDayName = dayName.length >= 8;
   const dayNumber = date ? date.getDate() : "";
   const iso = date ? formatLocalDate(date) : undefined;
 
   const isProject = projectId !== null;
   const todayIso = formatLocalDate(new Date());
   const isTodayColumn = !isProject && iso === todayIso;
+  const todayLongDayTitleClass = isTodayColumn && isLongDayName ? "col-title-long-today" : "";
   let dayTasks;
 
   if (isProject) {
@@ -3037,7 +3038,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
     <div class="col-head">
       <div class="col-head-main">
         <div class="col-topline ${date ? "has-date" : "no-date"} ${isTodayColumn ? "is-today" : ""}">
-          <div class="col-title ${isTodayColumn && isLongDayName ? "col-title-long-today" : ""}">${dayName}</div>
+          <div class="col-title ${todayLongDayTitleClass}">${dayName}</div>
           ${date ? (isTodayColumn ? `<span class="pill today">Hoy</span>` : `<span class="col-topline-spacer" aria-hidden="true"></span>`) : ""}
           ${date ? `<span class="col-day-number" aria-hidden="true">${dayNumber}</span>` : ""}
         </div>
