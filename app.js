@@ -12,6 +12,7 @@ import {
   collection,
   getDocs,
   query,
+  where,
   orderBy,
   limit,
   updateDoc
@@ -52,6 +53,37 @@ let projectOrder = [];
 let taskLabels = [];
 let currentViewMode = localStorage.getItem("mt_view_mode") || "tasks";
 const storeKey = "mt_tasks_local";
+const PLAYER_STORE_KEY = "mt_player";
+const ADMIN_CONSOLE_CREDENTIALS = Object.freeze({
+  username: "admin",
+  password: "admin01"
+});
+const ADMIN_CONSOLE_SEQUENCE = [
+  "ArrowUp",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowLeft",
+  "ArrowRight",
+  "KeyM",
+  "KeyT"
+];
+const adminConsoleState = {
+  keyBuffer: [],
+  authenticated: false,
+  root: null,
+  loginPanel: null,
+  terminalPanel: null,
+  loginUserInput: null,
+  loginPasswordInput: null,
+  loginError: null,
+  loginForm: null,
+  commandForm: null,
+  commandInput: null,
+  output: null
+};
 const DAYS = [
   "Domingo",
   "Lunes",
@@ -945,6 +977,74 @@ function normalizePlayer(raw = {}) {
   return normalized;
 }
 
+function hasPlayerProgress(candidate){
+  if (!candidate || typeof candidate !== "object") return false;
+  const safeCandidate = normalizePlayer(candidate);
+  const achievementCount = Object.keys(safeCandidate.achievements || {}).length;
+
+  return (
+    Number(safeCandidate.updatedAt) > 0 ||
+    Number(safeCandidate.exp) > 0 ||
+    Number(safeCandidate.level) > 0 ||
+    achievementCount > 0
+  );
+}
+
+function readLocalPlayerSnapshot(){
+  try {
+    return normalizePlayer(JSON.parse(localStorage.getItem(PLAYER_STORE_KEY)) || {});
+  } catch (err) {
+    console.error(err);
+    return normalizePlayer({});
+  }
+}
+
+function persistPlayerLocalSnapshot(snapshot = player){
+  try {
+    localStorage.setItem(PLAYER_STORE_KEY, JSON.stringify(normalizePlayer(snapshot || {})));
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function comparePlayerFreshness(playerA, playerB){
+  const safeA = normalizePlayer(playerA || {});
+  const safeB = normalizePlayer(playerB || {});
+
+  const updatedAtA = Number(safeA.updatedAt) || 0;
+  const updatedAtB = Number(safeB.updatedAt) || 0;
+
+  if (updatedAtA !== updatedAtB) {
+    return updatedAtA > updatedAtB ? 1 : -1;
+  }
+
+  const expA = Number(safeA.exp) || 0;
+  const expB = Number(safeB.exp) || 0;
+  if (expA !== expB) {
+    return expA > expB ? 1 : -1;
+  }
+
+  const unlockedA = Object.keys(safeA.achievements || {}).length;
+  const unlockedB = Object.keys(safeB.achievements || {}).length;
+  if (unlockedA !== unlockedB) {
+    return unlockedA > unlockedB ? 1 : -1;
+  }
+
+  const levelA = Number(safeA.level) || 0;
+  const levelB = Number(safeB.level) || 0;
+  if (levelA !== levelB) {
+    return levelA > levelB ? 1 : -1;
+  }
+
+  return 0;
+}
+
+function pickMostRecentPlayer(playerA, playerB){
+  return comparePlayerFreshness(playerA, playerB) >= 0
+    ? normalizePlayer(playerA || {})
+    : normalizePlayer(playerB || {});
+}
+
 function isDayFullyCompleted(dateStr){
   if (!dateStr) return false;
   const list = tasks?.[dateStr];
@@ -1428,7 +1528,7 @@ function openTaskTimeQuickEditor(taskElement, taskData, render){
   window.addEventListener("resize", positionEditor, { once: true });
 }
 
-let player = normalizePlayer(JSON.parse(localStorage.getItem("mt_player")) || {});
+let player = readLocalPlayerSnapshot();
 
 if(localStorage.getItem("mt_theme_mode")==="light"){
   document.documentElement.classList.add("light-mode");
@@ -1553,6 +1653,558 @@ function setStatusNotLogged(){
   `;
 }
 
+function isEditableTarget(target){
+  if (!target || !(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName;
+  return (
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    target.isContentEditable
+  );
+}
+
+function ensureAdminConsoleStyles(){
+  if (document.getElementById("adminDebugConsoleStyles")) return;
+
+  const style = document.createElement("style");
+  style.id = "adminDebugConsoleStyles";
+  style.textContent = `
+    .admin-debug-root{
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      width: min(430px, calc(100vw - 24px));
+      max-height: min(72vh, 690px);
+      z-index: 130000;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity .2s ease, transform .2s ease;
+    }
+
+    .admin-debug-root.open{
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .admin-debug-card{
+      background: rgba(10, 12, 16, .96);
+      color: #e4f0ff;
+      border: 1px solid rgba(123, 201, 255, .34);
+      border-radius: 14px;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, .45);
+      overflow: hidden;
+      font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+      backdrop-filter: blur(8px);
+    }
+
+    .admin-debug-header{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(148, 187, 255, .26);
+      background: rgba(27, 33, 45, .95);
+      font-size: 12px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .admin-debug-close{
+      appearance: none;
+      border: 1px solid rgba(173, 220, 255, .35);
+      background: rgba(12, 18, 26, .95);
+      color: #dbf2ff;
+      border-radius: 9px;
+      padding: 4px 9px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .admin-debug-login,
+    .admin-debug-terminal{
+      padding: 13px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .admin-debug-login.hidden,
+    .admin-debug-terminal.hidden{
+      display: none;
+    }
+
+    .admin-debug-label{
+      font-size: 11px;
+      letter-spacing: .03em;
+      color: #adc2e8;
+    }
+
+    .admin-debug-input{
+      width: 100%;
+      border: 1px solid rgba(151, 192, 255, .36);
+      background: rgba(3, 8, 16, .96);
+      color: #f2f7ff;
+      border-radius: 10px;
+      padding: 9px 11px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .admin-debug-input:focus{
+      border-color: rgba(116, 214, 255, .86);
+      box-shadow: 0 0 0 2px rgba(62, 158, 222, .28);
+    }
+
+    .admin-debug-btn{
+      appearance: none;
+      border: 1px solid rgba(128, 215, 255, .4);
+      background: rgba(18, 82, 112, .9);
+      color: #ebf7ff;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      justify-self: start;
+    }
+
+    .admin-debug-error{
+      min-height: 16px;
+      font-size: 12px;
+      color: #ff9c9c;
+    }
+
+    .admin-debug-output{
+      min-height: 158px;
+      max-height: 300px;
+      overflow: auto;
+      background: rgba(2, 6, 12, .96);
+      border: 1px solid rgba(146, 182, 238, .24);
+      border-radius: 10px;
+      padding: 10px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .admin-debug-line{
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .admin-debug-line.info{ color: #dbe7ff; }
+    .admin-debug-line.ok{ color: #86f2bf; }
+    .admin-debug-line.warn{ color: #ffd58f; }
+    .admin-debug-line.error{ color: #ff9f9f; }
+  `;
+
+  document.head.appendChild(style);
+}
+
+function adminConsoleLog(message, type = "info"){
+  if (!adminConsoleState.output) return;
+
+  const line = document.createElement("div");
+  line.className = `admin-debug-line ${type}`;
+
+  const time = new Date().toLocaleTimeString("es-AR", { hour12: false });
+  line.textContent = `[${time}] ${message}`;
+
+  adminConsoleState.output.appendChild(line);
+  adminConsoleState.output.scrollTop = adminConsoleState.output.scrollHeight;
+}
+
+function setAdminConsoleAuthenticated(authenticated){
+  adminConsoleState.authenticated = !!authenticated;
+
+  if (!adminConsoleState.loginPanel || !adminConsoleState.terminalPanel) return;
+
+  adminConsoleState.loginPanel.classList.toggle("hidden", adminConsoleState.authenticated);
+  adminConsoleState.terminalPanel.classList.toggle("hidden", !adminConsoleState.authenticated);
+
+  if (adminConsoleState.authenticated) {
+    adminConsoleState.loginError.textContent = "";
+    adminConsoleLog("Acceso concedido. Escribí /help para ver comandos.", "ok");
+    adminConsoleState.commandInput?.focus();
+  } else {
+    adminConsoleState.loginUserInput.value = "";
+    adminConsoleState.loginPasswordInput.value = "";
+    adminConsoleState.loginUserInput?.focus();
+  }
+}
+
+function closeAdminConsole(){
+  if (!adminConsoleState.root) return;
+  adminConsoleState.root.classList.remove("open");
+}
+
+function openAdminConsole(){
+  ensureAdminDebugConsole();
+  adminConsoleState.root.classList.add("open");
+
+  if (adminConsoleState.authenticated) {
+    adminConsoleState.commandInput?.focus();
+  } else {
+    adminConsoleState.loginUserInput?.focus();
+  }
+}
+
+function toggleAdminConsole(){
+  ensureAdminDebugConsole();
+  const isOpen = adminConsoleState.root.classList.contains("open");
+  if (isOpen) {
+    closeAdminConsole();
+  } else {
+    openAdminConsole();
+  }
+}
+
+function printAdminConsoleHelp(){
+  adminConsoleLog("Comandos disponibles:", "info");
+  adminConsoleLog('/exp give <mail> <cantidad>', "info");
+  adminConsoleLog('/level set <mail> <nivel>', "info");
+  adminConsoleLog("/help", "info");
+  adminConsoleLog("/clear", "info");
+}
+
+async function findUserDocumentByEmail(email){
+  const rawEmail = String(email || "").trim();
+  const normalizedEmail = rawEmail.toLowerCase();
+  if (!normalizedEmail) return null;
+
+  const lookups = [
+    query(collection(db, "users"), where("emailLower", "==", normalizedEmail), limit(1)),
+    query(collection(db, "users"), where("email", "==", rawEmail), limit(1))
+  ];
+
+  if (rawEmail !== normalizedEmail) {
+    lookups.push(
+      query(collection(db, "users"), where("email", "==", normalizedEmail), limit(1))
+    );
+  }
+
+  for (const lookup of lookups) {
+    const snapshot = await getDocs(lookup);
+    if (!snapshot.empty) {
+      const userSnap = snapshot.docs[0];
+      return {
+        uid: userSnap.id,
+        data: userSnap.data() || {},
+        ref: userSnap.ref
+      };
+    }
+  }
+
+  return null;
+}
+
+function isFirestorePermissionError(err){
+  const code = String(err?.code || "");
+  const message = String(err?.message || "").toLowerCase();
+  return code.includes("permission-denied") || message.includes("insufficient permissions");
+}
+
+async function resolveTargetUserByEmail(email){
+  const rawEmail = String(email || "").trim();
+  const normalizedEmail = rawEmail.toLowerCase();
+  if (!normalizedEmail) return null;
+
+  const ownEmail = String(currentUser?.email || "").trim().toLowerCase();
+  if (currentUser?.uid && ownEmail && normalizedEmail === ownEmail) {
+    let ownData = {};
+
+    try {
+      const ownSnap = await getDoc(doc(db, "users", currentUser.uid));
+      if (ownSnap.exists()) {
+        ownData = ownSnap.data() || {};
+      }
+    } catch (err) {
+      console.error(err);
+    }
+
+    return {
+      uid: currentUser.uid,
+      data: {
+        ...ownData,
+        name: ownData.name || currentUser.displayName || "",
+        photo: ownData.photo || currentUser.photoURL || "",
+        email: ownData.email || currentUser.email || "",
+        emailLower: (ownData.email || currentUser.email || "").toLowerCase()
+      }
+    };
+  }
+
+  return findUserDocumentByEmail(rawEmail);
+}
+
+function syncCurrentSessionPlayerIfNeeded(uid, updatedPlayer){
+  if (!currentUser || currentUser.uid !== uid) return;
+
+  player = normalizePlayer(updatedPlayer || {});
+  persistPlayerLocalSnapshot(player);
+
+  const levelState = getLevelProgressState();
+  updateLevelButton(levelState.level, levelState.progress);
+  renderSettingsAccountPanel(currentUser);
+  renderAchievementsMenu();
+}
+
+async function persistTargetPlayer(uid, userData, nextPlayer){
+  await setDoc(
+    doc(db, "users", uid),
+    { player: nextPlayer },
+    { merge: true }
+  );
+
+  await setDoc(
+    doc(db, "leaderboard", uid),
+    {
+      name: userData?.name || userData?.email || "Usuario",
+      photo: userData?.photo || "",
+      level: nextPlayer.level,
+      exp: nextPlayer.exp
+    },
+    { merge: true }
+  );
+}
+
+async function executeAdminConsoleCommand(rawCommand){
+  const command = String(rawCommand || "").trim();
+  if (!command) return;
+
+  if (!currentUser) {
+    adminConsoleLog("Necesitás iniciar sesión para ejecutar comandos.", "error");
+    return;
+  }
+
+  if (/^\/help$/i.test(command)) {
+    printAdminConsoleHelp();
+    return;
+  }
+
+  if (/^\/clear$/i.test(command)) {
+    if (adminConsoleState.output) {
+      adminConsoleState.output.innerHTML = "";
+    }
+    adminConsoleLog("Consola limpiada.", "ok");
+    return;
+  }
+
+  const expGiveMatch = command.match(/^\/exp\s+give\s+(\S+)\s+([+-]?\d+)\s*$/i);
+  if (expGiveMatch) {
+    const targetEmail = expGiveMatch[1];
+    const amount = Number(expGiveMatch[2]);
+
+    if (!Number.isInteger(amount) || amount <= 0) {
+      adminConsoleLog("La cantidad de EXP debe ser un entero mayor a 0.", "error");
+      return;
+    }
+
+    let targetUser = null;
+    try {
+      targetUser = await resolveTargetUserByEmail(targetEmail);
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        adminConsoleLog(
+          "Permisos insuficientes para buscar otros usuarios por email. Con tu propio mail funciona; para terceros necesitás backend admin.",
+          "error"
+        );
+        return;
+      }
+      throw err;
+    }
+    if (!targetUser) {
+      adminConsoleLog(`No encontré usuario con mail ${targetEmail}.`, "error");
+      return;
+    }
+
+    const targetPlayer = normalizePlayer(targetUser.data.player || {});
+    targetPlayer.exp = Math.max(0, Number(targetPlayer.exp || 0) + amount);
+    targetPlayer.level = getLevelFromExp(targetPlayer.exp);
+    targetPlayer.updatedAt = Date.now();
+
+    await persistTargetPlayer(targetUser.uid, targetUser.data, targetPlayer);
+    syncCurrentSessionPlayerIfNeeded(targetUser.uid, targetPlayer);
+
+    adminConsoleLog(
+      `EXP aplicada a ${targetEmail}: +${amount} (Nivel ${targetPlayer.level} | EXP total ${targetPlayer.exp}).`,
+      "ok"
+    );
+    return;
+  }
+
+  const levelSetMatch = command.match(/^\/level\s+set\s+(\S+)\s+([+-]?\d+)\s*$/i);
+  if (levelSetMatch) {
+    const targetEmail = levelSetMatch[1];
+    const nextLevel = Number(levelSetMatch[2]);
+
+    if (!Number.isInteger(nextLevel) || nextLevel < 0) {
+      adminConsoleLog("El nivel debe ser un entero mayor o igual a 0.", "error");
+      return;
+    }
+
+    let targetUser = null;
+    try {
+      targetUser = await resolveTargetUserByEmail(targetEmail);
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        adminConsoleLog(
+          "Permisos insuficientes para buscar otros usuarios por email. Con tu propio mail funciona; para terceros necesitás backend admin.",
+          "error"
+        );
+        return;
+      }
+      throw err;
+    }
+    if (!targetUser) {
+      adminConsoleLog(`No encontré usuario con mail ${targetEmail}.`, "error");
+      return;
+    }
+
+    const targetPlayer = normalizePlayer(targetUser.data.player || {});
+    targetPlayer.level = nextLevel;
+    targetPlayer.exp = getTotalExpForLevel(nextLevel);
+    targetPlayer.updatedAt = Date.now();
+
+    await persistTargetPlayer(targetUser.uid, targetUser.data, targetPlayer);
+    syncCurrentSessionPlayerIfNeeded(targetUser.uid, targetPlayer);
+
+    adminConsoleLog(
+      `Nivel actualizado para ${targetEmail}: nivel ${nextLevel} (EXP total ${targetPlayer.exp}).`,
+      "ok"
+    );
+    return;
+  }
+
+  adminConsoleLog("Comando no reconocido. Usá /help para ver los disponibles.", "warn");
+}
+
+function ensureAdminDebugConsole(){
+  if (adminConsoleState.root) return;
+
+  ensureAdminConsoleStyles();
+
+  const root = document.createElement("div");
+  root.className = "admin-debug-root";
+  root.id = "adminDebugConsole";
+  root.innerHTML = `
+    <div class="admin-debug-card" role="dialog" aria-modal="false" aria-label="Consola de debug">
+      <div class="admin-debug-header">
+        <span>Debug Console</span>
+        <button type="button" class="admin-debug-close" id="adminDebugCloseBtn">Cerrar</button>
+      </div>
+
+      <div class="admin-debug-login" id="adminDebugLoginPanel">
+        <form id="adminDebugLoginForm" autocomplete="off">
+          <div class="admin-debug-label">Usuario</div>
+          <input class="admin-debug-input" id="adminDebugUser" type="text" autocomplete="off" spellcheck="false" />
+          <div class="admin-debug-label">Contraseña</div>
+          <input class="admin-debug-input" id="adminDebugPassword" type="text" autocomplete="off" spellcheck="false" />
+          <div class="admin-debug-error" id="adminDebugLoginError"></div>
+          <button type="submit" class="admin-debug-btn">Ingresar</button>
+        </form>
+      </div>
+
+      <div class="admin-debug-terminal hidden" id="adminDebugTerminal">
+        <div class="admin-debug-output" id="adminDebugOutput"></div>
+        <form id="adminDebugCommandForm" autocomplete="off">
+          <input
+            class="admin-debug-input"
+            id="adminDebugCommand"
+            type="text"
+            placeholder="Escribí un comando..."
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(root);
+
+  adminConsoleState.root = root;
+  adminConsoleState.loginPanel = root.querySelector("#adminDebugLoginPanel");
+  adminConsoleState.terminalPanel = root.querySelector("#adminDebugTerminal");
+  adminConsoleState.loginUserInput = root.querySelector("#adminDebugUser");
+  adminConsoleState.loginPasswordInput = root.querySelector("#adminDebugPassword");
+  adminConsoleState.loginError = root.querySelector("#adminDebugLoginError");
+  adminConsoleState.loginForm = root.querySelector("#adminDebugLoginForm");
+  adminConsoleState.commandForm = root.querySelector("#adminDebugCommandForm");
+  adminConsoleState.commandInput = root.querySelector("#adminDebugCommand");
+  adminConsoleState.output = root.querySelector("#adminDebugOutput");
+
+  root.querySelector("#adminDebugCloseBtn")?.addEventListener("click", () => {
+    closeAdminConsole();
+  });
+
+  adminConsoleState.loginForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+
+    const username = adminConsoleState.loginUserInput.value.trim();
+    const password = adminConsoleState.loginPasswordInput.value;
+
+    if (
+      username === ADMIN_CONSOLE_CREDENTIALS.username &&
+      password === ADMIN_CONSOLE_CREDENTIALS.password
+    ) {
+      setAdminConsoleAuthenticated(true);
+      return;
+    }
+
+    adminConsoleState.loginError.textContent = "Credenciales inválidas.";
+    adminConsoleState.loginPasswordInput.value = "";
+    adminConsoleState.loginPasswordInput.focus();
+  });
+
+  adminConsoleState.commandForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const command = adminConsoleState.commandInput.value.trim();
+    if (!command) return;
+
+    adminConsoleLog(`> ${command}`, "info");
+    adminConsoleState.commandInput.value = "";
+
+    try {
+      await executeAdminConsoleCommand(command);
+    } catch (err) {
+      console.error(err);
+      adminConsoleLog(`Error al ejecutar comando: ${err?.message || "desconocido"}.`, "error");
+    } finally {
+      adminConsoleState.commandInput.focus();
+    }
+  });
+}
+
+function handleAdminConsoleSequence(event){
+  if (event.code === "Escape" && adminConsoleState.root?.classList.contains("open")) {
+    closeAdminConsole();
+    return;
+  }
+
+  if (isEditableTarget(event.target)) return;
+
+  adminConsoleState.keyBuffer.push(event.code);
+  if (adminConsoleState.keyBuffer.length > ADMIN_CONSOLE_SEQUENCE.length) {
+    adminConsoleState.keyBuffer.shift();
+  }
+
+  const matched = ADMIN_CONSOLE_SEQUENCE.every(
+    (expectedCode, index) => adminConsoleState.keyBuffer[index] === expectedCode
+  );
+
+  if (!matched) return;
+
+  adminConsoleState.keyBuffer = [];
+  event.preventDefault();
+  toggleAdminConsole();
+}
+
+document.addEventListener("keydown", handleAdminConsoleSequence, true);
+
 let hasRendered = false;
 
 function formatProfileTriggerName(displayName){
@@ -1660,7 +2312,9 @@ onAuthStateChanged(auth, async (user) => {
       userRef,
       {
         name: user.displayName,
-        photo: user.photoURL
+        photo: user.photoURL,
+        email: user.email || "",
+        emailLower: (user.email || "").toLowerCase()
       },
       { merge: true }
     );
@@ -1763,14 +2417,28 @@ onAuthStateChanged(auth, async (user) => {
           localStorage.setItem("mt_view_mode", currentViewMode);
         }
 
-        if (data.player) {
-          const remotePlayer = normalizePlayer(data.player);
-          const localPlayer = normalizePlayer(player || {});
-          player = remotePlayer.updatedAt >= localPlayer.updatedAt
-            ? remotePlayer
-            : localPlayer;
-        } else if (!player || typeof player.exp !== "number") {
-          player = normalizePlayer({});
+        const remotePlayer = data.player ? normalizePlayer(data.player) : null;
+        const localPlayerSnapshot = pickMostRecentPlayer(
+          readLocalPlayerSnapshot(),
+          normalizePlayer(player || {})
+        );
+        let shouldSyncPlayerToCloud = false;
+
+        if (remotePlayer) {
+          const remoteVsLocal = comparePlayerFreshness(remotePlayer, localPlayerSnapshot);
+          player = remoteVsLocal >= 0
+            ? normalizePlayer(remotePlayer)
+            : normalizePlayer(localPlayerSnapshot);
+          shouldSyncPlayerToCloud = remoteVsLocal < 0;
+        } else {
+          player = localPlayerSnapshot;
+          shouldSyncPlayerToCloud = hasPlayerProgress(localPlayerSnapshot);
+        }
+
+        persistPlayerLocalSnapshot(player);
+
+        if (shouldSyncPlayerToCloud && currentUser) {
+          await savePlayer();
         }
 
         // 🔥 cargar tema del usuario
@@ -2059,6 +2727,7 @@ cancelLogout.addEventListener("click", () => {
 
 confirmLogout.addEventListener("click", async () => {
   logoutOverlay.classList.remove("open");
+  await savePlayer();
   await signOut(auth);
 });
 
@@ -6579,6 +7248,36 @@ function getLevelProgressState(){
   return { level, expRemaining, needed, progress };
 }
 
+function getLevelFromExp(totalExp){
+  const safeTotalExp = Math.max(0, Number(totalExp) || 0);
+  let level = 0;
+  let expRemaining = safeTotalExp;
+
+  while(true){
+    const needed = getExpForLevel(level);
+
+    if(expRemaining >= needed){
+      expRemaining -= needed;
+      level++;
+    }else{
+      break;
+    }
+  }
+
+  return level;
+}
+
+function getTotalExpForLevel(level){
+  const safeLevel = Math.max(0, Math.floor(Number(level) || 0));
+  let totalExp = 0;
+
+  for(let currentLevel = 0; currentLevel < safeLevel; currentLevel++){
+    totalExp += getExpForLevel(currentLevel);
+  }
+
+  return totalExp;
+}
+
 function updateLevelButton(level, progress){
   const safeProgress = Math.max(0, Math.min(1, Number(progress) || 0));
 
@@ -6632,8 +7331,13 @@ function updateLevel(){
 }
 
 async function savePlayer(){
+  persistPlayerLocalSnapshot(player);
 
-  if(currentUser){
+  if(!currentUser){
+    return;
+  }
+
+  try {
     await setDoc(
       doc(db, "users", currentUser.uid),
       { player },
@@ -6650,9 +7354,8 @@ async function savePlayer(){
       },
       { merge:true }
     );
-
-  }else{
-    localStorage.setItem("mt_player", JSON.stringify(player));
+  } catch (err) {
+    console.error(err);
   }
 
 }
@@ -7203,6 +7906,7 @@ forgotBtn.addEventListener("click", async ()=>{
   if(!confirmLogout) return;
 
   try{
+    await savePlayer();
     await signOut(auth);
 
   }catch(err){
