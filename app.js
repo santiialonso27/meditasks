@@ -54,6 +54,9 @@ let taskLabels = [];
 let currentViewMode = localStorage.getItem("mt_view_mode") || "tasks";
 const storeKey = "mt_tasks_local";
 const PLAYER_STORE_KEY = "mt_player";
+const LEGACY_PLAYER_MIGRATION_DONE_KEY = "mt_player_legacy_migration_done_v1";
+const LEGACY_PLAYER_PAYLOAD_READY_KEY = "mt_player_legacy_payload_ready_v1";
+const LEGACY_PLAYER_CLAIMED_UID_KEY = "mt_player_legacy_claimed_uid_v1";
 const ADMIN_CONSOLE_CREDENTIALS = Object.freeze({
   username: "admin",
   password: "admin01"
@@ -983,40 +986,44 @@ function hasPlayerProgress(candidate){
   const achievementCount = Object.keys(safeCandidate.achievements || {}).length;
 
   return (
-    Number(safeCandidate.updatedAt) > 0 ||
     Number(safeCandidate.exp) > 0 ||
     Number(safeCandidate.level) > 0 ||
-    achievementCount > 0
+    achievementCount > 0 ||
+    Number(safeCandidate.activeStreak) > 0 ||
+    Number(safeCandidate.longestStreak) > 0 ||
+    Number(safeCandidate.allTasksStreak) > 0
   );
 }
 
-function readLocalPlayerSnapshot(){
+function getPlayerStorageKey(uid = currentUser?.uid){
+  const safeUid = String(uid || "").trim();
+  return safeUid ? `${PLAYER_STORE_KEY}:${safeUid}` : `${PLAYER_STORE_KEY}:guest`;
+}
+
+function readLocalPlayerSnapshot(uid = currentUser?.uid){
+  const storageKey = getPlayerStorageKey(uid);
   try {
-    return normalizePlayer(JSON.parse(localStorage.getItem(PLAYER_STORE_KEY)) || {});
+    return normalizePlayer(JSON.parse(localStorage.getItem(storageKey)) || {});
   } catch (err) {
     console.error(err);
     return normalizePlayer({});
   }
 }
 
-function persistPlayerLocalSnapshot(snapshot = player){
+function persistPlayerLocalSnapshot(snapshot = player, uid = currentUser?.uid){
+  const storageKey = getPlayerStorageKey(uid);
   try {
-    localStorage.setItem(PLAYER_STORE_KEY, JSON.stringify(normalizePlayer(snapshot || {})));
+    localStorage.setItem(storageKey, JSON.stringify(normalizePlayer(snapshot || {})));
   } catch (err) {
     console.error(err);
+    localStorage.setItem(LEGACY_PLAYER_PAYLOAD_READY_KEY, "false");
+    localStorage.setItem(LEGACY_PLAYER_MIGRATION_DONE_KEY, "true");
   }
 }
 
 function comparePlayerFreshness(playerA, playerB){
   const safeA = normalizePlayer(playerA || {});
   const safeB = normalizePlayer(playerB || {});
-
-  const updatedAtA = Number(safeA.updatedAt) || 0;
-  const updatedAtB = Number(safeB.updatedAt) || 0;
-
-  if (updatedAtA !== updatedAtB) {
-    return updatedAtA > updatedAtB ? 1 : -1;
-  }
 
   const expA = Number(safeA.exp) || 0;
   const expB = Number(safeB.exp) || 0;
@@ -1036,13 +1043,115 @@ function comparePlayerFreshness(playerA, playerB){
     return levelA > levelB ? 1 : -1;
   }
 
+  const updatedAtA = Number(safeA.updatedAt) || 0;
+  const updatedAtB = Number(safeB.updatedAt) || 0;
+
+  if (updatedAtA !== updatedAtB) {
+    return updatedAtA > updatedAtB ? 1 : -1;
+  }
+
   return 0;
 }
 
-function pickMostRecentPlayer(playerA, playerB){
-  return comparePlayerFreshness(playerA, playerB) >= 0
-    ? normalizePlayer(playerA || {})
-    : normalizePlayer(playerB || {});
+function recoverPlayerExpFromHistory(){
+  const stats = getAchievementStats();
+  const completedTasks = Math.max(0, Number(stats.completedTasks) || 0);
+  const completedTasksExp = completedTasks * 100;
+  const achievementExp = Math.max(0, Number(getAchievementExpTotal()) || 0);
+  const normalizedExp = completedTasksExp + achievementExp;
+  const currentExp = Math.max(0, Number(player?.exp) || 0);
+  const nextExp = Math.max(currentExp, normalizedExp);
+  const nextLevel = getLevelFromExp(nextExp);
+  const currentLevel = Math.max(0, Number(player?.level) || 0);
+  let changed = false;
+
+  if (nextExp !== currentExp) {
+    player.exp = nextExp;
+    changed = true;
+  }
+
+  if (nextLevel !== currentLevel) {
+    player.level = nextLevel;
+    changed = true;
+  }
+
+  if (changed) {
+    player.updatedAt = Date.now();
+  }
+
+  return changed;
+}
+
+function migrateLegacyPlayerStorageIfNeeded(){
+  try {
+    if (localStorage.getItem(LEGACY_PLAYER_MIGRATION_DONE_KEY) === "true") {
+      return;
+    }
+
+    const rawLegacy = localStorage.getItem(PLAYER_STORE_KEY);
+    if (!rawLegacy) {
+      localStorage.setItem(LEGACY_PLAYER_PAYLOAD_READY_KEY, "false");
+      localStorage.setItem(LEGACY_PLAYER_MIGRATION_DONE_KEY, "true");
+      return;
+    }
+
+    const legacySnapshot = normalizePlayer(JSON.parse(rawLegacy) || {});
+    const guestSnapshot = readLocalPlayerSnapshot(null);
+    const mergedGuestSnapshot =
+      comparePlayerFreshness(guestSnapshot, legacySnapshot) >= 0
+        ? guestSnapshot
+        : legacySnapshot;
+
+    persistPlayerLocalSnapshot(mergedGuestSnapshot, null);
+    localStorage.setItem(
+      LEGACY_PLAYER_PAYLOAD_READY_KEY,
+      hasPlayerProgress(legacySnapshot) ? "true" : "false"
+    );
+    localStorage.removeItem(PLAYER_STORE_KEY);
+    localStorage.setItem(LEGACY_PLAYER_MIGRATION_DONE_KEY, "true");
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function claimLegacyPlayerForUserIfNeeded(uid){
+  const safeUid = String(uid || "").trim();
+  if (!safeUid) {
+    return readLocalPlayerSnapshot();
+  }
+
+  const scopedSnapshot = readLocalPlayerSnapshot(safeUid);
+
+  const migrationDone = localStorage.getItem(LEGACY_PLAYER_MIGRATION_DONE_KEY) === "true";
+  const payloadReady = localStorage.getItem(LEGACY_PLAYER_PAYLOAD_READY_KEY) === "true";
+  if (!migrationDone || !payloadReady) {
+    return scopedSnapshot;
+  }
+
+  const claimedUid = String(localStorage.getItem(LEGACY_PLAYER_CLAIMED_UID_KEY) || "").trim();
+  if (claimedUid && claimedUid !== safeUid) {
+    return scopedSnapshot;
+  }
+
+  if (claimedUid === safeUid) {
+    return scopedSnapshot;
+  }
+
+  const guestSnapshot = readLocalPlayerSnapshot(null);
+  if (!hasPlayerProgress(guestSnapshot)) {
+    localStorage.setItem(LEGACY_PLAYER_PAYLOAD_READY_KEY, "false");
+    return scopedSnapshot;
+  }
+
+  const migratedSnapshot =
+    comparePlayerFreshness(guestSnapshot, scopedSnapshot) > 0
+      ? normalizePlayer(guestSnapshot)
+      : normalizePlayer(scopedSnapshot);
+
+  persistPlayerLocalSnapshot(migratedSnapshot, safeUid);
+  localStorage.setItem(LEGACY_PLAYER_CLAIMED_UID_KEY, safeUid);
+  localStorage.setItem(LEGACY_PLAYER_PAYLOAD_READY_KEY, "false");
+  return migratedSnapshot;
 }
 
 function isDayFullyCompleted(dateStr){
@@ -1528,6 +1637,7 @@ function openTaskTimeQuickEditor(taskElement, taskData, render){
   window.addEventListener("resize", positionEditor, { once: true });
 }
 
+migrateLegacyPlayerStorageIfNeeded();
 let player = readLocalPlayerSnapshot();
 
 if(localStorage.getItem("mt_theme_mode")==="light"){
@@ -2418,10 +2528,7 @@ onAuthStateChanged(auth, async (user) => {
         }
 
         const remotePlayer = data.player ? normalizePlayer(data.player) : null;
-        const localPlayerSnapshot = pickMostRecentPlayer(
-          readLocalPlayerSnapshot(),
-          normalizePlayer(player || {})
-        );
+        const localPlayerSnapshot = claimLegacyPlayerForUserIfNeeded(user.uid);
         let shouldSyncPlayerToCloud = false;
 
         if (remotePlayer) {
@@ -2435,7 +2542,11 @@ onAuthStateChanged(auth, async (user) => {
           shouldSyncPlayerToCloud = hasPlayerProgress(localPlayerSnapshot);
         }
 
-        persistPlayerLocalSnapshot(player);
+        if (recoverPlayerExpFromHistory()) {
+          shouldSyncPlayerToCloud = true;
+        }
+
+        persistPlayerLocalSnapshot(player, user.uid);
 
         if (shouldSyncPlayerToCloud && currentUser) {
           await savePlayer();
@@ -2531,6 +2642,7 @@ onAuthStateChanged(auth, async (user) => {
         projects = localData.projects || {};
         projectOrder = reconcileProjectOrder(localData.projectOrder || [], projects);
         taskLabels = normalizeLabelCatalog(localData.labels || []);
+        player = readLocalPlayerSnapshot();
         init();
 
         setStatusNotLogged(); 
@@ -7331,24 +7443,25 @@ function updateLevel(){
 }
 
 async function savePlayer(){
-  persistPlayerLocalSnapshot(player);
+  const userForSave = currentUser;
+  persistPlayerLocalSnapshot(player, userForSave?.uid);
 
-  if(!currentUser){
+  if(!userForSave){
     return;
   }
 
   try {
     await setDoc(
-      doc(db, "users", currentUser.uid),
+      doc(db, "users", userForSave.uid),
       { player },
       { merge: true }
     );
 
     await setDoc(
-      doc(db, "leaderboard", currentUser.uid),
+      doc(db, "leaderboard", userForSave.uid),
       {
-        name: currentUser.displayName,
-        photo: currentUser.photoURL,
+        name: userForSave.displayName,
+        photo: userForSave.photoURL,
         level: player.level,
         exp: player.exp
       },
