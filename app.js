@@ -2,7 +2,15 @@ let appReady = false;
 import confetti from "https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.module.mjs";
 // 🔥 Firebase
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut,
+  setPersistence,
+  browserLocalPersistence
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { 
   getFirestore, 
   doc, 
@@ -31,6 +39,9 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 const db = getFirestore(app);
+const authPersistenceReady = setPersistence(auth, browserLocalPersistence).catch((error) => {
+  console.error("No se pudo establecer persistencia local de autenticación.", error);
+});
 const board = document.getElementById("board");
 const statusText = document.getElementById("statusText");
 const loginCircleBtn = document.getElementById("loginCircleBtn");
@@ -2662,6 +2673,7 @@ onAuthStateChanged(auth, async (user) => {
 authGateGoogleBtn?.addEventListener("click", async (e) => {
   e.preventDefault();
   e.stopPropagation();
+  await authPersistenceReady;
   await signInWithPopup(auth, provider);
 });
 
@@ -2826,6 +2838,7 @@ profileLogoutBtn?.addEventListener("click", async (e) => {
   closeCornerMenu();
 
   if (!currentUser) {
+    await authPersistenceReady;
     await signInWithPopup(auth, provider);
     return;
   }
@@ -3495,6 +3508,7 @@ settingsAccountLogoutBtn?.addEventListener("click", async (e) => {
   closeSettingsOverlay();
 
   if (!currentUser) {
+    await authPersistenceReady;
     await signInWithPopup(auth, provider);
     return;
   }
