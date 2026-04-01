@@ -87,7 +87,7 @@ const CHANGELOG_MODAL_LOCAL_STORAGE_PREFIX = "mt_seen_changelog_version_";
 const CHANGELOG_MODAL_ITEMS = Object.freeze([
   "Diseño renovado por completo",
   "Nuevo: Vista de resumen.",
-  "Nuevo: Modo sesión de enfoque."
+  "Nuevo: Modo sesión de enfoque.",
   "Nuevo: Agregar portadas a proyectos."
 ]);
 const storeKey = "mt_tasks_local";
