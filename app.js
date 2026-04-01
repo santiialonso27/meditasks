@@ -4826,23 +4826,40 @@ function positionCornerMenuFromDashboardPill(trigger){
   if(!trigger || !cornerContainer) return;
   const rect = trigger.getBoundingClientRect();
   const isMobile = window.innerWidth <= 900;
-  const viewportPadding = isMobile ? 12 : 10;
+  const viewportPadding = 10;
+
+  if (isMobile) {
+    const triggerWidth = Math.round(rect.width);
+    const maxViewportWidth = Math.max(0, Math.round(window.innerWidth - (viewportPadding * 2)));
+    const preferredWidth = Math.min(triggerWidth, maxViewportWidth);
+    const leftMin = viewportPadding;
+    const leftMax = Math.max(
+      leftMin,
+      Math.round(window.innerWidth - preferredWidth - viewportPadding)
+    );
+    const preferredLeft = Math.round(rect.left);
+    const left = Math.min(Math.max(preferredLeft, leftMin), leftMax);
+    const top = Math.max(6, Math.round(rect.bottom - 1));
+
+    cornerContainer.style.top = `${top}px`;
+    cornerContainer.style.left = `${left}px`;
+    cornerContainer.style.right = "auto";
+    cornerContainer.style.width = `${preferredWidth}px`;
+    return;
+  }
+
   const maxViewportWidth = Math.max(220, Math.round(window.innerWidth - (viewportPadding * 2)));
-  const minWidth = isMobile ? 212 : 248;
-  const widthFromTrigger = isMobile ? Math.round(rect.width + 8) : Math.round(rect.width);
   const preferredWidth = Math.min(
     maxViewportWidth,
-    Math.max(minWidth, widthFromTrigger)
+    Math.max(248, Math.round(rect.width))
   );
-  const top = Math.max(6, Math.round(rect.bottom + (isMobile ? 6 : -1)));
+  const top = Math.max(6, Math.round(rect.bottom - 1));
   let right = Math.max(viewportPadding, Math.round(window.innerWidth - rect.right));
   const maxRight = Math.max(
     viewportPadding,
     Math.round(window.innerWidth - preferredWidth - viewportPadding)
   );
-  if (right > maxRight) {
-    right = maxRight;
-  }
+  if (right > maxRight) right = maxRight;
 
   cornerContainer.style.top = `${top}px`;
   cornerContainer.style.right = `${right}px`;
@@ -7909,28 +7926,41 @@ function bindSummaryTopFocusButton(scope = board){
   });
 }
 
-function scrollSummaryMobileViewportToTop(){
+function scrollSummaryMobileViewportToTop(behavior = "auto"){
+  const safeBehavior = behavior === "smooth" ? "smooth" : "auto";
+  let usedFallbackScroll = false;
   const scrollHost = document.querySelector(".board-scroll");
   if (scrollHost && typeof scrollHost.scrollTo === "function") {
-    scrollHost.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    scrollHost.scrollTo({ top: 0, left: 0, behavior: safeBehavior });
   } else if (scrollHost) {
     scrollHost.scrollTop = 0;
     scrollHost.scrollLeft = 0;
+    usedFallbackScroll = true;
   }
 
   if (typeof window.scrollTo === "function") {
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    window.scrollTo({ top: 0, left: 0, behavior: safeBehavior });
+  } else {
+    usedFallbackScroll = true;
   }
 
-  document.documentElement.scrollTop = 0;
-  document.body.scrollTop = 0;
+  if (safeBehavior !== "smooth" || usedFallbackScroll) {
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }
 }
 
-function focusSummarySearchInputForMobile(){
+function focusSummarySearchInputForMobile(options = {}){
+  const {
+    scrollBehavior = "auto",
+    skipScroll = false
+  } = options || {};
   const input = document.getElementById("summarySearchInput");
   if (!(input instanceof HTMLInputElement)) return false;
 
-  scrollSummaryMobileViewportToTop();
+  if (!skipScroll) {
+    scrollSummaryMobileViewportToTop(scrollBehavior);
+  }
   try{
     input.focus({ preventScroll: true });
   }catch(_error){
@@ -7947,12 +7977,12 @@ function focusSummarySearchInputForMobile(){
   return document.activeElement === input;
 }
 
-function focusSummarySearchInputForMobileWithRetry(maxAttempts = 10){
+function focusSummarySearchInputForMobileWithRetry(maxAttempts = 10, options = {}){
   let attempts = 0;
 
   const tryFocus = () => {
     attempts += 1;
-    const focused = focusSummarySearchInputForMobile();
+    const focused = focusSummarySearchInputForMobile(options);
     if (focused || attempts >= maxAttempts) return;
     setTimeout(tryFocus, 45);
   };
@@ -7973,9 +8003,24 @@ function bindSummaryMobilePlusButton(scope = board){
 
       if (!isMobileViewport()) return;
       closeCornerMenu();
+      const isAlreadySummary = currentViewMode === VIEW_MODE_SUMMARY;
 
-      if (currentViewMode !== VIEW_MODE_SUMMARY) {
+      if (!isAlreadySummary) {
         void setViewMode(VIEW_MODE_SUMMARY);
+      }
+
+      if (isAlreadySummary) {
+        scrollSummaryMobileViewportToTop("smooth");
+
+        setTimeout(() => {
+          const focusedNow = focusSummarySearchInputForMobile({ skipScroll: true });
+          if (!focusedNow) {
+            setTimeout(() => {
+              focusSummarySearchInputForMobileWithRetry(10, { skipScroll: true });
+            }, 35);
+          }
+        }, 170);
+        return;
       }
 
       const focusedNow = focusSummarySearchInputForMobile();

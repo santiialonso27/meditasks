@@ -10828,6 +10828,7 @@
         width:100%;
         max-width:100%;
         min-width:0;
+        align-items:stretch;
       }
 
       body.summary-page-mode .summary-grid > *{
@@ -10838,6 +10839,8 @@
       body.summary-page-mode .summary-card-main,
       body.summary-page-mode .summary-card-secondary{
         grid-column:span 1;
+        align-self:stretch;
+        height:100%;
       }
 
       body.summary-page-mode .summary-card-calendar,
@@ -11948,13 +11951,13 @@
       }
 
       body.dashboard-profile-menu-open .corner-container.dashboard-pill-mode .corner-dropdown{
-        margin-top:0;
-        border-radius:16px;
-        border-top:1px solid transparent;
+        margin-top:-1px;
+        border-radius:0 0 16px 16px;
+        border-top:none;
       }
 
       body.dashboard-profile-menu-open .corner-container.dashboard-pill-mode.expanded .corner-dropdown{
-        border-top:1px solid transparent;
+        border-top:none;
       }
 
       .corner-menu-quick-row{
