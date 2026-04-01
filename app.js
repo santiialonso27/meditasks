@@ -4681,6 +4681,20 @@ function showLeaderboardModal(users){
   leaderboardProfileDrawer.className = "leaderboard-profile-drawer";
   leaderboardProfileDrawer.setAttribute("aria-hidden", "true");
   leaderboardProfileDrawer.innerHTML = `
+    <div class="leaderboard-profile-mobile-head">
+      <button
+        type="button"
+        class="leaderboard-profile-mobile-back"
+        data-leaderboard-profile-back
+        aria-label="Volver a la tabla de posiciones"
+      >
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M15 18 9 12l6-6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+        <span>Volver</span>
+      </button>
+      <strong>Perfil</strong>
+    </div>
     <div class="leaderboard-profile-panel-content">
       <div class="leaderboard-profile-empty">Tocá una fila para ver el perfil completo.</div>
     </div>
@@ -4693,6 +4707,7 @@ function showLeaderboardModal(users){
 
   const leaderboardList = modal.querySelector(".leaderboard-list");
   const leaderboardProfileContent = leaderboardProfileDrawer.querySelector(".leaderboard-profile-panel-content");
+  const leaderboardProfileBackBtn = leaderboardProfileDrawer.querySelector("[data-leaderboard-profile-back]");
   const usersByUid = new Map(
     users.map((user) => [String(user.uid || ""), getLeaderboardPublicSummary(user)])
   );
@@ -4719,6 +4734,12 @@ function showLeaderboardModal(users){
     setActiveRowState("");
     resetEmptyProfile();
   };
+
+  leaderboardProfileBackBtn?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeProfilePanel();
+  });
 
   leaderboardList?.querySelectorAll(".leaderboard-row[data-leader-uid]").forEach((rowElement) => {
     const uid = String(rowElement.dataset.leaderUid || "");
