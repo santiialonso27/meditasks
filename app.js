@@ -4825,10 +4825,24 @@ function openCornerMenu() {
 function positionCornerMenuFromDashboardPill(trigger){
   if(!trigger || !cornerContainer) return;
   const rect = trigger.getBoundingClientRect();
-  const maxViewportWidth = Math.max(220, Math.round(window.innerWidth - 20));
-  const preferredWidth = Math.min(maxViewportWidth, Math.max(248, Math.round(rect.width)));
-  const top = Math.max(6, Math.round(rect.bottom - 1));
-  const right = Math.max(10, Math.round(window.innerWidth - rect.right));
+  const isMobile = window.innerWidth <= 900;
+  const viewportPadding = isMobile ? 12 : 10;
+  const maxViewportWidth = Math.max(220, Math.round(window.innerWidth - (viewportPadding * 2)));
+  const minWidth = isMobile ? 212 : 248;
+  const widthFromTrigger = isMobile ? Math.round(rect.width + 8) : Math.round(rect.width);
+  const preferredWidth = Math.min(
+    maxViewportWidth,
+    Math.max(minWidth, widthFromTrigger)
+  );
+  const top = Math.max(6, Math.round(rect.bottom + (isMobile ? 6 : -1)));
+  let right = Math.max(viewportPadding, Math.round(window.innerWidth - rect.right));
+  const maxRight = Math.max(
+    viewportPadding,
+    Math.round(window.innerWidth - preferredWidth - viewportPadding)
+  );
+  if (right > maxRight) {
+    right = maxRight;
+  }
 
   cornerContainer.style.top = `${top}px`;
   cornerContainer.style.right = `${right}px`;
@@ -5702,6 +5716,10 @@ async function setViewMode(nextMode){
   currentViewMode = normalizedMode;
   localStorage.setItem("mt_view_mode", currentViewMode);
 
+  // Primero actualizamos la UI para mantener la interacción fluida (especialmente en mobile).
+  updateViewButtons();
+  init();
+
   if(modeChanged && currentUser){
     try{
       await setDoc(
@@ -5713,9 +5731,6 @@ async function setViewMode(nextMode){
       console.warn("No se pudo guardar el modo de vista en Firebase.", error);
     }
   }
-
-  updateViewButtons();
-  init();
 }
 
 if(summaryViewBtn){
@@ -7916,8 +7931,11 @@ function focusSummarySearchInputForMobile(){
   if (!(input instanceof HTMLInputElement)) return false;
 
   scrollSummaryMobileViewportToTop();
-  input.focus({ preventScroll: true });
-  input.click();
+  try{
+    input.focus({ preventScroll: true });
+  }catch(_error){
+    input.focus();
+  }
 
   const cursorPosition = String(input.value || "").length;
   try{
@@ -7947,7 +7965,9 @@ function bindSummaryMobilePlusButton(scope = board){
   if (!plusButtons.length) return;
 
   plusButtons.forEach((button) => {
-    button.addEventListener("click", async (event) => {
+    let lastTouchActivation = 0;
+
+    const handlePlusActivation = (event) => {
       event.preventDefault();
       event.stopPropagation();
 
@@ -7955,12 +7975,25 @@ function bindSummaryMobilePlusButton(scope = board){
       closeCornerMenu();
 
       if (currentViewMode !== VIEW_MODE_SUMMARY) {
-        await setViewMode(VIEW_MODE_SUMMARY);
+        void setViewMode(VIEW_MODE_SUMMARY);
       }
 
-      requestAnimationFrame(() => {
-        focusSummarySearchInputForMobileWithRetry();
-      });
+      const focusedNow = focusSummarySearchInputForMobile();
+      if (!focusedNow) {
+        setTimeout(() => {
+          focusSummarySearchInputForMobileWithRetry();
+        }, 35);
+      }
+    };
+
+    button.addEventListener("touchend", (event) => {
+      lastTouchActivation = Date.now();
+      handlePlusActivation(event);
+    }, { passive: false });
+
+    button.addEventListener("click", (event) => {
+      if (Date.now() - lastTouchActivation < 700) return;
+      handlePlusActivation(event);
     });
   });
 }
