@@ -46,10 +46,8 @@ const board = document.getElementById("board");
 const statusText = document.getElementById("statusText");
 const loginCircleBtn = document.getElementById("loginCircleBtn");
 const profileLogoutBtn = document.getElementById("profileLogoutBtn");
-const loginTooltip = document.getElementById("loginTooltip");
 const authGate = document.getElementById("authGate");
 const authGateGoogleBtn = document.getElementById("authGateGoogleBtn");
-let tooltipTimeout = null;
 const logoutOverlay = document.getElementById("logoutOverlay");
 const cancelLogout = document.getElementById("cancelLogout");
 const confirmLogout = document.getElementById("confirmLogout");
@@ -62,7 +60,36 @@ let tasks = {};
 let projects = {};
 let projectOrder = [];
 let taskLabels = [];
-let currentViewMode = localStorage.getItem("mt_view_mode") || "tasks";
+const VIEW_MODE_SUMMARY = "summary";
+const VIEW_MODE_TASKS = "tasks";
+const VIEW_MODE_PROJECTS = "projects";
+const VALID_VIEW_MODES = new Set([
+  VIEW_MODE_SUMMARY,
+  VIEW_MODE_TASKS,
+  VIEW_MODE_PROJECTS
+]);
+const SUMMARY_TASK_SEARCH_MAX_RESULTS = 9;
+const TASKS_BOARD_VISIBLE_DAYS = 8;
+
+function normalizeViewMode(mode){
+  const safeMode = String(mode || "").trim().toLowerCase();
+  return VALID_VIEW_MODES.has(safeMode) ? safeMode : VIEW_MODE_TASKS;
+}
+
+let currentViewMode = normalizeViewMode(localStorage.getItem("mt_view_mode"));
+const summaryViewBtn = document.getElementById("summaryViewBtn");
+const tasksViewBtn = document.getElementById("tasksViewBtn");
+const projectsViewBtn = document.getElementById("projectsViewBtn");
+const APP_VERSION = "v2.5";
+const CHANGELOG_MODAL_TARGET_VERSION = APP_VERSION;
+const CHANGELOG_MODAL_FIREBASE_FIELD = "lastSeenChangelogVersion";
+const CHANGELOG_MODAL_LOCAL_STORAGE_PREFIX = "mt_seen_changelog_version_";
+const CHANGELOG_MODAL_ITEMS = Object.freeze([
+  "Diseño renovado por completo",
+  "Nuevo: Vista de resumen.",
+  "Nuevo: Modo sesión de enfoque."
+  "Nuevo: Agregar portadas a proyectos."
+]);
 const storeKey = "mt_tasks_local";
 const PLAYER_STORE_KEY = "mt_player";
 const LEGACY_PLAYER_MIGRATION_DONE_KEY = "mt_player_legacy_migration_done_v1";
@@ -75,15 +102,38 @@ const ADMIN_CONSOLE_CREDENTIALS = Object.freeze({
 const ADMIN_CONSOLE_SEQUENCE = [
   "ArrowUp",
   "ArrowUp",
-  "ArrowDown",
-  "ArrowDown",
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowLeft",
-  "ArrowRight",
   "KeyM",
   "KeyT"
 ];
+const POMODORO_DEFAULT_FOCUS_MINUTES = 25;
+const POMODORO_DEFAULT_BREAK_MINUTES = 5;
+const POMODORO_MIN_FOCUS_MINUTES = 1;
+const POMODORO_MAX_FOCUS_MINUTES = 240;
+const POMODORO_MIN_BREAK_MINUTES = 1;
+const POMODORO_MAX_BREAK_MINUTES = 90;
+const POMODORO_EXP_PER_MINUTE = 10;
+const PROJECT_DEFAULT_BANNER_COLOR = "#000000";
+const PROJECT_BANNER_PRESETS = Object.freeze([
+  { path: "/covers/contour-line.svg", label: "Pulso Topografico" },
+  { path: "/covers/polygon-luminary.svg", label: "Nebulosa Geometrica" },
+  { path: "/covers/sprinkle.svg", label: "Tormenta de Chispas" },
+  { path: "/covers/world-map.svg", label: "Mapa de Conquista" },
+  { path: "/covers/meteor.svg", label: "Ruta Meteoro" }
+]);
+const PROJECT_BANNER_ASSETS = Object.freeze(
+  PROJECT_BANNER_PRESETS.map((preset) => preset.path)
+);
+const PROJECT_BANNER_LABEL_BY_PATH = Object.freeze(
+  PROJECT_BANNER_PRESETS.reduce((acc, preset) => {
+    acc[preset.path] = preset.label;
+    return acc;
+  }, {})
+);
+const PROJECT_CUSTOM_BANNER_MAX_FILE_BYTES = 8 * 1024 * 1024;
+const PROJECT_CUSTOM_BANNER_MAX_WIDTH = 1600;
+const PROJECT_CUSTOM_BANNER_MAX_HEIGHT = 800;
+const PROJECT_CUSTOM_BANNER_QUALITY_STEPS = [0.86, 0.78, 0.7, 0.62];
+const PROJECT_CUSTOM_BANNER_MAX_DATA_URL_LENGTH = 700000;
 const adminConsoleState = {
   keyBuffer: [],
   authenticated: false,
@@ -98,6 +148,53 @@ const adminConsoleState = {
   commandInput: null,
   output: null
 };
+const pomodoroState = {
+  root: null,
+  phaseBadge: null,
+  timerValue: null,
+  timerCaption: null,
+  statusLine: null,
+  setupPanel: null,
+  focusInput: null,
+  breakToggle: null,
+  breakField: null,
+  breakInput: null,
+  expChip: null,
+  startBtn: null,
+  closeBtn: null,
+  cancelBtn: null,
+  finishBtn: null,
+  repeatPrompt: null,
+  repeatText: null,
+  repeatYesBtn: null,
+  repeatNoBtn: null,
+  confirmBox: null,
+  confirmText: null,
+  confirmKeepBtn: null,
+  confirmCancelBtn: null,
+  cancelConfirmOpen: false,
+  phase: "idle",
+  focusMinutes: POMODORO_DEFAULT_FOCUS_MINUTES,
+  breakMinutes: POMODORO_DEFAULT_BREAK_MINUTES,
+  breakEnabled: true,
+  secondsRemaining: POMODORO_DEFAULT_FOCUS_MINUTES * 60,
+  endsAt: 0,
+  ticker: null,
+  transitionLock: false,
+  expGranted: false,
+  expAmount: 0,
+  lastSessionConfig: null
+};
+let changelogModalPromptedVersion = "";
+
+function syncAppVersionLabels(){
+  document.querySelectorAll("[data-app-version]").forEach((element) => {
+    element.textContent = APP_VERSION;
+  });
+}
+
+syncAppVersionLabels();
+
 const DAYS = [
   "Domingo",
   "Lunes",
@@ -247,8 +344,10 @@ let mobileDragAutoScrollSpeed = 0;
 let mobileDragAutoScrollTouch = null;
 let mobileDragAutoScrollCallback = null;
 let mobileFocusScrollSnapshot = null;
+let activeDashboardProfileTrigger = null;
 const scheduledTaskNotificationTimers = new Map();
 let taskNotificationAutoPromptAttempted = false;
+let summarySearchCleanup = null;
 
 function closeTaskActionMenu() {
   if (!activeTaskActionMenu) return;
@@ -469,6 +568,322 @@ function resetTransientOverlays() {
   document.getElementById("taskActionOverlay")?.remove();
   document.getElementById("taskMobileOverlay")?.remove();
   document.body.classList.remove("task-action-focus");
+}
+
+function getChangelogSeenStorageKey(uid = currentUser?.uid){
+  return `${CHANGELOG_MODAL_LOCAL_STORAGE_PREFIX}${uid || "guest"}`;
+}
+
+function getStoredSeenChangelogVersion(uid = currentUser?.uid){
+  try {
+    return String(localStorage.getItem(getChangelogSeenStorageKey(uid)) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function setStoredSeenChangelogVersion(version, uid = currentUser?.uid){
+  const storageKey = getChangelogSeenStorageKey(uid);
+  const safeVersion = String(version || "").trim();
+  try {
+    if (!safeVersion) {
+      localStorage.removeItem(storageKey);
+      return;
+    }
+    localStorage.setItem(storageKey, safeVersion);
+  } catch (error) {
+    console.warn("No se pudo guardar localmente la versión de changelog vista.", error);
+  }
+}
+
+function getChangelogItemsForUpdateModal(){
+  return [...CHANGELOG_MODAL_ITEMS];
+}
+
+function buildChangelogItemsMarkup(){
+  return getChangelogItemsForUpdateModal()
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("");
+}
+
+function ensureChangelogUpdateModalStyles(){
+  if (document.getElementById("changelogUpdateModalStyles")) return;
+
+  const style = document.createElement("style");
+  style.id = "changelogUpdateModalStyles";
+  style.textContent = `
+    .changelog-update-overlay{
+      position: fixed;
+      inset: 0;
+      z-index: 120000;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(4, 6, 12, .78);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
+    }
+
+    .changelog-update-overlay.open{
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .changelog-update-card{
+      position: relative;
+      width: min(368px, calc(100vw - 18px));
+      max-height: min(88vh, 460px);
+      overflow: hidden auto;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,.1);
+      background: #090b11;
+      box-shadow: 0 24px 58px rgba(0,0,0,.72);
+      transform: translateY(8px) scale(.985);
+      transition: transform .24s cubic-bezier(.22, .91, .25, 1);
+    }
+
+    .changelog-update-overlay.open .changelog-update-card{
+      transform: translateY(0) scale(1);
+    }
+
+    .changelog-update-hero{
+      position: relative;
+      width: 100%;
+      height: clamp(56px, 15vw, 83px);
+      background-color: #0a0f1f;
+      background-image: url("/covers/changelog-modal-hero.jpg");
+      background-size: cover;
+      background-repeat: no-repeat;
+      background-position: center;
+    }
+
+    .changelog-update-hero::after{
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(9,11,17,0) 66%, rgba(9,11,17,.12) 100%);
+      pointer-events: none;
+    }
+
+    .changelog-update-body{
+      padding: 28px 24px 20px;
+      background: #090b11;
+      text-align: center;
+      min-height: 190px;
+    }
+
+    .changelog-update-title{
+      margin: 0;
+      font-size: clamp(20px, 4.2vw, 24px);
+      line-height: 1.12;
+      letter-spacing: -.03em;
+      font-weight: 700;
+      color: #f7f8fb;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      text-wrap: balance;
+    }
+
+    .changelog-update-list{
+      margin: 14px auto 0;
+      padding: 0;
+      width: min(290px, 100%);
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      text-align: left;
+    }
+
+    .changelog-update-list li{
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.45;
+      font-weight: 500;
+      color: rgba(186, 193, 205, .86);
+      text-wrap: pretty;
+      display: grid;
+      grid-template-columns: 12px 1fr;
+      align-items: start;
+      column-gap: 5px;
+    }
+
+    .changelog-update-list li::before{
+      content: "•";
+      color: rgba(144, 154, 171, .92);
+      display: block;
+      text-align: center;
+    }
+
+    .changelog-update-actions{
+      margin-top: 20px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .changelog-update-confirm{
+      appearance: none;
+      -webkit-appearance: none;
+      border: none;
+      min-width: 172px;
+      min-height: 40px;
+      padding: 0 18px;
+      border-radius: 999px;
+      background: #f4f5f7;
+      color: #20242c;
+      font-size: 15px;
+      line-height: 1.2;
+      font-weight: 600;
+      letter-spacing: .005em;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      cursor: pointer;
+      box-shadow:
+        0 10px 24px rgba(0,0,0,.32);
+      transition: transform .18s ease, filter .18s ease, box-shadow .18s ease;
+      outline: none;
+    }
+
+    .changelog-update-confirm:hover{
+      filter: brightness(1.02);
+      transform: translateY(-1px);
+      box-shadow:
+        0 14px 30px rgba(0,0,0,.38);
+    }
+
+    .changelog-update-confirm:active{
+      transform: translateY(0);
+    }
+
+    .changelog-update-confirm:focus,
+    .changelog-update-confirm:focus-visible{
+      outline: none;
+      box-shadow: 0 10px 24px rgba(0,0,0,.32);
+    }
+
+    @media (max-width: 720px){
+      .changelog-update-overlay{
+        padding: 8px;
+      }
+
+      .changelog-update-card{
+        width: min(368px, calc(100vw - 12px));
+        max-height: min(90vh, 520px);
+        border-radius: 16px;
+      }
+
+      .changelog-update-hero{
+        height: min(16vh, 75px);
+      }
+
+      .changelog-update-body{
+        padding: 22px 16px 16px;
+        min-height: 0;
+      }
+
+      .changelog-update-title{
+        font-size: clamp(18px, 6vw, 22px);
+      }
+
+      .changelog-update-list li{
+        font-size: 12.5px;
+      }
+
+      .changelog-update-confirm{
+        width: min(220px, 100%);
+        min-width: 0;
+        min-height: 40px;
+        font-size: 15px;
+      }
+    }
+  `;
+
+  document.head.appendChild(style);
+}
+
+function closeChangelogUpdateModal(){
+  document.getElementById("changelogUpdateOverlay")?.remove();
+}
+
+function openChangelogUpdateModal(){
+  closeChangelogUpdateModal();
+  ensureChangelogUpdateModalStyles();
+
+  const overlay = document.createElement("div");
+  overlay.id = "changelogUpdateOverlay";
+  overlay.className = "changelog-update-overlay";
+  overlay.innerHTML = `
+    <div class="changelog-update-card" role="dialog" aria-modal="true" aria-labelledby="changelogUpdateTitle">
+      <div class="changelog-update-hero"></div>
+      <div class="changelog-update-body">
+        <h3 class="changelog-update-title" id="changelogUpdateTitle">Actualización ${CHANGELOG_MODAL_TARGET_VERSION}</h3>
+        <ul class="changelog-update-list" aria-label="Cambios de esta versión">
+          ${buildChangelogItemsMarkup()}
+        </ul>
+        <div class="changelog-update-actions">
+          <button class="changelog-update-confirm" id="changelogUpdateConfirmBtn" type="button">Genial</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const confirmBtn = overlay.querySelector("#changelogUpdateConfirmBtn");
+  let isClosing = false;
+  const dismissModal = async () => {
+    if (isClosing) return;
+    isClosing = true;
+    confirmBtn && (confirmBtn.disabled = true);
+    closeChangelogUpdateModal();
+    await markChangelogAsSeen(CHANGELOG_MODAL_TARGET_VERSION);
+  };
+
+  confirmBtn?.addEventListener("click", () => {
+    dismissModal();
+  });
+
+  document.body.appendChild(overlay);
+
+  requestAnimationFrame(() => {
+    overlay.classList.add("open");
+  });
+
+}
+
+async function markChangelogAsSeen(version = CHANGELOG_MODAL_TARGET_VERSION){
+  const safeVersion = String(version || "").trim();
+  if (!safeVersion) return;
+
+  changelogModalPromptedVersion = safeVersion;
+  setStoredSeenChangelogVersion(safeVersion, currentUser?.uid);
+
+  if (!currentUser?.uid) return;
+
+  try {
+    await setDoc(
+      doc(db, "users", currentUser.uid),
+      { [CHANGELOG_MODAL_FIREBASE_FIELD]: safeVersion },
+      { merge: true }
+    );
+  } catch (error) {
+    console.warn("No se pudo guardar la versión de changelog vista en Firebase.", error);
+  }
+}
+
+function maybeShowChangelogUpdateModal(userData = {}){
+  if (!currentUser?.uid) return;
+
+  const seenVersionFromCloud = String(userData?.[CHANGELOG_MODAL_FIREBASE_FIELD] || "").trim();
+  if (seenVersionFromCloud) {
+    setStoredSeenChangelogVersion(seenVersionFromCloud, currentUser.uid);
+  }
+
+  const seenVersionLocal = getStoredSeenChangelogVersion(currentUser.uid);
+  const effectiveSeenVersion = seenVersionFromCloud || seenVersionLocal;
+
+  if (effectiveSeenVersion === CHANGELOG_MODAL_TARGET_VERSION) return;
+  if (changelogModalPromptedVersion === CHANGELOG_MODAL_TARGET_VERSION) return;
+
+  changelogModalPromptedVersion = CHANGELOG_MODAL_TARGET_VERSION;
+  openChangelogUpdateModal();
 }
 
 function ensureAuthGateVisible() {
@@ -728,8 +1143,28 @@ document.addEventListener("touchstart", (e) => {
 }, { passive: true });
 
 document.addEventListener("pointerdown", (e) => {
-  if (e.target.closest(".task-actions-anchor")) return;
+  const target = e.target instanceof Element ? e.target : null;
+  if (!target) {
+    closeProjectCardMenu();
+    closeTaskActionMenu();
+    return;
+  }
+
+  if (!target.closest(".project-menu-wrap")) {
+    closeProjectCardMenu();
+  }
+  if (
+    target.closest(".task-actions-anchor")
+    || target.closest("#taskMobileMenu")
+    || target.closest("#taskMobileFocusClone")
+  ) return;
   closeTaskActionMenu();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeProjectCardMenu();
+  }
 });
 
 document.addEventListener("selectstart", (e) => {
@@ -740,6 +1175,109 @@ document.addEventListener("selectstart", (e) => {
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function pickRandomProjectBannerAsset(){
+  if (!PROJECT_BANNER_ASSETS.length) return "";
+  const index = Math.floor(Math.random() * PROJECT_BANNER_ASSETS.length);
+  return PROJECT_BANNER_ASSETS[index] || "";
+}
+
+function getFallbackProjectBannerAsset(projectId = ""){
+  if (!PROJECT_BANNER_ASSETS.length) return "";
+  const safeId = String(projectId || "");
+  if (!safeId) return PROJECT_BANNER_ASSETS[0];
+  let hash = 0;
+  for (let i = 0; i < safeId.length; i++) {
+    hash = (hash << 5) - hash + safeId.charCodeAt(i);
+    hash |= 0;
+  }
+  const index = Math.abs(hash) % PROJECT_BANNER_ASSETS.length;
+  return PROJECT_BANNER_ASSETS[index] || PROJECT_BANNER_ASSETS[0];
+}
+
+function getProjectBannerLabel(assetPath = ""){
+  const normalizedPath = String(assetPath || "").trim();
+  return PROJECT_BANNER_LABEL_BY_PATH[normalizedPath] || "Personalizada";
+}
+
+function readFileAsDataUrl(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("No se pudo leer la imagen."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageElement(src = ""){
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("No se pudo procesar la imagen seleccionada."));
+    image.src = src;
+  });
+}
+
+async function buildCustomProjectBannerDataUrl(file){
+  if (!file || !(file instanceof File)) {
+    throw new Error("No se encontró un archivo válido.");
+  }
+
+  const isImage = String(file.type || "").startsWith("image/");
+  if (!isImage) {
+    throw new Error("Selecciona un archivo de imagen.");
+  }
+
+  if (file.size > PROJECT_CUSTOM_BANNER_MAX_FILE_BYTES) {
+    throw new Error("La imagen supera el tamaño máximo permitido (8 MB).");
+  }
+
+  const sourceDataUrl = await readFileAsDataUrl(file);
+  const image = await loadImageElement(sourceDataUrl);
+  const scale = Math.min(
+    1,
+    PROJECT_CUSTOM_BANNER_MAX_WIDTH / Math.max(1, image.naturalWidth || image.width || 1),
+    PROJECT_CUSTOM_BANNER_MAX_HEIGHT / Math.max(1, image.naturalHeight || image.height || 1)
+  );
+
+  const width = Math.max(1, Math.round((image.naturalWidth || image.width || 1) * scale));
+  const height = Math.max(1, Math.round((image.naturalHeight || image.height || 1) * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { alpha: false });
+
+  if (!context) {
+    throw new Error("No se pudo preparar la imagen personalizada.");
+  }
+
+  context.fillStyle = "#000";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+
+  for (const quality of PROJECT_CUSTOM_BANNER_QUALITY_STEPS) {
+    const output = canvas.toDataURL("image/webp", quality);
+    if (output.length <= PROJECT_CUSTOM_BANNER_MAX_DATA_URL_LENGTH) {
+      return output;
+    }
+  }
+
+  return canvas.toDataURL("image/webp", 0.55);
+}
+
+function ensureProjectBannerSettings(project, projectId = ""){
+  if (!project || typeof project !== "object") return;
+  if (typeof project.bannerEnabled !== "boolean") {
+    project.bannerEnabled = true;
+  }
+  if (typeof project.bannerColor !== "string" || !project.bannerColor.trim()) {
+    project.bannerColor = PROJECT_DEFAULT_BANNER_COLOR;
+  }
+  if (typeof project.bannerImage !== "string" || !project.bannerImage.trim()) {
+    project.bannerImage = getFallbackProjectBannerAsset(projectId);
+  }
 }
 
 function parseStoredAppData(rawData) {
@@ -959,6 +1497,7 @@ function normalizePlayer(raw = {}) {
   const normalized = {
     exp: 0,
     level: 0,
+    totalFocusMinutes: 0,
     todayExpTasks: 0,
     lastExpDate: null,
     dailyLimitShown: false,
@@ -987,6 +1526,7 @@ function normalizePlayer(raw = {}) {
     normalized.activeStreak = 0;
   }
   normalized.longestStreak = Math.max(normalized.longestStreak, normalized.activeStreak);
+  normalized.totalFocusMinutes = Math.max(0, Math.floor(Number(normalized.totalFocusMinutes) || 0));
 
   return normalized;
 }
@@ -999,6 +1539,7 @@ function hasPlayerProgress(candidate){
   return (
     Number(safeCandidate.exp) > 0 ||
     Number(safeCandidate.level) > 0 ||
+    Number(safeCandidate.totalFocusMinutes) > 0 ||
     achievementCount > 0 ||
     Number(safeCandidate.activeStreak) > 0 ||
     Number(safeCandidate.longestStreak) > 0 ||
@@ -1052,6 +1593,12 @@ function comparePlayerFreshness(playerA, playerB){
   const levelB = Number(safeB.level) || 0;
   if (levelA !== levelB) {
     return levelA > levelB ? 1 : -1;
+  }
+
+  const focusMinutesA = Number(safeA.totalFocusMinutes) || 0;
+  const focusMinutesB = Number(safeB.totalFocusMinutes) || 0;
+  if (focusMinutesA !== focusMinutesB) {
+    return focusMinutesA > focusMinutesB ? 1 : -1;
   }
 
   const updatedAtA = Number(safeA.updatedAt) || 0;
@@ -1497,21 +2044,32 @@ function bindMobileTapToClick(root){
   root.querySelectorAll("button").forEach((button) => {
     if (button.dataset.touchBound) return;
     button.dataset.touchBound = "true";
+
     const trigger = (e) => {
-      if (button.dataset.touchFired === "true") return;
-      button.dataset.touchFired = "true";
-      setTimeout(() => {
-        button.dataset.touchFired = "false";
-      }, 0);
+      const now = Date.now();
+      const lastTouchAt = Number(button.dataset.touchLastAt || 0);
+      if (now - lastTouchAt < 320) return;
+
+      button.dataset.touchLastAt = String(now);
+      button.dataset.touchBlockUntil = String(now + 520);
       e.preventDefault();
       e.stopPropagation();
       button.click();
     };
+
     button.addEventListener("touchend", trigger, { passive: false });
     button.addEventListener("pointerup", (e) => {
       if (e.pointerType !== "touch") return;
       trigger(e);
     });
+
+    button.addEventListener("click", (e) => {
+      const blockUntil = Number(button.dataset.touchBlockUntil || 0);
+      if (e.isTrusted && Date.now() < blockUntil) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, true);
   });
 }
 
@@ -1727,6 +2285,18 @@ function updateSubtitle(user) {
   subtitleEl.textContent = phrases[randomIndex];
 }
 
+function syncSummaryStatusText(){
+  if (!statusText) return;
+  const summaryStatusTargets = [
+    document.getElementById("summaryStatusText"),
+    document.getElementById("summaryStatusTextMobile")
+  ].filter(Boolean);
+  if (!summaryStatusTargets.length) return;
+  summaryStatusTargets.forEach((target) => {
+    target.innerHTML = statusText.innerHTML;
+  });
+}
+
 function setStatusSaving(){
   statusText.innerHTML = `
     <svg width="18px" height="18px" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none">
@@ -1736,6 +2306,7 @@ function setStatusSaving(){
     </svg>
     <span class="status-label">Guardando Datos</span>
   `;
+  syncSummaryStatusText();
 }
 
 function setStatusSaved(){
@@ -1745,6 +2316,7 @@ function setStatusSaved(){
       </svg>
       <span class="status-label">Datos Guardados</span>
     `;
+  syncSummaryStatusText();
 }
 
 function setStatusLocal(){
@@ -1754,6 +2326,7 @@ function setStatusLocal(){
       </svg>
       <span class="status-label">Modo Sin Conexión</span>
     `;
+  syncSummaryStatusText();
 }
 
 function setStatusPending(){
@@ -1763,6 +2336,7 @@ function setStatusPending(){
     </svg>
     <span class="status-label">Modo Sin Conexión: Cambios pendientes</span>
   `;
+  syncSummaryStatusText();
 }
 
 function setStatusNotLogged(){
@@ -1772,6 +2346,7 @@ function setStatusNotLogged(){
     </svg>
     <span class="status-label">Inicia sesión para guardar tus tareas</span>
   `;
+  syncSummaryStatusText();
 }
 
 function isEditableTarget(target){
@@ -1986,6 +2561,7 @@ function printAdminConsoleHelp(){
   adminConsoleLog("Comandos disponibles:", "info");
   adminConsoleLog('/exp give <mail> <cantidad>', "info");
   adminConsoleLog('/level set <mail> <nivel>', "info");
+  adminConsoleLog("/pomodoro", "info");
   adminConsoleLog("/help", "info");
   adminConsoleLog("/clear", "info");
 }
@@ -2072,6 +2648,29 @@ function syncCurrentSessionPlayerIfNeeded(uid, updatedPlayer){
   renderAchievementsMenu();
 }
 
+function buildLeaderboardDocPayload(userData = {}, sourcePlayer = player){
+  const safePlayer = normalizePlayer(sourcePlayer || {});
+  const unlockedAchievements = Object.keys(safePlayer.achievements || {}).length;
+
+  return {
+    name: userData?.name || userData?.displayName || userData?.email || "Usuario",
+    photo: userData?.photo || userData?.photoURL || "",
+    level: Math.max(0, Number(safePlayer.level) || 0),
+    exp: Math.max(0, Number(safePlayer.exp) || 0),
+    activeStreak: Math.max(0, Number(safePlayer.activeStreak) || 0),
+    longestStreak: Math.max(0, Number(safePlayer.longestStreak) || 0),
+    allTasksStreak: Math.max(0, Number(safePlayer.allTasksStreak) || 0),
+    totalFocusMinutes: Math.max(0, Number(safePlayer.totalFocusMinutes) || 0),
+    todayExpTasks: Math.max(0, Number(safePlayer.todayExpTasks) || 0),
+    achievementsUnlocked: Math.max(0, Number(unlockedAchievements) || 0),
+    lastActiveDate: safePlayer.lastActiveDate || null,
+    lastAllTasksDate: safePlayer.lastAllTasksDate || null,
+    lastExpDate: safePlayer.lastExpDate || null,
+    updatedAt: Math.max(Date.now(), Number(safePlayer.updatedAt) || 0),
+    player: safePlayer
+  };
+}
+
 async function persistTargetPlayer(uid, userData, nextPlayer){
   await setDoc(
     doc(db, "users", uid),
@@ -2081,15 +2680,1098 @@ async function persistTargetPlayer(uid, userData, nextPlayer){
 
   await setDoc(
     doc(db, "leaderboard", uid),
-    {
-      name: userData?.name || userData?.email || "Usuario",
-      photo: userData?.photo || "",
-      level: nextPlayer.level,
-      exp: nextPlayer.exp
-    },
+    buildLeaderboardDocPayload(userData, nextPlayer),
     { merge: true }
   );
 }
+
+function isPomodoroOverlayOpen(){
+  return !!pomodoroState.root?.classList.contains("open");
+}
+
+function isPomodoroSessionRunning(){
+  return pomodoroState.phase === "focus" || pomodoroState.phase === "break";
+}
+
+function clampPomodoroMinutes(value, min, max, fallback){
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function getPomodoroExpReward(minutes){
+  const safeMinutes = Math.max(0, Math.floor(Number(minutes) || 0));
+  return safeMinutes * POMODORO_EXP_PER_MINUTE;
+}
+
+function formatPomodoroCountdown(totalSeconds){
+  const safeSeconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function clearPomodoroTicker(){
+  if (pomodoroState.ticker) {
+    clearInterval(pomodoroState.ticker);
+    pomodoroState.ticker = null;
+  }
+}
+
+function syncPomodoroBreakToggleUi(){
+  if (!pomodoroState.breakToggle) return;
+
+  pomodoroState.breakToggle.dataset.active = pomodoroState.breakEnabled ? "true" : "false";
+  pomodoroState.breakToggle.setAttribute("aria-pressed", pomodoroState.breakEnabled ? "true" : "false");
+  pomodoroState.breakToggle.classList.toggle("active", pomodoroState.breakEnabled);
+  pomodoroState.breakToggle.textContent = pomodoroState.breakEnabled
+    ? "Descanso activado"
+    : "Descanso desactivado";
+
+  if (pomodoroState.breakField) {
+    pomodoroState.breakField.hidden = !pomodoroState.breakEnabled;
+  }
+}
+
+function syncPomodoroExpPreview(){
+  const focusPreview = clampPomodoroMinutes(
+    pomodoroState.focusInput?.value,
+    POMODORO_MIN_FOCUS_MINUTES,
+    POMODORO_MAX_FOCUS_MINUTES,
+    pomodoroState.focusMinutes || POMODORO_DEFAULT_FOCUS_MINUTES
+  );
+  const reward = getPomodoroExpReward(focusPreview);
+
+  if (pomodoroState.expChip) {
+    pomodoroState.expChip.textContent = `EXPERIENCIA A GANAR POR ESTA SESION: ${reward} EXP`;
+  }
+}
+
+function syncPomodoroActionState(){
+  const isSetup = pomodoroState.phase === "setup" || pomodoroState.phase === "idle";
+  const isRunning = isPomodoroSessionRunning();
+  const isCancelled = pomodoroState.phase === "cancelled";
+  const isDone = pomodoroState.phase === "done";
+  const isCancelConfirmOpen = !!pomodoroState.cancelConfirmOpen;
+
+  if (pomodoroState.setupPanel) pomodoroState.setupPanel.hidden = !isSetup;
+  if (pomodoroState.startBtn) pomodoroState.startBtn.hidden = !isSetup;
+  if (pomodoroState.closeBtn) pomodoroState.closeBtn.hidden = !isSetup;
+  if (pomodoroState.cancelBtn) pomodoroState.cancelBtn.hidden = !isRunning || isCancelConfirmOpen;
+  if (pomodoroState.finishBtn) pomodoroState.finishBtn.hidden = !isCancelled;
+  if (pomodoroState.repeatPrompt) pomodoroState.repeatPrompt.hidden = !isDone;
+}
+
+function updatePomodoroTimerUi(){
+  if (!pomodoroState.timerValue) return;
+  pomodoroState.timerValue.textContent = formatPomodoroCountdown(pomodoroState.secondsRemaining);
+}
+
+function closePomodoroCancelConfirm(){
+  pomodoroState.cancelConfirmOpen = false;
+  if (pomodoroState.confirmBox) {
+    pomodoroState.confirmBox.hidden = true;
+  }
+  syncPomodoroActionState();
+}
+
+function closePomodoroRepeatPrompt(){
+  if (pomodoroState.repeatPrompt) {
+    pomodoroState.repeatPrompt.hidden = true;
+  }
+}
+
+function updatePomodoroRepeatPromptText(){
+  if (!pomodoroState.repeatText) return;
+
+  pomodoroState.repeatText.textContent = "¿Querés iniciar otra sesión igual a la completada?";
+}
+
+function openPomodoroCancelConfirm(){
+  if (!isPomodoroSessionRunning() || !pomodoroState.confirmBox || !pomodoroState.confirmText) return;
+
+  if (!pomodoroState.expGranted) {
+    pomodoroState.confirmText.textContent = "¿Seguro que querés cancelar este Pomodoro? Si lo cortás ahora no vas a ganar EXP por esta sesión.";
+  } else {
+    pomodoroState.confirmText.textContent = "¿Seguro que querés cancelar? El enfoque ya otorgó EXP, pero este descanso se cerrará ahora.";
+  }
+
+  pomodoroState.cancelConfirmOpen = true;
+  pomodoroState.confirmBox.hidden = false;
+  syncPomodoroActionState();
+}
+
+async function applyPomodoroExpReward(){
+  if (pomodoroState.expGranted) return;
+
+  const amount = Math.max(0, Number(pomodoroState.expAmount) || 0);
+  if (!amount) return;
+
+  pomodoroState.expGranted = true;
+  const completedFocusMinutes = Math.max(0, Math.floor(Number(pomodoroState.focusMinutes) || 0));
+  player.exp = Math.max(0, Number(player?.exp || 0) + amount);
+  player.totalFocusMinutes = Math.max(
+    0,
+    Math.floor(Number(player?.totalFocusMinutes) || 0) + completedFocusMinutes
+  );
+  player.updatedAt = Date.now();
+  updateLevel();
+
+  if (typeof updateLevelMenu === "function") {
+    updateLevelMenu();
+  }
+  if (typeof renderSettingsAccountPanel === "function") {
+    renderSettingsAccountPanel(currentUser);
+  }
+  if (typeof renderAchievementsMenu === "function") {
+    renderAchievementsMenu();
+  }
+
+  await savePlayer();
+}
+
+function beginPomodoroBreakPhase(){
+  pomodoroState.phase = "break";
+  pomodoroState.secondsRemaining = pomodoroState.breakMinutes * 60;
+  pomodoroState.endsAt = Date.now() + (pomodoroState.secondsRemaining * 1000);
+
+  if (pomodoroState.phaseBadge) pomodoroState.phaseBadge.textContent = "Descanso activo";
+  if (pomodoroState.timerCaption) pomodoroState.timerCaption.textContent = "Tiempo de descanso";
+  if (pomodoroState.statusLine) {
+    pomodoroState.statusLine.textContent = `Foco completado. +${pomodoroState.expAmount} EXP acreditada. Respirá y recuperá energía.`;
+  }
+
+  closePomodoroCancelConfirm();
+  syncPomodoroActionState();
+  updatePomodoroTimerUi();
+  clearPomodoroTicker();
+  pomodoroState.ticker = setInterval(runPomodoroTick, 250);
+}
+
+function finalizePomodoroSession(cancelReason = ""){
+  clearPomodoroTicker();
+  pomodoroState.transitionLock = false;
+
+  if (cancelReason) {
+    pomodoroState.phase = "cancelled";
+    if (pomodoroState.phaseBadge) pomodoroState.phaseBadge.textContent = "Pomodoro cancelado";
+    if (pomodoroState.timerCaption) pomodoroState.timerCaption.textContent = "Sesión detenida";
+    if (pomodoroState.statusLine) {
+      if (cancelReason === "visibility") {
+        pomodoroState.statusLine.textContent = pomodoroState.expGranted
+          ? "Se canceló por cambio de pestaña. La EXP del foco ya quedó acreditada."
+          : "Se canceló por cambio de pestaña. Esta sesión no otorga EXP.";
+      } else {
+        pomodoroState.statusLine.textContent = pomodoroState.expGranted
+          ? "Pomodoro cancelado. La EXP del foco ya quedó acreditada."
+          : "Pomodoro cancelado. Esta sesión no otorgó EXP.";
+      }
+    }
+  } else {
+    pomodoroState.phase = "done";
+    if (pomodoroState.phaseBadge) pomodoroState.phaseBadge.textContent = "Pomodoro completado";
+    if (pomodoroState.timerCaption) pomodoroState.timerCaption.textContent = "Sesión finalizada";
+    if (pomodoroState.statusLine) {
+      pomodoroState.statusLine.textContent = `Excelente enfoque. Ganaste +${pomodoroState.expAmount} EXP.`;
+    }
+    updatePomodoroRepeatPromptText();
+  }
+
+  closePomodoroCancelConfirm();
+  if (cancelReason) {
+    closePomodoroRepeatPrompt();
+  }
+  syncPomodoroActionState();
+}
+
+async function onPomodoroFocusCompleted(){
+  pomodoroState.secondsRemaining = 0;
+  updatePomodoroTimerUi();
+
+  await applyPomodoroExpReward();
+  launchConfetti({ zIndex: 240000 });
+  if (soundEnabled) {
+    playDayCompleteSound();
+  }
+  adminConsoleLog(
+    `Pomodoro completado: +${pomodoroState.expAmount} EXP por ${pomodoroState.focusMinutes} minutos de foco.`,
+    "ok"
+  );
+
+  if (pomodoroState.breakEnabled && pomodoroState.breakMinutes > 0) {
+    beginPomodoroBreakPhase();
+    return;
+  }
+
+  finalizePomodoroSession("");
+}
+
+function onPomodoroBreakCompleted(){
+  pomodoroState.secondsRemaining = 0;
+  updatePomodoroTimerUi();
+  finalizePomodoroSession("");
+}
+
+function runPomodoroTick(){
+  if (!isPomodoroSessionRunning()) {
+    clearPomodoroTicker();
+    return;
+  }
+
+  const remaining = Math.max(0, Math.ceil((pomodoroState.endsAt - Date.now()) / 1000));
+  if (remaining !== pomodoroState.secondsRemaining) {
+    pomodoroState.secondsRemaining = remaining;
+    updatePomodoroTimerUi();
+  }
+
+  if (remaining > 0 || pomodoroState.transitionLock) return;
+
+  clearPomodoroTicker();
+  pomodoroState.transitionLock = true;
+
+  if (pomodoroState.phase === "focus") {
+    onPomodoroFocusCompleted()
+      .catch((err) => {
+        console.error(err);
+        adminConsoleLog(`Error en Pomodoro: ${err?.message || "desconocido"}.`, "error");
+        finalizePomodoroSession("manual");
+      })
+      .finally(() => {
+        pomodoroState.transitionLock = false;
+      });
+    return;
+  }
+
+  if (pomodoroState.phase === "break") {
+    onPomodoroBreakCompleted();
+    pomodoroState.transitionLock = false;
+  }
+}
+
+function normalizePomodoroInputValues(){
+  pomodoroState.focusMinutes = clampPomodoroMinutes(
+    pomodoroState.focusInput?.value,
+    POMODORO_MIN_FOCUS_MINUTES,
+    POMODORO_MAX_FOCUS_MINUTES,
+    POMODORO_DEFAULT_FOCUS_MINUTES
+  );
+  if (pomodoroState.focusInput) {
+    pomodoroState.focusInput.value = String(pomodoroState.focusMinutes);
+  }
+
+  pomodoroState.breakEnabled = pomodoroState.breakToggle?.dataset.active !== "false";
+
+  pomodoroState.breakMinutes = clampPomodoroMinutes(
+    pomodoroState.breakInput?.value,
+    POMODORO_MIN_BREAK_MINUTES,
+    POMODORO_MAX_BREAK_MINUTES,
+    POMODORO_DEFAULT_BREAK_MINUTES
+  );
+  if (pomodoroState.breakInput) {
+    pomodoroState.breakInput.value = String(pomodoroState.breakMinutes);
+  }
+
+  pomodoroState.expAmount = getPomodoroExpReward(pomodoroState.focusMinutes);
+}
+
+function beginPomodoroFocusPhase(){
+  normalizePomodoroInputValues();
+  pomodoroState.expGranted = false;
+  pomodoroState.lastSessionConfig = {
+    focusMinutes: pomodoroState.focusMinutes,
+    breakMinutes: pomodoroState.breakMinutes,
+    breakEnabled: pomodoroState.breakEnabled
+  };
+  pomodoroState.phase = "focus";
+  pomodoroState.secondsRemaining = pomodoroState.focusMinutes * 60;
+  pomodoroState.endsAt = Date.now() + (pomodoroState.secondsRemaining * 1000);
+
+  if (pomodoroState.phaseBadge) pomodoroState.phaseBadge.textContent = "Foco activo";
+  if (pomodoroState.timerCaption) pomodoroState.timerCaption.textContent = "Tiempo de enfoque";
+  if (pomodoroState.statusLine) {
+    pomodoroState.statusLine.textContent = "Modo concentración activo. Mantén esta pestaña visible para conservar la sesión.";
+  }
+
+  closePomodoroCancelConfirm();
+  closePomodoroRepeatPrompt();
+  syncPomodoroBreakToggleUi();
+  syncPomodoroExpPreview();
+  syncPomodoroActionState();
+  updatePomodoroTimerUi();
+  clearPomodoroTicker();
+  pomodoroState.ticker = setInterval(runPomodoroTick, 250);
+}
+
+function cancelPomodoroSession(reason = "manual"){
+  if (!isPomodoroSessionRunning()) return;
+  const wasBreakPhase = pomodoroState.phase === "break";
+  clearPomodoroTicker();
+
+  adminConsoleLog(
+    reason === "visibility"
+      ? "Pomodoro cancelado por cambio de pestaña."
+      : "Pomodoro cancelado manualmente.",
+    "warn"
+  );
+
+  if (reason === "manual" && wasBreakPhase) {
+    pomodoroState.phase = "cancelled";
+    closePomodoroMode();
+    return;
+  }
+
+  finalizePomodoroSession(reason);
+}
+
+function closePomodoroMode(){
+  if (isPomodoroSessionRunning()) {
+    openPomodoroCancelConfirm();
+    return;
+  }
+
+  clearPomodoroTicker();
+  closePomodoroCancelConfirm();
+  pomodoroState.phase = "idle";
+  pomodoroState.transitionLock = false;
+  pomodoroState.expGranted = false;
+  pomodoroState.expAmount = 0;
+
+  if (pomodoroState.root) {
+    pomodoroState.root.classList.remove("open");
+  }
+  document.body.classList.remove("pomodoro-lock");
+}
+
+function resetPomodoroSetupState(){
+  clearPomodoroTicker();
+  pomodoroState.phase = "setup";
+  pomodoroState.transitionLock = false;
+  pomodoroState.focusMinutes = POMODORO_DEFAULT_FOCUS_MINUTES;
+  pomodoroState.breakMinutes = POMODORO_DEFAULT_BREAK_MINUTES;
+  pomodoroState.breakEnabled = true;
+  pomodoroState.expGranted = false;
+  pomodoroState.expAmount = getPomodoroExpReward(POMODORO_DEFAULT_FOCUS_MINUTES);
+  pomodoroState.secondsRemaining = pomodoroState.focusMinutes * 60;
+  pomodoroState.endsAt = 0;
+
+  if (pomodoroState.focusInput) pomodoroState.focusInput.value = String(pomodoroState.focusMinutes);
+  if (pomodoroState.breakInput) pomodoroState.breakInput.value = String(pomodoroState.breakMinutes);
+
+  if (pomodoroState.phaseBadge) pomodoroState.phaseBadge.textContent = "Modo enfoque";
+  if (pomodoroState.timerCaption) pomodoroState.timerCaption.textContent = "Tiempo de enfoque";
+  if (pomodoroState.statusLine) {
+    pomodoroState.statusLine.textContent = "Selecciona el tiempo que desees para concentrarte, agregando o no un descanso al cumplirse el tiempo antes de que vuelva a iniciar el ciclo.";
+  }
+
+  syncPomodoroBreakToggleUi();
+  syncPomodoroExpPreview();
+  syncPomodoroActionState();
+  updatePomodoroTimerUi();
+  closePomodoroCancelConfirm();
+  closePomodoroRepeatPrompt();
+}
+
+function restartPomodoroWithLastSession(){
+  const lastConfig = pomodoroState.lastSessionConfig;
+  if (!lastConfig) {
+    beginPomodoroFocusPhase();
+    return;
+  }
+
+  if (pomodoroState.focusInput) {
+    pomodoroState.focusInput.value = String(lastConfig.focusMinutes);
+  }
+  if (pomodoroState.breakInput) {
+    pomodoroState.breakInput.value = String(lastConfig.breakMinutes);
+  }
+
+  pomodoroState.breakEnabled = !!lastConfig.breakEnabled;
+  syncPomodoroBreakToggleUi();
+  syncPomodoroExpPreview();
+  beginPomodoroFocusPhase();
+}
+
+function ensurePomodoroStyles(){
+  if (document.getElementById("pomodoroModeStyles")) return;
+
+  const style = document.createElement("style");
+  style.id = "pomodoroModeStyles";
+  style.textContent = `
+    body.pomodoro-lock{
+      overflow: hidden;
+    }
+
+    .pomodoro-overlay{
+      position: fixed;
+      inset: 0;
+      z-index: 210000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: clamp(14px, 4vw, 34px);
+      background:
+        radial-gradient(120% 100% at 8% 0%, color-mix(in srgb, var(--gradient-from) 32%, transparent), transparent 56%),
+        radial-gradient(130% 115% at 92% 0%, color-mix(in srgb, var(--gradient-to) 28%, transparent), transparent 62%),
+        rgba(7, 10, 18, .58);
+      backdrop-filter: blur(16px) saturate(140%);
+      -webkit-backdrop-filter: blur(16px) saturate(140%);
+    }
+
+    .pomodoro-overlay.open{
+      display: flex;
+    }
+
+    .pomodoro-shell{
+      position: relative;
+      width: min(680px, 100%);
+      border-radius: 30px;
+      padding: clamp(18px, 3.2vw, 28px);
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--gradient-to) 34%, rgba(255,255,255,.24));
+      background:
+        radial-gradient(130% 120% at 18% 10%, color-mix(in srgb, var(--gradient-from) 20%, transparent), transparent 46%),
+        radial-gradient(150% 130% at 90% 0%, color-mix(in srgb, var(--gradient-to) 19%, transparent), transparent 54%),
+        linear-gradient(180deg, rgba(25, 34, 53, .74), rgba(14, 20, 34, .72));
+      box-shadow:
+        0 44px 82px rgba(4, 7, 15, .62),
+        inset 0 1px 0 rgba(255,255,255,.25),
+        inset 0 -1px 0 rgba(255,255,255,.08);
+      backdrop-filter: blur(34px) saturate(165%);
+      -webkit-backdrop-filter: blur(34px) saturate(165%);
+      color: var(--text);
+      display: grid;
+      gap: 16px;
+    }
+
+    .pomodoro-shell::before,
+    .pomodoro-shell::after{
+      content: "";
+      position: absolute;
+      pointer-events: none;
+      border-radius: 999px;
+      filter: blur(34px);
+      opacity: .45;
+    }
+
+    .pomodoro-shell::before{
+      width: 220px;
+      height: 220px;
+      left: -70px;
+      top: -90px;
+      background: color-mix(in srgb, var(--gradient-from) 70%, transparent);
+    }
+
+    .pomodoro-shell::after{
+      width: 190px;
+      height: 190px;
+      right: -60px;
+      top: 26%;
+      background: color-mix(in srgb, var(--gradient-to) 66%, transparent);
+    }
+
+    .pomodoro-head{
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      z-index: 1;
+    }
+
+    .pomodoro-badge{
+      padding: 9px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      font-weight: 700;
+      border: 1px solid color-mix(in srgb, var(--gradient-from) 40%, rgba(255,255,255,.28));
+      background:
+        linear-gradient(140deg, color-mix(in srgb, var(--gradient-from) 24%, rgba(255,255,255,.16)), rgba(255,255,255,.08));
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.24),
+        0 10px 22px rgba(5, 8, 16, .35);
+    }
+
+    .pomodoro-exp-chip{
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid color-mix(in srgb, var(--gradient-to) 44%, rgba(255,255,255,.24));
+      background:
+        linear-gradient(140deg, color-mix(in srgb, var(--gradient-to) 23%, rgba(255,255,255,.15)), rgba(255,255,255,.09));
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.24),
+        0 10px 22px rgba(5, 8, 16, .35);
+      text-align: right;
+      line-height: 1;
+      white-space: nowrap;
+      max-width: none;
+    }
+
+    .pomodoro-timebox{
+      position: relative;
+      z-index: 1;
+      border-radius: 24px;
+      border: 1px solid color-mix(in srgb, var(--gradient-from) 26%, rgba(255,255,255,.18));
+      background:
+        linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.06));
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.24),
+        inset 0 -1px 0 rgba(255,255,255,.08),
+        0 22px 44px rgba(8, 13, 23, .48);
+      padding: clamp(14px, 3vw, 24px);
+      text-align: center;
+    }
+
+    .pomodoro-time{
+      font-size: clamp(46px, 8.8vw, 84px);
+      font-weight: 800;
+      letter-spacing: .04em;
+      line-height: .95;
+      color: color-mix(in srgb, var(--text) 96%, white 4%);
+      text-shadow:
+        0 12px 30px rgba(2, 6, 18, .5),
+        0 0 24px color-mix(in srgb, var(--gradient-to) 26%, transparent);
+    }
+
+    .pomodoro-time-caption{
+      margin-top: 10px;
+      font-size: 13px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      opacity: .88;
+      font-weight: 600;
+    }
+
+    .pomodoro-status{
+      position: relative;
+      z-index: 1;
+      border-radius: 16px;
+      padding: 12px 14px;
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.06);
+      font-size: 13px;
+      line-height: 1.4;
+      text-align: center;
+      color: color-mix(in srgb, var(--text) 92%, rgba(255,255,255,.75));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
+    }
+
+    .pomodoro-setup{
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.05);
+    }
+
+    .pomodoro-setup[hidden]{
+      display: none !important;
+    }
+
+    .pomodoro-field{
+      display: grid;
+      gap: 7px;
+    }
+
+    .pomodoro-field[hidden]{
+      display: none !important;
+    }
+
+    .pomodoro-field span{
+      font-size: 12px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: color-mix(in srgb, var(--text) 86%, rgba(255,255,255,.68));
+    }
+
+    .pomodoro-input{
+      border: 1px solid color-mix(in srgb, var(--gradient-from) 28%, rgba(255,255,255,.2));
+      border-radius: 14px;
+      padding: 11px 13px;
+      font-size: 15px;
+      color: var(--text);
+      background:
+        linear-gradient(150deg, rgba(255,255,255,.12), rgba(255,255,255,.04));
+      outline: none;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.24),
+        0 10px 20px rgba(8, 12, 22, .34);
+    }
+
+    .pomodoro-input[type="number"]{
+      appearance: textfield;
+      -moz-appearance: textfield;
+    }
+
+    .pomodoro-input[type="number"]::-webkit-outer-spin-button,
+    .pomodoro-input[type="number"]::-webkit-inner-spin-button{
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .pomodoro-input:focus{
+      border-color: color-mix(in srgb, var(--gradient-to) 45%, rgba(255,255,255,.3));
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.28),
+        0 0 0 2px color-mix(in srgb, var(--gradient-to) 26%, transparent),
+        0 14px 30px rgba(8, 12, 22, .42);
+    }
+
+    .pomodoro-toggle{
+      appearance: none;
+      border: 1px solid color-mix(in srgb, var(--gradient-from) 26%, rgba(255,255,255,.2));
+      background: linear-gradient(150deg, rgba(255,255,255,.11), rgba(255,255,255,.04));
+      color: color-mix(in srgb, var(--text) 90%, rgba(255,255,255,.72));
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: .03em;
+      cursor: pointer;
+      transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.2),
+        0 10px 22px rgba(8, 12, 22, .34);
+    }
+
+    .pomodoro-toggle.active{
+      border-color: color-mix(in srgb, var(--gradient-to) 46%, rgba(255,255,255,.28));
+      color: #ecfff8;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.28),
+        0 14px 28px rgba(8, 12, 22, .4),
+        0 0 28px color-mix(in srgb, var(--gradient-to) 20%, transparent);
+    }
+
+    .pomodoro-toggle:hover{
+      transform: translateY(-1px);
+    }
+
+    .pomodoro-preview{
+      font-size: 13px;
+      color: color-mix(in srgb, var(--text) 90%, rgba(255,255,255,.74));
+      padding-left: 2px;
+    }
+
+    .pomodoro-actions{
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .pomodoro-btn{
+      appearance: none;
+      border: 1px solid rgba(255,255,255,.22);
+      background:
+        linear-gradient(145deg, rgba(255,255,255,.17), rgba(255,255,255,.06));
+      color: var(--text);
+      border-radius: 14px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      cursor: pointer;
+      transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.24),
+        0 12px 24px rgba(8, 12, 22, .34);
+    }
+
+    .pomodoro-btn:hover{
+      transform: translateY(-1px);
+    }
+
+    .pomodoro-btn.primary{
+      border-color: color-mix(in srgb, var(--gradient-to) 46%, rgba(255,255,255,.22));
+      background:
+        linear-gradient(150deg, color-mix(in srgb, var(--gradient-to) 35%, rgba(255,255,255,.2)), rgba(255,255,255,.09));
+      color: #edfff8;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.28),
+        0 16px 30px rgba(8, 12, 22, .4),
+        0 0 24px color-mix(in srgb, var(--gradient-to) 24%, transparent);
+    }
+
+    .pomodoro-btn.warn{
+      border-color: color-mix(in srgb, #f87171 38%, rgba(255,255,255,.2));
+      background:
+        linear-gradient(150deg, rgba(248,113,113,.22), rgba(255,255,255,.06));
+      color: #ffe8e8;
+    }
+
+    .pomodoro-confirm{
+      position: relative;
+      z-index: 1;
+      margin-top: 2px;
+      border-radius: 18px;
+      border: 1px solid color-mix(in srgb, #fca5a5 34%, rgba(255,255,255,.2));
+      background:
+        linear-gradient(160deg, rgba(248,113,113,.18), rgba(255,255,255,.06));
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.2),
+        0 12px 24px rgba(8, 12, 22, .28);
+    }
+
+    .pomodoro-repeat{
+      position: relative;
+      z-index: 1;
+      margin-top: 2px;
+      border-radius: 18px;
+      border: 1px solid color-mix(in srgb, var(--gradient-to) 30%, rgba(255,255,255,.2));
+      background:
+        linear-gradient(160deg, color-mix(in srgb, var(--gradient-to) 14%, rgba(255,255,255,.08)), rgba(255,255,255,.05));
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.2),
+        0 12px 24px rgba(8, 12, 22, .28);
+    }
+
+    .pomodoro-repeat[hidden]{
+      display: none !important;
+    }
+
+    .pomodoro-repeat p{
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.4;
+      text-align: center;
+      color: color-mix(in srgb, var(--text) 92%, rgba(255,255,255,.76));
+    }
+
+    .pomodoro-repeat-actions{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .pomodoro-confirm[hidden]{
+      display: none !important;
+    }
+
+    .pomodoro-confirm p{
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.4;
+      color: color-mix(in srgb, var(--text) 92%, rgba(255,255,255,.76));
+    }
+
+    .pomodoro-confirm-actions{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    :root.light-mode .pomodoro-overlay{
+      background:
+        radial-gradient(120% 100% at 8% 0%, color-mix(in srgb, var(--gradient-from) 20%, transparent), transparent 56%),
+        radial-gradient(130% 115% at 92% 0%, color-mix(in srgb, var(--gradient-to) 18%, transparent), transparent 62%),
+        rgba(245, 248, 255, .58);
+    }
+
+    :root.light-mode .pomodoro-shell{
+      border-color: color-mix(in srgb, var(--gradient-from) 23%, rgba(255,255,255,.78));
+      background:
+        radial-gradient(130% 120% at 18% 10%, color-mix(in srgb, var(--gradient-from) 12%, transparent), transparent 46%),
+        radial-gradient(150% 130% at 90% 0%, color-mix(in srgb, var(--gradient-to) 11%, transparent), transparent 54%),
+        linear-gradient(180deg, rgba(255,255,255,.78), rgba(244,247,255,.76));
+      box-shadow:
+        0 34px 72px rgba(15, 23, 42, .22),
+        inset 0 1px 0 rgba(255,255,255,.92),
+        inset 0 -1px 0 rgba(255,255,255,.52);
+    }
+
+    :root.light-mode .pomodoro-time{
+      color: #141925;
+      text-shadow:
+        0 8px 18px rgba(15, 23, 42, .18),
+        0 0 18px color-mix(in srgb, var(--gradient-from) 16%, transparent);
+    }
+
+    :root.light-mode .pomodoro-status,
+    :root.light-mode .pomodoro-setup{
+      background: rgba(255,255,255,.48);
+      border-color: rgba(255,255,255,.72);
+      color: #1f2937;
+    }
+
+    :root.light-mode .pomodoro-input{
+      background: linear-gradient(150deg, rgba(255,255,255,.82), rgba(255,255,255,.58));
+      color: #111827;
+    }
+
+    :root.light-mode .pomodoro-btn,
+    :root.light-mode .pomodoro-toggle{
+      color: #111827;
+      background: linear-gradient(145deg, rgba(255,255,255,.8), rgba(255,255,255,.52));
+      border-color: rgba(148, 163, 184, .42);
+    }
+
+    @media (max-width: 700px){
+      .pomodoro-shell{
+        border-radius: 24px;
+        gap: 12px;
+      }
+
+      .pomodoro-head{
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .pomodoro-exp-chip{
+        text-align: center;
+        max-width: 100%;
+        font-size: 11px;
+      }
+
+      .pomodoro-actions{
+        justify-content: stretch;
+      }
+
+      .pomodoro-btn{
+        flex: 1 1 100%;
+      }
+    }
+  `;
+
+  document.head.appendChild(style);
+}
+
+function ensurePomodoroOverlay(){
+  if (pomodoroState.root) return;
+
+  ensurePomodoroStyles();
+
+  const overlay = document.createElement("div");
+  overlay.className = "pomodoro-overlay";
+  overlay.id = "pomodoroOverlay";
+  overlay.tabIndex = -1;
+  overlay.innerHTML = `
+    <div class="pomodoro-shell" role="dialog" aria-modal="true" aria-label="Modo enfoque">
+      <div class="pomodoro-head">
+        <div class="pomodoro-badge" id="pomodoroPhaseBadge">Modo enfoque</div>
+        <div class="pomodoro-exp-chip" id="pomodoroExpChip">EXPERIENCIA A GANAR POR ESTA SESION: 0 EXP</div>
+      </div>
+
+      <div class="pomodoro-timebox">
+        <div class="pomodoro-time" id="pomodoroTimerValue">25:00</div>
+        <div class="pomodoro-time-caption" id="pomodoroTimerCaption">Tiempo de enfoque</div>
+      </div>
+
+      <div class="pomodoro-status" id="pomodoroStatusLine"></div>
+
+      <div class="pomodoro-setup" id="pomodoroSetupPanel">
+        <label class="pomodoro-field">
+          <span>Minutos de enfoque</span>
+          <input class="pomodoro-input" id="pomodoroFocusInput" type="number" min="${POMODORO_MIN_FOCUS_MINUTES}" max="${POMODORO_MAX_FOCUS_MINUTES}" step="1" />
+        </label>
+
+        <button class="pomodoro-toggle active" id="pomodoroBreakToggle" type="button" aria-pressed="true" data-active="true">
+          Descanso activado
+        </button>
+
+        <label class="pomodoro-field" id="pomodoroBreakField">
+          <span>Minutos de descanso</span>
+          <input class="pomodoro-input" id="pomodoroBreakInput" type="number" min="${POMODORO_MIN_BREAK_MINUTES}" max="${POMODORO_MAX_BREAK_MINUTES}" step="1" />
+        </label>
+      </div>
+
+      <div class="pomodoro-actions">
+        <button class="pomodoro-btn primary" id="pomodoroStartBtn" type="button">Iniciar sesion de enfoque</button>
+        <button class="pomodoro-btn" id="pomodoroCloseBtn" type="button">Salir del Modo Enfoque</button>
+        <button class="pomodoro-btn warn" id="pomodoroCancelBtn" type="button" hidden>Cancelar Pomodoro</button>
+        <button class="pomodoro-btn primary" id="pomodoroFinishBtn" type="button" hidden>Cerrar modo</button>
+      </div>
+
+      <div class="pomodoro-repeat" id="pomodoroRepeatPrompt" hidden>
+        <p id="pomodoroRepeatText"></p>
+        <div class="pomodoro-repeat-actions">
+          <button class="pomodoro-btn primary" id="pomodoroRepeatYesBtn" type="button">Si, comenzar de nuevo</button>
+          <button class="pomodoro-btn" id="pomodoroRepeatNoBtn" type="button">No, volver</button>
+        </div>
+      </div>
+
+      <div class="pomodoro-confirm" id="pomodoroCancelConfirm" hidden>
+        <p id="pomodoroCancelConfirmText"></p>
+        <div class="pomodoro-confirm-actions">
+          <button class="pomodoro-btn" id="pomodoroConfirmKeepBtn" type="button">Seguir con la sesión</button>
+          <button class="pomodoro-btn warn" id="pomodoroConfirmCancelBtn" type="button">Sí, cancelar</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  pomodoroState.root = overlay;
+  pomodoroState.phaseBadge = overlay.querySelector("#pomodoroPhaseBadge");
+  pomodoroState.timerValue = overlay.querySelector("#pomodoroTimerValue");
+  pomodoroState.timerCaption = overlay.querySelector("#pomodoroTimerCaption");
+  pomodoroState.statusLine = overlay.querySelector("#pomodoroStatusLine");
+  pomodoroState.setupPanel = overlay.querySelector("#pomodoroSetupPanel");
+  pomodoroState.focusInput = overlay.querySelector("#pomodoroFocusInput");
+  pomodoroState.breakToggle = overlay.querySelector("#pomodoroBreakToggle");
+  pomodoroState.breakField = overlay.querySelector("#pomodoroBreakField");
+  pomodoroState.breakInput = overlay.querySelector("#pomodoroBreakInput");
+  pomodoroState.expChip = overlay.querySelector("#pomodoroExpChip");
+  pomodoroState.startBtn = overlay.querySelector("#pomodoroStartBtn");
+  pomodoroState.closeBtn = overlay.querySelector("#pomodoroCloseBtn");
+  pomodoroState.cancelBtn = overlay.querySelector("#pomodoroCancelBtn");
+  pomodoroState.finishBtn = overlay.querySelector("#pomodoroFinishBtn");
+  pomodoroState.repeatPrompt = overlay.querySelector("#pomodoroRepeatPrompt");
+  pomodoroState.repeatText = overlay.querySelector("#pomodoroRepeatText");
+  pomodoroState.repeatYesBtn = overlay.querySelector("#pomodoroRepeatYesBtn");
+  pomodoroState.repeatNoBtn = overlay.querySelector("#pomodoroRepeatNoBtn");
+  pomodoroState.confirmBox = overlay.querySelector("#pomodoroCancelConfirm");
+  pomodoroState.confirmText = overlay.querySelector("#pomodoroCancelConfirmText");
+  pomodoroState.confirmKeepBtn = overlay.querySelector("#pomodoroConfirmKeepBtn");
+  pomodoroState.confirmCancelBtn = overlay.querySelector("#pomodoroConfirmCancelBtn");
+
+  pomodoroState.breakToggle?.addEventListener("click", () => {
+    if (isPomodoroSessionRunning()) return;
+    pomodoroState.breakEnabled = !(pomodoroState.breakToggle.dataset.active === "true");
+    syncPomodoroBreakToggleUi();
+    syncPomodoroExpPreview();
+  });
+
+  pomodoroState.focusInput?.addEventListener("input", () => {
+    if (isPomodoroSessionRunning()) return;
+    syncPomodoroExpPreview();
+    pomodoroState.secondsRemaining = clampPomodoroMinutes(
+      pomodoroState.focusInput.value,
+      POMODORO_MIN_FOCUS_MINUTES,
+      POMODORO_MAX_FOCUS_MINUTES,
+      POMODORO_DEFAULT_FOCUS_MINUTES
+    ) * 60;
+    updatePomodoroTimerUi();
+  });
+
+  pomodoroState.breakInput?.addEventListener("input", () => {
+    if (isPomodoroSessionRunning()) return;
+    syncPomodoroExpPreview();
+  });
+
+  pomodoroState.startBtn?.addEventListener("click", () => {
+    beginPomodoroFocusPhase();
+  });
+
+  pomodoroState.closeBtn?.addEventListener("click", () => {
+    closePomodoroMode();
+  });
+
+  pomodoroState.cancelBtn?.addEventListener("click", () => {
+    openPomodoroCancelConfirm();
+  });
+
+  pomodoroState.finishBtn?.addEventListener("click", () => {
+    closePomodoroMode();
+  });
+
+  pomodoroState.repeatYesBtn?.addEventListener("click", () => {
+    restartPomodoroWithLastSession();
+  });
+
+  pomodoroState.repeatNoBtn?.addEventListener("click", () => {
+    closePomodoroMode();
+  });
+
+  pomodoroState.confirmKeepBtn?.addEventListener("click", () => {
+    closePomodoroCancelConfirm();
+    pomodoroState.cancelBtn?.focus();
+  });
+
+  pomodoroState.confirmCancelBtn?.addEventListener("click", () => {
+    cancelPomodoroSession("manual");
+  });
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target !== overlay) return;
+    if (isPomodoroSessionRunning()) {
+      openPomodoroCancelConfirm();
+      return;
+    }
+    closePomodoroMode();
+  });
+
+  overlay.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (isPomodoroSessionRunning()) {
+        openPomodoroCancelConfirm();
+      } else {
+        closePomodoroMode();
+      }
+      return;
+    }
+
+    if (event.key === "Enter" && pomodoroState.phase === "setup") {
+      const targetTag = event.target instanceof HTMLElement ? event.target.tagName : "";
+      if (targetTag !== "TEXTAREA") {
+        event.preventDefault();
+        pomodoroState.startBtn?.click();
+      }
+    }
+  });
+
+  resetPomodoroSetupState();
+}
+
+function openPomodoroMode(){
+  ensurePomodoroOverlay();
+  if (!pomodoroState.root) return;
+
+  closeAdminConsole();
+  if (typeof closeSettingsOverlay === "function") closeSettingsOverlay();
+  if (typeof closeFeedbackModal === "function") closeFeedbackModal();
+  if (typeof closeLevelMenu === "function") closeLevelMenu();
+  if (typeof resetTransientOverlays === "function") resetTransientOverlays();
+
+  resetPomodoroSetupState();
+  pomodoroState.root.classList.add("open");
+  document.body.classList.add("pomodoro-lock");
+  requestAnimationFrame(() => {
+    pomodoroState.focusInput?.focus();
+  });
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) return;
+  if (!isPomodoroSessionRunning()) return;
+  cancelPomodoroSession("visibility");
+});
+
+document.addEventListener("keydown", (event) => {
+  if (!isPomodoroOverlayOpen()) return;
+  const target = event.target;
+  const isInsidePomodoro = target instanceof Node && pomodoroState.root?.contains(target);
+  if (isInsidePomodoro) return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
 
 async function executeAdminConsoleCommand(rawCommand){
   const command = String(rawCommand || "").trim();
@@ -2110,6 +3792,12 @@ async function executeAdminConsoleCommand(rawCommand){
       adminConsoleState.output.innerHTML = "";
     }
     adminConsoleLog("Consola limpiada.", "ok");
+    return;
+  }
+
+  if (/^\/pomodoro$/i.test(command)) {
+    openPomodoroMode();
+    adminConsoleLog("Modo enfoque desplegado. Configurá la sesión y empezá cuando quieras.", "ok");
     return;
   }
 
@@ -2301,6 +3989,8 @@ function ensureAdminDebugConsole(){
 }
 
 function handleAdminConsoleSequence(event){
+  if (isPomodoroOverlayOpen()) return;
+
   if (event.code === "Escape" && adminConsoleState.root?.classList.contains("open")) {
     closeAdminConsole();
     return;
@@ -2341,6 +4031,13 @@ function formatProfileTriggerName(displayName){
   }
 
   return parts[0] || "Invitado";
+}
+
+function formatSummaryPillName(displayName){
+  const raw = String(displayName || "Usuario").trim();
+  const parts = raw.split(/\s+/).filter(Boolean);
+  if(!parts.length) return "Usuario";
+  return parts.slice(0, 2).join(" ");
 }
 
 function renderLoginCircle(photoURL, displayName){
@@ -2411,15 +4108,13 @@ onAuthStateChanged(auth, async (user) => {
     resetAuthGateStyles();
     updateSettingsProfile(user);
     syncOfficeModeControls();
-    // 🔥 Ocultar tooltip si estaba visible
-    loginTooltip.classList.remove("show");
-    clearTimeout(tooltipTimeout);
 
     // 🔥 Mostrar foto en botón circular
     renderLoginCircle(user.photoURL, user.displayName);
     loginCircleBtn.classList.add("logged-in");
 
     statusText.textContent = "Sincronizando tareas...";
+    syncSummaryStatusText();
 
     // 🔥 Cancelar listener anterior si existía
     if (unsubscribe) {
@@ -2534,7 +4229,7 @@ onAuthStateChanged(auth, async (user) => {
         }
 
         if (data.viewMode) {
-          currentViewMode = data.viewMode;
+          currentViewMode = normalizeViewMode(data.viewMode);
           localStorage.setItem("mt_view_mode", currentViewMode);
         }
 
@@ -2559,13 +4254,25 @@ onAuthStateChanged(auth, async (user) => {
 
         persistPlayerLocalSnapshot(player, user.uid);
 
+        if (currentUser) {
+          try {
+            await setDoc(
+              doc(db, "leaderboard", currentUser.uid),
+              buildLeaderboardDocPayload(currentUser, player),
+              { merge: true }
+            );
+          } catch (err) {
+            console.warn("No se pudo sincronizar el perfil completo del leaderboard.", err);
+          }
+        }
+
         if (shouldSyncPlayerToCloud && currentUser) {
           await savePlayer();
         }
 
         // 🔥 cargar tema del usuario
         if (data.theme) {
-          currentTheme = data.theme;
+          currentTheme = normalizeThemeName(data.theme);
           applyTheme(currentTheme);
         }
 
@@ -2611,6 +4318,7 @@ onAuthStateChanged(auth, async (user) => {
         }
 
       setStatusSaved();
+      maybeShowChangelogUpdateModal(snapshot.data() || {});
 
     });
 
@@ -2620,7 +4328,7 @@ onAuthStateChanged(auth, async (user) => {
       } else {
 
         // 🔥 Usuario NO logueado
-        currentTheme = localStorage.getItem("app_theme") || "theme-default";
+        currentTheme = normalizeThemeName(localStorage.getItem("app_theme") || "theme-default");
         applyTheme(currentTheme);
 
         if (unsubscribe) {
@@ -2629,6 +4337,8 @@ onAuthStateChanged(auth, async (user) => {
         }
 
         currentUser = null;
+        changelogModalPromptedVersion = "";
+        closeChangelogUpdateModal();
         document.body.classList.add("logged-out");
         authGate?.classList.add("open");
         resetTransientOverlays();
@@ -2677,6 +4387,223 @@ authGateGoogleBtn?.addEventListener("click", async (e) => {
   await signInWithPopup(auth, provider);
 });
 
+const leaderboardProfileCache = new Map();
+
+function escapeHtml(value){
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function getLeaderboardFallbackPhoto(name){
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(String(name || "Usuario"))}&background=random`;
+}
+
+function formatLeaderboardDate(value){
+  const safeValue = String(value || "").trim();
+  if (!safeValue) return "Sin registro";
+  const parsed = new Date(`${safeValue}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return safeValue;
+  return parsed.toLocaleDateString("es-AR");
+}
+
+function formatLeaderboardTimestamp(value){
+  const timestamp = Number(value) || 0;
+  if (timestamp <= 0) return "Sin registro";
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return "Sin registro";
+  return parsed.toLocaleString("es-AR");
+}
+
+function hasLeaderboardDetailedFields(user = {}){
+  if (user?.playerData && typeof user.playerData === "object") return true;
+
+  const detailedKeys = [
+    "activeStreak",
+    "longestStreak",
+    "allTasksStreak",
+    "totalFocusMinutes",
+    "todayExpTasks",
+    "achievementsUnlocked",
+    "lastActiveDate",
+    "lastAllTasksDate",
+    "lastExpDate",
+    "updatedAt"
+  ];
+
+  return detailedKeys.some((key) => Object.prototype.hasOwnProperty.call(user, key));
+}
+
+function hasLeaderboardProgress(user = {}){
+  return (
+    Math.max(0, Number(user.level) || 0) > 0 ||
+    Math.max(0, Number(user.exp) || 0) > 0 ||
+    Math.max(0, Number(user.activeStreak) || 0) > 0 ||
+    Math.max(0, Number(user.longestStreak) || 0) > 0 ||
+    Math.max(0, Number(user.allTasksStreak) || 0) > 0 ||
+    Math.max(0, Number(user.totalFocusMinutes) || 0) > 0 ||
+    Math.max(0, Number(user.todayExpTasks) || 0) > 0 ||
+    Math.max(0, Number(user.achievementsUnlocked) || 0) > 0 ||
+    !!String(user.lastActiveDate || "").trim() ||
+    !!String(user.lastAllTasksDate || "").trim() ||
+    !!String(user.lastExpDate || "").trim()
+  );
+}
+
+function isPlaceholderLeaderboardEntry(user = {}){
+  const name = String(user.name || "").trim().toLowerCase();
+  const hasPhoto = !!String(user.photo || "").trim();
+  const hasProgress = hasLeaderboardProgress(user);
+  const anonymousName = !name || name === "usuario";
+
+  return anonymousName && !hasPhoto && !hasProgress;
+}
+
+function getLeaderboardPublicSummary(user = {}){
+  return {
+    uid: String(user.uid || ""),
+    name: String(user.name || "Usuario"),
+    photo: String(user.photo || ""),
+    level: Math.max(0, Number(user.level) || 0),
+    exp: Math.max(0, Number(user.exp) || 0),
+    activeStreak: Math.max(0, Number(user.activeStreak) || 0),
+    longestStreak: Math.max(0, Number(user.longestStreak) || 0),
+    allTasksStreak: Math.max(0, Number(user.allTasksStreak) || 0),
+    totalFocusMinutes: Math.max(0, Number(user.totalFocusMinutes) || 0),
+    todayExpTasks: Math.max(0, Number(user.todayExpTasks) || 0),
+    achievementsUnlocked: Math.max(0, Number(user.achievementsUnlocked) || 0),
+    lastActiveDate: user.lastActiveDate || null,
+    lastAllTasksDate: user.lastAllTasksDate || null,
+    lastExpDate: user.lastExpDate || null,
+    updatedAt: Math.max(0, Number(user.updatedAt) || 0),
+    playerData: user?.playerData && typeof user.playerData === "object" ? user.playerData : null,
+    hasDetailedStats: hasLeaderboardDetailedFields(user)
+  };
+}
+
+function getLeaderboardDetailedSummary(playerData = {}, baseUser = {}){
+  const safePlayer = normalizePlayer(playerData || {});
+  const summary = getLeaderboardPublicSummary(baseUser);
+  const levelFromPlayer = Math.max(0, Number(safePlayer.level) || 0);
+  const expFromPlayer = Math.max(0, Number(safePlayer.exp) || 0);
+
+  return {
+    ...summary,
+    level: Math.max(summary.level, levelFromPlayer),
+    exp: Math.max(summary.exp, expFromPlayer),
+    activeStreak: Math.max(0, Number(safePlayer.activeStreak) || 0),
+    longestStreak: Math.max(0, Number(safePlayer.longestStreak) || 0),
+    allTasksStreak: Math.max(0, Number(safePlayer.allTasksStreak) || 0),
+    totalFocusMinutes: Math.max(0, Number(safePlayer.totalFocusMinutes) || 0),
+    todayExpTasks: Math.max(0, Number(safePlayer.todayExpTasks) || 0),
+    achievementsUnlocked: Math.max(0, Number(Object.keys(safePlayer.achievements || {}).length) || 0),
+    lastActiveDate: safePlayer.lastActiveDate || summary.lastActiveDate || null,
+    lastAllTasksDate: safePlayer.lastAllTasksDate || summary.lastAllTasksDate || null,
+    lastExpDate: safePlayer.lastExpDate || summary.lastExpDate || null,
+    updatedAt: Math.max(summary.updatedAt, Number(safePlayer.updatedAt) || 0),
+    playerData: safePlayer,
+    hasDetailedStats: true
+  };
+}
+
+function renderLeaderboardProfileMenu(summary = {}, { loading = false } = {}){
+  const safeSummary = getLeaderboardPublicSummary(summary);
+  const safeName = String(safeSummary.name || "Usuario");
+  const safePhoto = String(safeSummary.photo || "");
+  const avatarSrc = safePhoto || getLeaderboardFallbackPhoto(safeName);
+  const fallbackAvatar = getLeaderboardFallbackPhoto(safeName);
+  const safeNameHtml = escapeHtml(safeName);
+  const safeAvatarHtml = escapeHtml(avatarSrc);
+  const safeFallbackAvatarHtml = escapeHtml(fallbackAvatar);
+
+  if (loading) {
+    return `
+      <div class="leaderboard-profile-header">
+        <img
+          class="leaderboard-profile-photo"
+          src="${safeAvatarHtml}"
+          alt="Foto de ${safeNameHtml}"
+          onerror="this.src='${safeFallbackAvatarHtml}'"
+        >
+        <div class="leaderboard-profile-header-copy">
+          <div class="leaderboard-profile-name">${safeNameHtml}</div>
+          <div class="leaderboard-profile-subtitle">Perfil</div>
+        </div>
+      </div>
+      <div class="leaderboard-profile-loading">Cargando perfil...</div>
+    `;
+  }
+
+  const stats = [
+    { label: "Nivel", value: formatSettingsStat(safeSummary.level) },
+    { label: "EXP total", value: `${formatSettingsStat(safeSummary.exp)} pts` },
+    {
+      label: "Minutos en sesiones de enfoque",
+      value: `${formatSettingsStat(safeSummary.totalFocusMinutes)} min`
+    },
+    { label: "Racha activa", value: `${formatSettingsStat(safeSummary.activeStreak)} días` },
+    { label: "Mejor racha", value: `${formatSettingsStat(safeSummary.longestStreak)} días` },
+    { label: "Logros desbloqueados", value: formatSettingsStat(safeSummary.achievementsUnlocked) },
+    { label: "Días perfectos seguidos", value: `${formatSettingsStat(safeSummary.allTasksStreak)} días` },
+    { label: "Último día activo", value: formatLeaderboardDate(safeSummary.lastActiveDate) }
+  ];
+
+  const statsHtml = stats.map((stat) => `
+    <div class="leaderboard-profile-stat">
+      <span class="leaderboard-profile-stat-label">${escapeHtml(stat.label)}</span>
+      <span class="leaderboard-profile-stat-value">${escapeHtml(stat.value)}</span>
+    </div>
+  `).join("");
+
+  return `
+    <div class="leaderboard-profile-header">
+      <img
+        class="leaderboard-profile-photo"
+        src="${safeAvatarHtml}"
+        alt="Foto de ${safeNameHtml}"
+        onerror="this.src='${safeFallbackAvatarHtml}'"
+      >
+      <div class="leaderboard-profile-header-copy">
+        <div class="leaderboard-profile-name">${safeNameHtml}</div>
+        <div class="leaderboard-profile-subtitle">Perfil</div>
+      </div>
+    </div>
+    <div class="leaderboard-profile-stats">${statsHtml}</div>
+  `;
+}
+
+async function fetchLeaderboardProfileSummary(user){
+  const publicSummary = getLeaderboardPublicSummary(user);
+  if (!publicSummary.uid) return publicSummary;
+
+  if (leaderboardProfileCache.has(publicSummary.uid)) {
+    return leaderboardProfileCache.get(publicSummary.uid);
+  }
+
+  if (publicSummary.playerData) {
+    const summaryFromLeaderboardDoc = getLeaderboardDetailedSummary(
+      publicSummary.playerData,
+      publicSummary
+    );
+    leaderboardProfileCache.set(publicSummary.uid, summaryFromLeaderboardDoc);
+    return summaryFromLeaderboardDoc;
+  }
+
+  if (currentUser?.uid === publicSummary.uid) {
+    const localSummary = getLeaderboardDetailedSummary(player, publicSummary);
+    leaderboardProfileCache.set(publicSummary.uid, localSummary);
+    return localSummary;
+  }
+
+  // Para evitar errores de permisos entre usuarios, el perfil público se resuelve
+  // únicamente con la colección leaderboard.
+  leaderboardProfileCache.set(publicSummary.uid, publicSummary);
+  return publicSummary;
+}
+
 function showLeaderboardModal(users){
 
   const existing = document.getElementById("leaderboardOverlay");
@@ -2686,8 +4613,11 @@ function showLeaderboardModal(users){
   overlay.className = "overlay open";
   overlay.id = "leaderboardOverlay";
 
+  const stage = document.createElement("div");
+  stage.className = "leaderboard-stage";
+
   const modal = document.createElement("div");
-  modal.className = "modal";
+  modal.className = "modal leaderboard-modal";
 
   let html = `
     <div class="mhead">
@@ -2697,11 +4627,21 @@ function showLeaderboardModal(users){
     <div class="mbody leaderboard-list">
   `;
 
-    if(users.length === 0){
-      html += `<div class="leaderboard-empty">Aún no hay jugadores</div>`;
-    }
+  if(users.length === 0){
+    html += `<div class="leaderboard-empty">Aún no hay jugadores</div>`;
+  }
 
   users.forEach((u,i)=>{
+    const safeUid = String(u.uid || "");
+    const safeName = String(u.name || "Usuario");
+    const safePhoto = String(u.photo || "");
+    const safeLevel = Math.max(0, Number(u.level) || 0);
+    const safeExp = Math.max(0, Number(u.exp) || 0);
+    const escapedUid = escapeHtml(safeUid);
+    const escapedName = escapeHtml(safeName);
+    const escapedPhoto = escapeHtml(safePhoto || getLeaderboardFallbackPhoto(safeName));
+    const escapedFallbackPhoto = escapeHtml(getLeaderboardFallbackPhoto(safeName));
+    const escapedAria = escapeHtml(`Ver resumen de ${safeName}`);
 
     let posDisplay;
 
@@ -2711,64 +4651,137 @@ function showLeaderboardModal(users){
     else posDisplay = `<span class="leader-rank-circle">${i+1}</span>`;
 
     html += `
-      <div class="leaderboard-row ${currentUser && u.uid === currentUser.uid ? "leader-self" : ""}">
-
+      <div
+        class="leaderboard-row ${currentUser && safeUid === currentUser.uid ? "leader-self" : ""}"
+        data-leader-uid="${escapedUid}"
+        role="button"
+        tabindex="0"
+        aria-expanded="false"
+        aria-label="${escapedAria}"
+      >
         <div class="leader-pos">${posDisplay}</div>
-
-        <img 
+        <img
           class="leader-photo"
-          src="${u.photo}"
-          onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=random'"
+          src="${escapedPhoto}"
+          alt="Foto de ${escapedName}"
+          onerror="this.src='${escapedFallbackPhoto}'"
         >
-
-        <div class="leader-name">${u.name}</div>
-
-        <div class="leader-level">
-          Nivel ${u.level}
-        </div>
-
-        <div class="leader-exp">
-          ${u.exp} pts
-        </div>
-
+        <div class="leader-name">${escapedName}</div>
+        <div class="leader-level">Nivel ${formatSettingsStat(safeLevel)}</div>
+        <div class="leader-exp">${formatSettingsStat(safeExp)} pts</div>
       </div>
     `;
-
   });
 
   html += `</div>`;
 
   modal.innerHTML = html;
 
-  overlay.appendChild(modal);
+  const leaderboardProfileDrawer = document.createElement("aside");
+  leaderboardProfileDrawer.className = "leaderboard-profile-drawer";
+  leaderboardProfileDrawer.setAttribute("aria-hidden", "true");
+  leaderboardProfileDrawer.innerHTML = `
+    <div class="leaderboard-profile-panel-content">
+      <div class="leaderboard-profile-empty">Tocá una fila para ver el perfil completo.</div>
+    </div>
+  `;
+
+  stage.appendChild(modal);
+  stage.appendChild(leaderboardProfileDrawer);
+  overlay.appendChild(stage);
   document.body.appendChild(overlay);
+
+  const leaderboardList = modal.querySelector(".leaderboard-list");
+  const leaderboardProfileContent = leaderboardProfileDrawer.querySelector(".leaderboard-profile-panel-content");
+  const usersByUid = new Map(
+    users.map((user) => [String(user.uid || ""), getLeaderboardPublicSummary(user)])
+  );
+  let activeProfileUid = "";
+
+  const resetEmptyProfile = () => {
+    if (!leaderboardProfileContent) return;
+    leaderboardProfileContent.innerHTML =
+      `<div class="leaderboard-profile-empty">Tocá una fila para ver el perfil completo.</div>`;
+  };
+
+  const setActiveRowState = (uid = "") => {
+    leaderboardList?.querySelectorAll(".leaderboard-row[data-leader-uid]").forEach((rowElement) => {
+      const isActive = !!uid && String(rowElement.dataset.leaderUid || "") === uid;
+      rowElement.classList.toggle("leader-open", isActive);
+      rowElement.setAttribute("aria-expanded", isActive ? "true" : "false");
+    });
+  };
+
+  const closeProfilePanel = () => {
+    activeProfileUid = "";
+    stage.classList.remove("profile-open");
+    leaderboardProfileDrawer.setAttribute("aria-hidden", "true");
+    setActiveRowState("");
+    resetEmptyProfile();
+  };
+
+  leaderboardList?.querySelectorAll(".leaderboard-row[data-leader-uid]").forEach((rowElement) => {
+    const uid = String(rowElement.dataset.leaderUid || "");
+    const user = usersByUid.get(uid);
+    if (!user) return;
+
+    const activate = async () => {
+      if (!leaderboardProfileContent) return;
+
+      const isSameProfileOpen =
+        activeProfileUid === uid &&
+        stage.classList.contains("profile-open");
+
+      if (isSameProfileOpen) {
+        closeProfilePanel();
+        return;
+      }
+
+      activeProfileUid = uid;
+      stage.classList.add("profile-open");
+      leaderboardProfileDrawer.setAttribute("aria-hidden", "false");
+      setActiveRowState(uid);
+      leaderboardProfileContent.innerHTML = renderLeaderboardProfileMenu(user, { loading: true });
+
+      const requestedUid = uid;
+      const summary = await fetchLeaderboardProfileSummary(user);
+
+      if (activeProfileUid !== requestedUid) return;
+      if (!leaderboardProfileContent.isConnected) return;
+
+      leaderboardProfileContent.innerHTML = renderLeaderboardProfileMenu(summary);
+    };
+
+    rowElement.addEventListener("click", activate);
+    rowElement.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      activate();
+    });
+  });
 
   document
     .getElementById("closeLeaderboard")
     .onclick = ()=>{
-
+      closeProfilePanel();
       overlay.remove();
 
       if(leaderboardUnsub){
         leaderboardUnsub();
         leaderboardUnsub = null;
       }
-
-  };
+    };
 
   overlay.onclick = (e)=>{
-
     if(e.target === overlay){
-
+      closeProfilePanel();
       overlay.remove();
 
       if(leaderboardUnsub){
         leaderboardUnsub();
         leaderboardUnsub = null;
       }
-
     }
-
   };
 
 }
@@ -2783,12 +4796,20 @@ function closeCornerMenu() {
 
   cornerContainer.classList.remove("expanded", "closing");
   cornerContainer.classList.add("collapsed");
+  cornerContainer.classList.remove("dashboard-pill-mode");
+  cornerContainer.style.removeProperty("top");
+  cornerContainer.style.removeProperty("right");
+  cornerContainer.style.removeProperty("left");
+  cornerContainer.style.removeProperty("width");
+  document.body.classList.remove("dashboard-profile-menu-open");
+  if (activeDashboardProfileTrigger) {
+    activeDashboardProfileTrigger.classList.remove("menu-open");
+    activeDashboardProfileTrigger.setAttribute("aria-expanded", "false");
+  }
+  activeDashboardProfileTrigger = null;
   loginCircleBtn?.setAttribute("aria-expanded", "false");
 
   profileMenuOpen = false;
-
-  loginTooltip.classList.remove("show");
-  clearTimeout(tooltipTimeout);
 }
 
 function openCornerMenu() {
@@ -2799,6 +4820,58 @@ function openCornerMenu() {
   loginCircleBtn?.setAttribute("aria-expanded", "true");
 
   profileMenuOpen = true;
+}
+
+function positionCornerMenuFromDashboardPill(trigger){
+  if(!trigger || !cornerContainer) return;
+  const rect = trigger.getBoundingClientRect();
+  const maxViewportWidth = Math.max(220, Math.round(window.innerWidth - 20));
+  const preferredWidth = Math.min(maxViewportWidth, Math.max(248, Math.round(rect.width)));
+  const top = Math.max(6, Math.round(rect.bottom - 1));
+  const right = Math.max(10, Math.round(window.innerWidth - rect.right));
+
+  cornerContainer.style.top = `${top}px`;
+  cornerContainer.style.right = `${right}px`;
+  cornerContainer.style.left = "auto";
+  cornerContainer.style.width = `${preferredWidth}px`;
+}
+
+function syncDashboardProfileMenuPosition() {
+  if(!profileMenuOpen) return;
+  if(!cornerContainer?.classList.contains("dashboard-pill-mode")) return;
+  if(!activeDashboardProfileTrigger || !activeDashboardProfileTrigger.isConnected){
+    closeCornerMenu();
+    return;
+  }
+  positionCornerMenuFromDashboardPill(activeDashboardProfileTrigger);
+}
+
+window.addEventListener("resize", syncDashboardProfileMenuPosition);
+window.addEventListener("scroll", syncDashboardProfileMenuPosition, true);
+
+function toggleDashboardProfileMenuFromPill(trigger){
+  if(!trigger || !cornerContainer) return;
+
+  const isDashboardMenuOpen =
+    profileMenuOpen &&
+    cornerContainer.classList.contains("dashboard-pill-mode");
+
+  if(isDashboardMenuOpen){
+    closeCornerMenu();
+    return;
+  }
+
+  if (activeDashboardProfileTrigger && activeDashboardProfileTrigger !== trigger) {
+    activeDashboardProfileTrigger.classList.remove("menu-open");
+    activeDashboardProfileTrigger.setAttribute("aria-expanded", "false");
+  }
+  activeDashboardProfileTrigger = trigger;
+  activeDashboardProfileTrigger.classList.add("menu-open");
+  activeDashboardProfileTrigger.setAttribute("aria-expanded", "true");
+  cornerContainer.classList.add("dashboard-pill-mode");
+  document.body.classList.add("dashboard-profile-menu-open");
+  positionCornerMenuFromDashboardPill(trigger);
+  openCornerMenu();
 }
 
 
@@ -2818,13 +4891,6 @@ loginCircleBtn?.addEventListener("click", (e) => {
   }
 
   openCornerMenu();
-
-  if (!currentUser) {
-    clearTimeout(tooltipTimeout);
-    tooltipTimeout = setTimeout(() => {
-      loginTooltip.classList.add("show");
-    }, 900);
-  }
 });
 
 document.addEventListener("click", (e) => {
@@ -2884,6 +4950,7 @@ const settingsAccountLevel = document.getElementById("settingsAccountLevel");
 const settingsAccountExp = document.getElementById("settingsAccountExp");
 const settingsAccountCompletedTasks = document.getElementById("settingsAccountCompletedTasks");
 const settingsAccountProjects = document.getElementById("settingsAccountProjects");
+const settingsAccountFocusMinutes = document.getElementById("settingsAccountFocusMinutes");
 const settingsAccountLogoutBtn = document.getElementById("settingsAccountLogoutBtn");
 const reportErrorBtn = document.getElementById("reportErrorBtn");
 const suggestFeatureBtn = document.getElementById("suggestFeatureBtn");
@@ -2895,9 +4962,6 @@ const settingsPanels = {
   help: document.getElementById("settingsPanelHelp"),
   security: document.getElementById("settingsPanelSecurity")
 };
-const APP_VERSION = document.querySelector(".brand-meta .version")?.textContent?.trim()
-  || document.querySelector(".changelog-version")?.textContent?.trim()
-  || "v2.4";
 const FEEDBACK_FORM_ENDPOINT = "https://formsubmit.co/ajax/santiialonso27@gmail.com";
 
 const OFFICE_MODE_TIMEOUT_OPTIONS = [30, 60, 120, 300, 600, 1800];
@@ -2921,7 +4985,7 @@ function updateSettingsProfile(user = currentUser){
   }
 
   if(settingsProfileAvatar){
-    settingsProfileAvatar.src = user?.photoURL || "/flav-icon.png";
+    settingsProfileAvatar.src = user?.photoURL || "/icons/flav-icon.png";
   }
 }
 
@@ -2935,7 +4999,7 @@ function renderSettingsAccountPanel(user = currentUser){
   const hasSession = !!user;
 
   if(settingsAccountAvatar){
-    settingsAccountAvatar.src = user?.photoURL || "/flav-icon.png";
+    settingsAccountAvatar.src = user?.photoURL || "/icons/flav-icon.png";
   }
 
   if(settingsAccountName){
@@ -2966,6 +5030,12 @@ function renderSettingsAccountPanel(user = currentUser){
 
   if(settingsAccountProjects){
     settingsAccountProjects.textContent = formatSettingsStat(stats.projectsCount);
+  }
+
+  if(settingsAccountFocusMinutes){
+    settingsAccountFocusMinutes.textContent = formatSettingsStat(
+      Math.max(0, Number(player?.totalFocusMinutes) || 0)
+    );
   }
 
   if(settingsAccountLogoutBtn){
@@ -3620,39 +5690,49 @@ window.setTimeout(() => {
 bindAutoNotificationPermissionFallback();
 
 
-if(tasksViewBtn){
-  tasksViewBtn.onclick = async ()=>{
+async function setViewMode(nextMode){
+  const normalizedMode = normalizeViewMode(nextMode);
+  const modeChanged = currentViewMode !== normalizedMode;
 
-    currentViewMode = "tasks";
+  if (typeof summarySearchCleanup === "function") {
+    summarySearchCleanup();
+    summarySearchCleanup = null;
+  }
 
-    if(currentUser){
+  currentViewMode = normalizedMode;
+  localStorage.setItem("mt_view_mode", currentViewMode);
+
+  if(modeChanged && currentUser){
+    try{
       await setDoc(
         doc(db,"users",currentUser.uid),
         { viewMode: currentViewMode },
         { merge:true }
       );
+    }catch(error){
+      console.warn("No se pudo guardar el modo de vista en Firebase.", error);
     }
+  }
 
-    updateViewButtons();
-    init();
+  updateViewButtons();
+  init();
+}
+
+if(summaryViewBtn){
+  summaryViewBtn.onclick = async ()=>{
+    await setViewMode(VIEW_MODE_SUMMARY);
+  };
+}
+
+if(tasksViewBtn){
+  tasksViewBtn.onclick = async ()=>{
+    await setViewMode(VIEW_MODE_TASKS);
   };
 }
 
 if(projectsViewBtn){
   projectsViewBtn.onclick = async ()=>{
-
-    currentViewMode = "projects";
-
-    if(currentUser){
-      await setDoc(
-        doc(db,"users",currentUser.uid),
-        { viewMode: currentViewMode },
-        { merge:true }
-      );
-    }
-
-    updateViewButtons();
-    init();
+    await setViewMode(VIEW_MODE_PROJECTS);
   };
 }
 
@@ -3696,12 +5776,7 @@ async function save(){
 
       await setDoc(
         doc(db,"leaderboard",currentUser.uid),
-        {
-          name: currentUser.displayName,
-          photo: currentUser.photoURL,
-          level: player.level,
-          exp: player.exp
-        },
+        buildLeaderboardDocPayload(currentUser, player),
         { merge:true }
       );
 
@@ -3846,12 +5921,17 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
   let dayTasks;
 
   if (isProject) {
+    const scopedProject = projects[projectId];
+    if (!scopedProject || typeof scopedProject !== "object") {
+      return document.createElement("div");
+    }
+    ensureProjectBannerSettings(scopedProject, projectId);
 
-    if (!projects[projectId].tasks) {
-      projects[projectId].tasks = [];
+    if (!scopedProject.tasks) {
+      scopedProject.tasks = [];
     }
 
-    dayTasks = projects[projectId].tasks;
+    dayTasks = scopedProject.tasks;
 
   } else {
 
@@ -4868,7 +6948,6 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
             data-time-slot="${option.value}"
           >${option.label}</button>
         `).join("");
-        bindMobileTapToClick(taskTimePanel);
 
         taskScheduleButton.onclick = (e) => {
           e.preventDefault();
@@ -4936,7 +7015,6 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         taskTagPanel.innerHTML = labelOptions
           ? `${labelOptions}${createButtonMarkup}`
           : createButtonMarkup;
-        bindMobileTapToClick(taskTagPanel);
 
           taskTagPanel.querySelectorAll("[data-label-id]").forEach((option) => {
             option.addEventListener("click", async (e) => {
@@ -5006,7 +7084,6 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         </div>
       `;
 
-          bindMobileTapToClick(taskTagCreatePanel);
 
           const input = taskTagCreatePanel.querySelector(".task-tag-input");
           const saveButton = taskTagCreatePanel.querySelector(".task-side-action");
@@ -5086,7 +7163,6 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
             data-postpone-days="${option.days}"
           >${option.label}</button>
         `).join("");
-        bindMobileTapToClick(taskPostponePanel);
 
         taskPostponeButton.onclick = (e) => {
           e.preventDefault();
@@ -5239,6 +7315,7 @@ function createProjectColumn(projectId){
 
   const project = projects[projectId];
   if(!project) return document.createElement("div");
+  ensureProjectBannerSettings(project, projectId);
 
   const col = createDayColumn(
     null,
@@ -5252,12 +7329,41 @@ function createProjectColumn(projectId){
 
   const title = col.querySelector(".col-title");
   const sub = col.querySelector(".col-sub");
+  const colHead = col.querySelector(".col-head");
 
   if(title) title.textContent = project.title;
   if(sub) sub.textContent = "Proyecto";
 
+  if (colHead) {
+    let banner = colHead.querySelector(".project-cover-banner");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.className = "project-cover-banner";
+      banner.setAttribute("aria-hidden", "true");
+      colHead.prepend(banner);
+    }
+
+    const bannerEnabled = project.bannerEnabled !== false;
+    banner.hidden = !bannerEnabled;
+    col.classList.toggle("has-project-cover", bannerEnabled);
+    const bannerColor = project.bannerColor || PROJECT_DEFAULT_BANNER_COLOR;
+    const bannerImage = String(project.bannerImage || "").trim();
+    banner.style.backgroundColor = bannerColor;
+    banner.style.backgroundImage = bannerImage ? `url("${bannerImage}")` : "none";
+  }
+
   return col;
 
+}
+
+function closeProjectCardMenu(){
+  document.querySelectorAll(".project-menu-wrap.open").forEach((menuWrap) => {
+    menuWrap.classList.remove("open");
+    const trigger = menuWrap.querySelector(".project-menu-trigger");
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+    }
+  });
 }
 
 function clearProjectDragState() {
@@ -5298,6 +7404,7 @@ function attachProjectDragHandlers(column, projectId) {
     if (e.target.closest(".adder")) return;
     if (e.target.closest(".edit-input")) return;
     if (e.target.closest(".task-actions-anchor")) return;
+    if (e.target.closest(".project-menu-wrap")) return;
 
     projectDragActive = true;
     draggedProjectId = projectId;
@@ -5343,13 +7450,136 @@ function attachProjectDragHandlers(column, projectId) {
 
 function renderProjectsView(){
 
+  closeProjectCardMenu();
   clearProjectDragState();
   board.innerHTML = "";
 
   projectOrder = reconcileProjectOrder(projectOrder, projects);
 
-  const container = document.createElement("div");
-  container.className = "projects-container";
+  const safeName = String(currentUser?.displayName || "Usuario").trim() || "Usuario";
+  const safeNameHtml = escapeHtml(safeName);
+  const safePillNameHtml = escapeHtml(formatSummaryPillName(safeName));
+  const avatarSrc = String(currentUser?.photoURL || getLeaderboardFallbackPhoto(safeName));
+  const avatarFallbackSrc = getLeaderboardFallbackPhoto(safeName);
+  const safeAvatarHtml = escapeHtml(avatarSrc);
+  const safeAvatarFallbackHtml = escapeHtml(avatarFallbackSrc);
+
+  const projectIds = projectOrder.filter((id) => !!projects[id]);
+  const projectsTotal = projectIds.length;
+  const projectTasksTotal = projectIds.reduce((sum, id) => {
+    const list = Array.isArray(projects[id]?.tasks) ? projects[id].tasks : [];
+    return sum + list.length;
+  }, 0);
+  const projectTasksCompleted = projectIds.reduce((sum, id) => {
+    const list = Array.isArray(projects[id]?.tasks) ? projects[id].tasks : [];
+    return sum + list.filter((task) => !!task?.done).length;
+  }, 0);
+  const projectCompletionRate = projectTasksTotal > 0
+    ? (projectTasksCompleted / projectTasksTotal) * 100
+    : 0;
+  const projectTasksPending = Math.max(0, projectTasksTotal - projectTasksCompleted);
+
+  board.innerHTML = `
+    <section class="summary-dashboard projects-dashboard" aria-label="Proyectos">
+      <div class="summary-topbar">
+        <div class="summary-brand">
+          <img class="summary-brand-mark summary-brand-logo" src="/icons/flav-icon.png" alt="" aria-hidden="true">
+          <span class="summary-brand-text" aria-label="MULTITAREAS"><span>MULTI</span><span>TAREAS</span></span>
+          <span class="summary-brand-meta" aria-label="Version de la app">
+            <span class="summary-brand-beta">BETA</span>
+            <span class="summary-brand-version" data-app-version></span>
+          </span>
+        </div>
+        <div class="summary-nav-row">
+          <nav class="summary-nav" aria-label="Secciones del dashboard">
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_SUMMARY}">Resumen</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_TASKS}">Tareas diarias</button>
+            <button class="summary-nav-item active" type="button" data-view="${VIEW_MODE_PROJECTS}">Proyectos</button>
+          </nav>
+          <button
+            class="summary-mobile-plus-btn"
+            type="button"
+            aria-label="Ir a resumen y escribir tarea"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+	          <button
+	            class="summary-top-focus-btn"
+	            type="button"
+	            data-open-focus-mode="1"
+	            aria-label="Abrir sesión de enfoque"
+	          >
+		            <span class="summary-top-focus-icon" aria-hidden="true"></span>
+                <span class="summary-top-focus-label">Enfoque</span>
+	          </button>
+        </div>
+        <button class="summary-user-pill" type="button" aria-label="Abrir menú de perfil" aria-haspopup="menu" aria-expanded="false">
+          <img
+            src="${safeAvatarHtml}"
+            alt="Foto de ${safeNameHtml}"
+            onerror="this.src='${safeAvatarFallbackHtml}'"
+          >
+          <div>
+            <strong>${safePillNameHtml}</strong>
+            <span>${formatSettingsStat(projectsTotal)} proyectos activos</span>
+          </div>
+          <svg class="summary-user-pill-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="summary-hero tasks-hero projects-hero">
+        <div class="summary-hero-copy">
+          <h2>Proyectos</h2>
+          <p class="tasks-hero-subtitle">Organiza tus ideas por separado, sin una fecha concreta.</p>
+        </div>
+        <div class="tasks-hero-stats projects-hero-stats">
+          <div class="tasks-hero-stat">
+            <span>Proyectos</span>
+            <strong>${formatSettingsStat(projectsTotal)}</strong>
+            <span class="summary-kpi-badge positive">Activos</span>
+          </div>
+          <div class="tasks-hero-stat">
+            <span>Avance</span>
+            <strong>${formatSettingsStat(projectTasksCompleted)} / ${formatSettingsStat(projectTasksTotal)}</strong>
+            <span class="summary-kpi-badge ${projectTasksCompleted >= projectTasksTotal && projectTasksTotal > 0 ? "positive" : "negative"}">${formatSummaryPercent(projectCompletionRate)}</span>
+          </div>
+          <div class="tasks-hero-stat">
+            <span>Pendientes</span>
+            <strong>${formatSettingsStat(projectTasksPending)}</strong>
+            <span class="summary-kpi-badge ${projectTasksPending > 0 ? "negative" : "positive"}">${projectTasksPending > 0 ? "Por hacer" : "Al dia"}</span>
+          </div>
+          <div class="projects-hero-stat-merged" aria-label="Resumen de proyectos">
+            <div class="projects-hero-stat-merged-item">
+              <span>Proyectos</span>
+              <strong>${formatSettingsStat(projectsTotal)}</strong>
+              <span class="summary-kpi-badge positive">Activos</span>
+            </div>
+            <div class="projects-hero-stat-merged-item">
+              <span>Avance</span>
+              <strong>${formatSettingsStat(projectTasksCompleted)} / ${formatSettingsStat(projectTasksTotal)}</strong>
+              <span class="summary-kpi-badge ${projectTasksCompleted >= projectTasksTotal && projectTasksTotal > 0 ? "positive" : "negative"}">${formatSummaryPercent(projectCompletionRate)}</span>
+            </div>
+            <div class="projects-hero-stat-merged-item">
+              <span>Pendientes</span>
+              <strong>${formatSettingsStat(projectTasksPending)}</strong>
+              <span class="summary-kpi-badge ${projectTasksPending > 0 ? "negative" : "positive"}">${projectTasksPending > 0 ? "Por hacer" : "Al dia"}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="projects-container projects-dashboard-grid" id="projectsDashboardGrid"></div>
+    </section>
+  `;
+
+  const container = board.querySelector("#projectsDashboardGrid");
+  if(!container){
+    return;
+  }
 
   // BOTON AGREGAR
   const addCard = document.createElement("div");
@@ -5376,7 +7606,10 @@ function renderProjectsView(){
     projects[id] = {
       title,
       tasks: [],
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      bannerEnabled: true,
+      bannerColor: PROJECT_DEFAULT_BANNER_COLOR,
+      bannerImage: pickRandomProjectBannerAsset()
     };
 
     projectOrder = reconcileProjectOrder(projectOrder, projects);
@@ -5393,6 +7626,7 @@ function renderProjectsView(){
   projectOrder.forEach((id) => {
     const project = projects[id];
     if (!project) return;
+    ensureProjectBannerSettings(project, id);
 
     const column = createProjectColumn(id);
     attachProjectDragHandlers(column, id);
@@ -5471,42 +7705,106 @@ function renderProjectsView(){
     const titleRow = column.querySelector(".col-title");
     const topLine = column.querySelector(".col-topline");
 
-    const deleteBtn = document.createElement("button");
-    deleteBtn.className = "icon danger project-delete";
+    const menuWrap = document.createElement("div");
+    menuWrap.className = "project-menu-wrap";
 
-    deleteBtn.innerHTML = `
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="3 6 5 6 21 6"/>
-      <path d="M19 6l-1 14H6L5 6"/>
-      <path d="M10 11v6"/>
-      <path d="M14 11v6"/>
-      <path d="M9 6V4h6v2"/>
-    </svg>
+    const menuTrigger = document.createElement("button");
+    menuTrigger.className = "icon project-menu-trigger";
+    menuTrigger.type = "button";
+    menuTrigger.setAttribute("aria-label", "Opciones del proyecto");
+    menuTrigger.setAttribute("aria-haspopup", "true");
+    menuTrigger.setAttribute("aria-expanded", "false");
+    menuTrigger.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <circle cx="5" cy="12" r="1.8"></circle>
+        <circle cx="12" cy="12" r="1.8"></circle>
+        <circle cx="19" cy="12" r="1.8"></circle>
+      </svg>
     `;
 
-    const deleteHost = topLine || titleRow;
-    if (deleteHost) {
-      deleteHost.appendChild(deleteBtn);
+    const menuPanel = document.createElement("div");
+    menuPanel.className = "project-menu-panel";
+    const coverActionLabel = project.bannerEnabled !== false
+      ? "Seleccionar portada"
+      : "Agregar portada";
+    menuPanel.innerHTML = `
+      <button class="project-menu-item" type="button" data-project-menu-action="toggle-cover">
+        ${coverActionLabel}
+      </button>
+      <button class="project-menu-item danger" type="button" data-project-menu-action="delete-project">
+        Borrar Proyecto
+      </button>
+    `;
+
+    menuWrap.appendChild(menuTrigger);
+    menuWrap.appendChild(menuPanel);
+
+    const menuHost = topLine || titleRow;
+    if (menuHost) {
+      menuHost.appendChild(menuWrap);
     }
 
-    deleteBtn.onclick = async (e)=>{
+    menuTrigger.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const willOpen = !menuWrap.classList.contains("open");
+      closeProjectCardMenu();
+      menuWrap.classList.toggle("open", willOpen);
+      menuTrigger.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    });
+
+    const toggleCoverButton = menuPanel.querySelector('[data-project-menu-action="toggle-cover"]');
+    toggleCoverButton?.addEventListener("click", async (e) => {
+      e.preventDefault();
       e.stopPropagation();
 
+      const scopedProject = projects[id];
+      if (!scopedProject) return;
+      ensureProjectBannerSettings(scopedProject, id);
+
+      closeProjectCardMenu();
+      const selectedCover = await openProjectCoverPicker({
+        projectTitle: scopedProject.title,
+        selectedBannerImage: scopedProject.bannerImage || ""
+      });
+
+      if (selectedCover === null) return;
+
+      if (selectedCover === "__disable__") {
+        scopedProject.bannerEnabled = false;
+      } else {
+        scopedProject.bannerEnabled = true;
+        scopedProject.bannerImage = selectedCover || pickRandomProjectBannerAsset();
+      }
+      scopedProject.bannerColor = scopedProject.bannerColor || PROJECT_DEFAULT_BANNER_COLOR;
+
+      await save();
+      renderProjectsView();
+      showToast(
+        scopedProject.bannerEnabled
+          ? "Portada del proyecto actualizada."
+          : "Portada del proyecto desactivada."
+      );
+    });
+
+    const deleteProjectButton = menuPanel.querySelector('[data-project-menu-action="delete-project"]');
+    deleteProjectButton?.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      closeProjectCardMenu();
       draggedElement = null;
       previewInsertIndex = null;
 
       const confirmDelete = await openProjectDeleteDialog(project.title);
-
       if(!confirmDelete) return;
 
       delete projects[id];
       projectOrder = projectOrder.filter((projectId) => projectId !== id);
 
       await save();
-
       renderProjectsView();
-
-    };
+    });
 
     container.appendChild(column);
 
@@ -5514,8 +7812,1682 @@ function renderProjectsView(){
 
   container.appendChild(addCard);
 
-  board.appendChild(container);
+  syncAppVersionLabels();
+  bindSummaryNavEvents();
+  bindSummaryUserPillMenu();
+  bindSummaryTopFocusButton();
+  bindSummaryMobilePlusButton();
 
+}
+
+function bindSummaryNavEvents(scope = board){
+  const summaryNavItems = scope.querySelectorAll(".summary-nav-item[data-view]");
+  if(!summaryNavItems.length){
+    return;
+  }
+
+  summaryNavItems.forEach((button) => {
+    button.addEventListener("click", async () => {
+      const nextMode = normalizeViewMode(button.dataset.view);
+      if(nextMode === currentViewMode){
+        return;
+      }
+
+      const nav = button.closest(".summary-nav");
+      if(nav?.dataset.transitioning === "1"){
+        return;
+      }
+
+      if(nav){
+        nav.dataset.transitioning = "1";
+        nav.classList.add("is-transitioning");
+      }
+
+      summaryNavItems.forEach((item) => {
+        item.classList.remove("active", "switching-target");
+      });
+      button.classList.add("active", "switching-target");
+
+      try{
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        closeCornerMenu();
+        await setViewMode(nextMode);
+      } finally{
+        if(nav && document.body.contains(nav)){
+          nav.dataset.transitioning = "0";
+          nav.classList.remove("is-transitioning");
+        }
+      }
+    });
+  });
+}
+
+function bindSummaryUserPillMenu(scope = board){
+  const pill = scope.querySelector(".summary-user-pill");
+  if(!pill) return;
+  pill.classList.remove("menu-open");
+  pill.setAttribute("aria-expanded", "false");
+
+  const toggleFromPill = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleDashboardProfileMenuFromPill(pill);
+  };
+
+  pill.addEventListener("click", toggleFromPill);
+  pill.addEventListener("keydown", (event) => {
+    if(event.key !== "Enter" && event.key !== " ") return;
+    toggleFromPill(event);
+  });
+}
+
+function bindSummaryTopFocusButton(scope = board){
+  const focusButtons = scope.querySelectorAll("[data-open-focus-mode]");
+  if (!focusButtons.length) return;
+
+  focusButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openPomodoroMode();
+    });
+  });
+}
+
+function scrollSummaryMobileViewportToTop(){
+  const scrollHost = document.querySelector(".board-scroll");
+  if (scrollHost && typeof scrollHost.scrollTo === "function") {
+    scrollHost.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  } else if (scrollHost) {
+    scrollHost.scrollTop = 0;
+    scrollHost.scrollLeft = 0;
+  }
+
+  if (typeof window.scrollTo === "function") {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }
+
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+}
+
+function focusSummarySearchInputForMobile(){
+  const input = document.getElementById("summarySearchInput");
+  if (!(input instanceof HTMLInputElement)) return false;
+
+  scrollSummaryMobileViewportToTop();
+  input.focus({ preventScroll: true });
+  input.click();
+
+  const cursorPosition = String(input.value || "").length;
+  try{
+    input.setSelectionRange(cursorPosition, cursorPosition);
+  }catch(_error){
+    // Algunos navegadores móviles bloquean setSelectionRange en ciertos estados.
+  }
+
+  return document.activeElement === input;
+}
+
+function focusSummarySearchInputForMobileWithRetry(maxAttempts = 10){
+  let attempts = 0;
+
+  const tryFocus = () => {
+    attempts += 1;
+    const focused = focusSummarySearchInputForMobile();
+    if (focused || attempts >= maxAttempts) return;
+    setTimeout(tryFocus, 45);
+  };
+
+  tryFocus();
+}
+
+function bindSummaryMobilePlusButton(scope = board){
+  const plusButtons = scope.querySelectorAll(".summary-mobile-plus-btn");
+  if (!plusButtons.length) return;
+
+  plusButtons.forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (!isMobileViewport()) return;
+      closeCornerMenu();
+
+      if (currentViewMode !== VIEW_MODE_SUMMARY) {
+        await setViewMode(VIEW_MODE_SUMMARY);
+      }
+
+      requestAnimationFrame(() => {
+        focusSummarySearchInputForMobileWithRetry();
+      });
+    });
+  });
+}
+
+function normalizeSummarySearchText(value){
+  const safeValue = String(value ?? "");
+  const lowered = safeValue.toLocaleLowerCase("es-AR");
+  if (typeof lowered.normalize !== "function") return lowered.trim();
+  return lowered
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function formatSummarySearchDateLabel(isoDate){
+  const safeIso = String(isoDate || "").trim();
+  if (!safeIso) return "Sin fecha";
+
+  const [year, month, day] = safeIso.split("-").map(Number);
+  const parsedDate = new Date(year, (month || 1) - 1, day || 1);
+  if (Number.isNaN(parsedDate.getTime())) return safeIso;
+
+  const label = parsedDate.toLocaleDateString("es-AR", {
+    weekday: "short",
+    day: "numeric",
+    month: "short"
+  });
+
+  if (!label) return safeIso;
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+}
+
+function formatUpcomingDailyTaskDateLabel(dateStr){
+  const safeDate = String(dateStr || "").trim();
+  if (!safeDate) return "Sin fecha";
+
+  const todayIso = formatLocalDate(new Date());
+  if (safeDate === todayIso) return "Hoy";
+
+  const tomorrowIso = addDaysToIsoDate(todayIso, 1);
+  if (safeDate === tomorrowIso) return "Manana";
+
+  return formatSummarySearchDateLabel(safeDate);
+}
+
+function getUpcomingDailyTasks(limit = 3){
+  const safeLimit = Math.max(0, Number(limit) || 0);
+  if (!safeLimit) return [];
+
+  const todayIso = formatLocalDate(new Date());
+  const entries = [];
+
+  Object.entries(tasks || {}).forEach(([dateStr, taskList]) => {
+    const safeDate = String(dateStr || "").trim();
+    if (!safeDate || safeDate < todayIso) return;
+    if (!Array.isArray(taskList)) return;
+
+    taskList.forEach((task, index) => {
+      if (!task || task.done) return;
+
+      const taskText = String(task.text || "").trim();
+      if (!taskText) return;
+
+      const timeSlot = (
+        typeof task.timeSlot === "string"
+        && TASK_TIME_OPTIONS.includes(task.timeSlot)
+      )
+        ? task.timeSlot
+        : null;
+
+      entries.push({
+        dateStr: safeDate,
+        index,
+        taskText,
+        timeSlot
+      });
+    });
+  });
+
+  entries.sort((a, b) => {
+    const dateCompare = a.dateStr.localeCompare(b.dateStr);
+    if (dateCompare !== 0) return dateCompare;
+
+    const aHasTime = !!a.timeSlot;
+    const bHasTime = !!b.timeSlot;
+    if (aHasTime !== bHasTime) return aHasTime ? -1 : 1;
+
+    if (aHasTime && bHasTime) {
+      const timeCompare = a.timeSlot.localeCompare(b.timeSlot);
+      if (timeCompare !== 0) return timeCompare;
+    }
+
+    return a.index - b.index;
+  });
+
+  return entries.slice(0, safeLimit);
+}
+
+function normalizeTaskTextForCreation(value){
+  let text = String(value || "").trim();
+  if (/^[a-záéíóúñ]/.test(text)) {
+    text = text.charAt(0).toUpperCase() + text.slice(1);
+  }
+  return text;
+}
+
+function buildNewTaskItem(text){
+  return {
+    text,
+    done: false,
+    expGiven: false,
+    timeSlot: null,
+    timeCategory: "all-day",
+    tagId: ""
+  };
+}
+
+function insertTaskInList(taskList, task){
+  if (!Array.isArray(taskList) || !task) return -1;
+
+  const firstDoneIndex = taskList.findIndex((item) => !!item?.done);
+  if (firstDoneIndex === -1) {
+    taskList.push(task);
+  } else {
+    taskList.splice(firstDoneIndex, 0, task);
+  }
+
+  sortTaskList(taskList);
+  return taskList.indexOf(task);
+}
+
+function addTaskToDailyDate(dateStr, taskText){
+  const safeDate = String(dateStr || "").trim();
+  if (!safeDate) return null;
+
+  if (!Array.isArray(tasks[safeDate])) {
+    tasks[safeDate] = [];
+  }
+
+  const safeText = normalizeTaskTextForCreation(taskText);
+  if (!safeText) return null;
+
+  const taskList = tasks[safeDate];
+  const newTask = buildNewTaskItem(safeText);
+  const index = insertTaskInList(taskList, newTask);
+  updateDayModalTaskCount(safeDate);
+
+  return {
+    sourceType: "daily",
+    dateStr: safeDate,
+    index,
+    taskText: safeText,
+    done: false
+  };
+}
+
+function addTaskToProjectById(projectId, taskText){
+  const safeProjectId = String(projectId || "").trim();
+  if (!safeProjectId || !projects[safeProjectId]) return null;
+
+  const project = projects[safeProjectId];
+  if (!Array.isArray(project.tasks)) {
+    project.tasks = [];
+  }
+
+  const safeText = normalizeTaskTextForCreation(taskText);
+  if (!safeText) return null;
+
+  const newTask = buildNewTaskItem(safeText);
+  const index = insertTaskInList(project.tasks, newTask);
+  const projectTitle = String(project.title || "Proyecto").trim() || "Proyecto";
+
+  return {
+    sourceType: "project",
+    projectId: safeProjectId,
+    projectTitle,
+    index,
+    taskText: safeText,
+    done: false
+  };
+}
+
+function addTaskToNewProject(projectTitle, taskText){
+  const safeProjectTitle = String(projectTitle || "").trim();
+  if (!safeProjectTitle) return null;
+
+  const projectId = `p_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  projects[projectId] = {
+    title: safeProjectTitle,
+    tasks: [],
+    createdAt: Date.now(),
+    bannerEnabled: true,
+    bannerColor: PROJECT_DEFAULT_BANNER_COLOR,
+    bannerImage: pickRandomProjectBannerAsset()
+  };
+
+  projectOrder = reconcileProjectOrder(projectOrder, projects);
+  return addTaskToProjectById(projectId, taskText);
+}
+
+function closeSummaryQuickAddOverlay(){
+  document.getElementById("summaryQuickAddOverlay")?.remove();
+}
+
+function openSummaryQuickAddModal(initialTaskText = ""){
+  closeSummaryQuickAddOverlay();
+
+  return new Promise((resolve) => {
+    const todayIso = formatLocalDate(new Date());
+    const orderedProjectIds = reconcileProjectOrder(projectOrder, projects)
+      .filter((projectId) => !!projects[projectId]);
+    const hasProjects = orderedProjectIds.length > 0;
+
+    const overlay = document.createElement("div");
+    overlay.className = "overlay open summary-quick-add-overlay";
+    overlay.id = "summaryQuickAddOverlay";
+    overlay.innerHTML = `
+      <div class="summary-quick-add-modal" role="dialog" aria-modal="true" aria-labelledby="summaryQuickAddTitle">
+        <h3 id="summaryQuickAddTitle">Agregar como nueva tarea</h3>
+        <p>No encontramos coincidencias. Elige dónde quieres crearla.</p>
+
+        <label class="summary-quick-add-field" for="summaryQuickAddTaskInput">Tarea</label>
+        <input
+          id="summaryQuickAddTaskInput"
+          class="summary-quick-add-input"
+          type="text"
+          maxlength="180"
+          value="${escapeHtml(String(initialTaskText || "").trim())}"
+          placeholder="Escribe la tarea..."
+        >
+
+        <div class="summary-quick-add-targets" role="tablist" aria-label="Destino de la tarea">
+          <button type="button" class="summary-quick-add-target active" data-target="day">En un dia especifico</button>
+          <button type="button" class="summary-quick-add-target" data-target="project"${hasProjects ? "" : " disabled"}>En un proyecto existente</button>
+          <button type="button" class="summary-quick-add-target" data-target="new-project">En un nuevo proyecto</button>
+        </div>
+
+        <div class="summary-quick-add-panels">
+          <div class="summary-quick-add-panel" data-panel="day">
+            <label class="summary-quick-add-field" for="summaryQuickAddDate">Dia</label>
+            <input id="summaryQuickAddDate" class="summary-quick-add-input summary-quick-add-date" type="date" value="${todayIso}" min="${todayIso}">
+          </div>
+
+          <div class="summary-quick-add-panel" data-panel="project" hidden>
+            <label class="summary-quick-add-field" for="summaryQuickAddProject">Proyecto</label>
+            <select id="summaryQuickAddProject" class="summary-quick-add-input summary-quick-add-select">
+              ${
+                hasProjects
+                  ? orderedProjectIds.map((projectId) => (
+                      `<option value="${escapeHtml(projectId)}">${escapeHtml(projects[projectId]?.title || "Proyecto")}</option>`
+                    )).join("")
+                  : `<option value="">No hay proyectos disponibles</option>`
+              }
+            </select>
+          </div>
+
+          <div class="summary-quick-add-panel" data-panel="new-project" hidden>
+            <label class="summary-quick-add-field" for="summaryQuickAddProjectName">Nombre del proyecto</label>
+            <input
+              id="summaryQuickAddProjectName"
+              class="summary-quick-add-input"
+              type="text"
+              maxlength="64"
+              placeholder="Ejemplo: Trabajo, Universidad..."
+            >
+          </div>
+        </div>
+
+        <div id="summaryQuickAddError" class="summary-quick-add-error"></div>
+
+        <div class="summary-quick-add-actions">
+          <button type="button" class="btn-cancel" id="summaryQuickAddCancel">Cancelar</button>
+          <button type="button" class="project-dialog-primary" id="summaryQuickAddConfirm">Agregar tarea</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const modal = overlay.querySelector(".summary-quick-add-modal");
+    const taskInput = overlay.querySelector("#summaryQuickAddTaskInput");
+    const dateInput = overlay.querySelector("#summaryQuickAddDate");
+    const projectSelect = overlay.querySelector("#summaryQuickAddProject");
+    const newProjectInput = overlay.querySelector("#summaryQuickAddProjectName");
+    const errorEl = overlay.querySelector("#summaryQuickAddError");
+    const cancelBtn = overlay.querySelector("#summaryQuickAddCancel");
+    const confirmBtn = overlay.querySelector("#summaryQuickAddConfirm");
+    const targetButtons = Array.from(overlay.querySelectorAll(".summary-quick-add-target[data-target]"));
+    const panelElements = Array.from(overlay.querySelectorAll(".summary-quick-add-panel[data-panel]"));
+
+    let settled = false;
+    let isSubmitting = false;
+    let selectedTarget = "day";
+
+    const showError = (message = "") => {
+      if (!errorEl) return;
+      errorEl.textContent = message;
+    };
+
+    const setTarget = (nextTarget) => {
+      selectedTarget = String(nextTarget || "day");
+      targetButtons.forEach((button) => {
+        const isActive = button.dataset.target === selectedTarget;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      panelElements.forEach((panel) => {
+        panel.hidden = panel.dataset.panel !== selectedTarget;
+      });
+      showError("");
+    };
+
+    const finish = (result = null) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", handleEscape);
+      overlay.remove();
+      resolve(result);
+    };
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        finish(null);
+      }
+    };
+
+    const submit = async () => {
+      if (isSubmitting) return;
+      const taskText = normalizeTaskTextForCreation(taskInput?.value || "");
+      if (!taskText) {
+        showError("Escribe el nombre de la tarea para continuar.");
+        taskInput?.focus();
+        return;
+      }
+
+      let createdEntry = null;
+      showError("");
+
+      if (selectedTarget === "day") {
+        const selectedDate = String(dateInput?.value || "").trim();
+        if (!selectedDate) {
+          showError("Selecciona un dia para la tarea.");
+          dateInput?.focus();
+          return;
+        }
+        if (selectedDate < todayIso) {
+          showError("No es posible crear tareas en dias pasados.");
+          dateInput?.focus();
+          return;
+        }
+        createdEntry = addTaskToDailyDate(selectedDate, taskText);
+      } else if (selectedTarget === "project") {
+        const selectedProjectId = String(projectSelect?.value || "").trim();
+        if (!selectedProjectId) {
+          showError("Selecciona un proyecto existente.");
+          projectSelect?.focus();
+          return;
+        }
+        createdEntry = addTaskToProjectById(selectedProjectId, taskText);
+      } else {
+        const projectTitle = String(newProjectInput?.value || "").trim();
+        if (!projectTitle) {
+          showError("Escribe un nombre para el nuevo proyecto.");
+          newProjectInput?.focus();
+          return;
+        }
+        createdEntry = addTaskToNewProject(projectTitle, taskText);
+      }
+
+      if (!createdEntry) {
+        showError("No se pudo crear la tarea. Intenta nuevamente.");
+        return;
+      }
+
+      isSubmitting = true;
+      if (confirmBtn) confirmBtn.disabled = true;
+      if (cancelBtn) cancelBtn.disabled = true;
+
+      try {
+        if (soundEnabled) {
+          playAddTaskSound();
+        }
+        await save();
+        finish({ entry: createdEntry });
+      } catch (error) {
+        console.error(error);
+        showError("No se pudo guardar la tarea en este momento.");
+        if (confirmBtn) confirmBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
+        isSubmitting = false;
+      }
+    };
+
+    targetButtons.forEach((button) => {
+      button.setAttribute("aria-selected", button.classList.contains("active") ? "true" : "false");
+      button.addEventListener("click", () => {
+        const nextTarget = button.dataset.target || "day";
+        if (nextTarget === "project" && !hasProjects) return;
+        setTarget(nextTarget);
+      });
+    });
+
+    cancelBtn?.addEventListener("click", () => finish(null));
+    confirmBtn?.addEventListener("click", () => {
+      void submit();
+    });
+
+    taskInput?.addEventListener("input", () => showError(""));
+    dateInput?.addEventListener("input", () => showError(""));
+    projectSelect?.addEventListener("change", () => showError(""));
+    newProjectInput?.addEventListener("input", () => showError(""));
+
+    modal?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void submit();
+      }
+    });
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        finish(null);
+      }
+    });
+
+    document.addEventListener("keydown", handleEscape);
+
+    requestAnimationFrame(() => {
+      taskInput?.focus();
+      taskInput?.select();
+    });
+  });
+}
+
+function getSummaryTaskSearchEntries(){
+  const entries = [];
+
+  Object.entries(tasks || {}).forEach(([dateStr, taskList]) => {
+    if (!Array.isArray(taskList)) return;
+
+    taskList.forEach((task, index) => {
+      const taskText = String(task?.text || "").trim();
+      if (!taskText) return;
+
+      entries.push({
+        sourceType: "daily",
+        dateStr,
+        index,
+        taskText,
+        taskTextNormalized: normalizeSummarySearchText(taskText),
+        done: !!task?.done
+      });
+    });
+  });
+
+  Object.entries(projects || {}).forEach(([projectId, project]) => {
+    const taskList = Array.isArray(project?.tasks) ? project.tasks : [];
+    const projectTitle = String(project?.title || "Proyecto").trim() || "Proyecto";
+
+    taskList.forEach((task, index) => {
+      const taskText = String(task?.text || "").trim();
+      if (!taskText) return;
+
+      entries.push({
+        sourceType: "project",
+        projectId,
+        projectTitle,
+        index,
+        taskText,
+        taskTextNormalized: normalizeSummarySearchText(taskText),
+        done: !!task?.done
+      });
+    });
+  });
+
+  return entries;
+}
+
+function findSummaryTaskMatches(query, maxResults = SUMMARY_TASK_SEARCH_MAX_RESULTS){
+  const normalizedQuery = normalizeSummarySearchText(query);
+  if (!normalizedQuery) return [];
+
+  return getSummaryTaskSearchEntries()
+    .filter((entry) => entry.taskTextNormalized.includes(normalizedQuery))
+    .sort((a, b) => {
+      const startsA = a.taskTextNormalized.startsWith(normalizedQuery) ? 0 : 1;
+      const startsB = b.taskTextNormalized.startsWith(normalizedQuery) ? 0 : 1;
+      if (startsA !== startsB) return startsA - startsB;
+
+      const indexA = a.taskTextNormalized.indexOf(normalizedQuery);
+      const indexB = b.taskTextNormalized.indexOf(normalizedQuery);
+      if (indexA !== indexB) return indexA - indexB;
+
+      if (!!a.done !== !!b.done) return a.done ? 1 : -1;
+
+      if (a.sourceType !== b.sourceType) {
+        return a.sourceType === "daily" ? -1 : 1;
+      }
+
+      if (a.sourceType === "daily") {
+        return String(a.dateStr || "").localeCompare(String(b.dateStr || ""));
+      }
+
+      const projectCompare = String(a.projectTitle || "").localeCompare(
+        String(b.projectTitle || ""),
+        "es-AR",
+        { sensitivity: "base" }
+      );
+      if (projectCompare !== 0) return projectCompare;
+
+      return Number(a.index) - Number(b.index);
+    })
+    .slice(0, maxResults);
+}
+
+function isDailyTaskVisibleOnTasksBoard(dateStr){
+  const safeDate = String(dateStr || "").trim();
+  if (!safeDate) return false;
+
+  const todayIso = formatLocalDate(new Date());
+  const maxVisibleIso = addDaysToIsoDate(todayIso, TASKS_BOARD_VISIBLE_DAYS - 1);
+
+  return safeDate >= todayIso && safeDate <= maxVisibleIso;
+}
+
+function findTaskElementForSearchEntry(entry, root = document){
+  if (!entry || !root) return null;
+
+  const taskElements = Array.from(root.querySelectorAll(".task"));
+  const sameSourceTasks = taskElements.filter((taskElement) => {
+    if (entry.sourceType === "project") {
+      return (taskElement.dataset.project || "") === String(entry.projectId || "");
+    }
+    return (taskElement.dataset.date || "") === String(entry.dateStr || "");
+  });
+
+  if (!sameSourceTasks.length) return null;
+
+  const expectedIndex = Number(entry.index);
+  const byIndex = sameSourceTasks.find(
+    (taskElement) => Number(taskElement.dataset.index) === expectedIndex
+  );
+  if (byIndex) return byIndex;
+
+  const expectedText = normalizeSummarySearchText(entry.taskText);
+  if (!expectedText) return sameSourceTasks[0];
+
+  const exactText = sameSourceTasks.find((taskElement) => {
+    const taskText = taskElement.querySelector(".ttext")?.textContent || "";
+    return normalizeSummarySearchText(taskText) === expectedText;
+  });
+  if (exactText) return exactText;
+
+  const partialText = sameSourceTasks.find((taskElement) => {
+    const taskText = taskElement.querySelector(".ttext")?.textContent || "";
+    return normalizeSummarySearchText(taskText).includes(expectedText);
+  });
+  if (partialText) return partialText;
+
+  return sameSourceTasks[0];
+}
+
+function emphasizeTaskSearchTarget(taskElement){
+  if (!taskElement) return;
+
+  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  taskElement.scrollIntoView({
+    block: "center",
+    inline: "nearest",
+    behavior: prefersReducedMotion ? "auto" : "smooth"
+  });
+
+  taskElement.classList.remove("task-search-hit");
+  void taskElement.offsetWidth;
+  taskElement.classList.add("task-search-hit");
+
+  setTimeout(() => {
+    taskElement.classList.remove("task-search-hit");
+  }, 1600);
+}
+
+function focusTaskFromSummarySearch(entry, { root = document } = {}){
+  const taskElement = findTaskElementForSearchEntry(entry, root);
+  if (!taskElement) return false;
+
+  emphasizeTaskSearchTarget(taskElement);
+  return true;
+}
+
+async function navigateToSummarySearchEntry(entry){
+  if (!entry) return;
+
+  if (entry.sourceType === "project") {
+    await setViewMode(VIEW_MODE_PROJECTS);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        if (!focusTaskFromSummarySearch(entry)) {
+          showToast("No se pudo ubicar la tarea en Proyectos.");
+        }
+      }, 80);
+    });
+    return;
+  }
+
+  await setViewMode(VIEW_MODE_TASKS);
+
+  if (!isDailyTaskVisibleOnTasksBoard(entry.dateStr)) {
+    openDayModal(entry.dateStr);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const dayOverlay = document.getElementById("dayOverlay");
+        if (!focusTaskFromSummarySearch(entry, { root: dayOverlay || document })) {
+          showToast("No se pudo ubicar la tarea en ese día.");
+        }
+      }, 80);
+    });
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      if (!focusTaskFromSummarySearch(entry)) {
+        showToast("No se pudo ubicar la tarea en Tareas diarias.");
+      }
+    }, 80);
+  });
+}
+
+function bindSummarySearch(scope = board){
+  if (typeof summarySearchCleanup === "function") {
+    summarySearchCleanup();
+    summarySearchCleanup = null;
+  }
+
+  const wrapper = scope.querySelector(".summary-search-shell");
+  const input = scope.querySelector("#summarySearchInput");
+  const results = scope.querySelector("#summarySearchResults");
+
+  if (!wrapper || !input || !results) {
+    return;
+  }
+
+  let currentMatches = [];
+
+  const closeResults = () => {
+    results.hidden = true;
+    results.innerHTML = "";
+    currentMatches = [];
+  };
+
+  const renderResults = (value) => {
+    const normalizedValue = normalizeSummarySearchText(value);
+    if (!normalizedValue) {
+      closeResults();
+      return;
+    }
+
+    const matches = findSummaryTaskMatches(normalizedValue);
+    currentMatches = matches;
+
+    if (!matches.length) {
+      results.innerHTML = `
+        <div class="summary-search-empty">No encontramos tareas que coincidan.</div>
+        <button type="button" class="summary-search-add-btn" data-search-add-new="1">
+          Agregar como nueva tarea
+        </button>
+      `;
+      results.hidden = false;
+      return;
+    }
+
+    results.innerHTML = matches.map((entry, index) => {
+      const scopeLabel = entry.sourceType === "daily"
+        ? `Tareas diarias • ${escapeHtml(formatSummarySearchDateLabel(entry.dateStr))}`
+        : `Proyecto • ${escapeHtml(entry.projectTitle || "Proyecto")}`;
+      const stateLabel = entry.done ? "Completada" : "Pendiente";
+
+      return `
+        <button type="button" class="summary-search-result" data-search-result-index="${index}">
+          <span class="summary-search-result-main">${escapeHtml(entry.taskText)}</span>
+          <span class="summary-search-result-meta">${scopeLabel} • ${stateLabel}</span>
+        </button>
+      `;
+    }).join("");
+
+    results.hidden = false;
+  };
+
+  const handleInput = () => {
+    renderResults(input.value);
+  };
+
+  const handleFocus = () => {
+    if (!normalizeSummarySearchText(input.value)) return;
+    renderResults(input.value);
+  };
+
+  const handleKeydown = (event) => {
+    if (event.key === "Escape") {
+      closeResults();
+      input.blur();
+      return;
+    }
+
+    if (event.key === "Enter") {
+      const firstMatch = currentMatches[0];
+      if (!firstMatch) return;
+      event.preventDefault();
+      closeResults();
+      input.value = firstMatch.taskText;
+      void navigateToSummarySearchEntry(firstMatch);
+    }
+  };
+
+  const handleResultClick = async (event) => {
+    const addNewButton = event.target instanceof Element
+      ? event.target.closest("[data-search-add-new]")
+      : null;
+
+    if (addNewButton) {
+      event.preventDefault();
+      const rawDraft = String(input.value || "").trim();
+      closeResults();
+      const created = await openSummaryQuickAddModal(rawDraft);
+      if (created?.entry) {
+        input.value = created.entry.taskText || rawDraft;
+        await navigateToSummarySearchEntry(created.entry);
+      }
+      return;
+    }
+
+    const target = event.target instanceof Element
+      ? event.target.closest("[data-search-result-index]")
+      : null;
+    if (!target) return;
+
+    const resultIndex = Number(target.getAttribute("data-search-result-index"));
+    const selected = currentMatches[resultIndex];
+    if (!selected) return;
+
+    event.preventDefault();
+    closeResults();
+    input.value = selected.taskText;
+    void navigateToSummarySearchEntry(selected);
+  };
+
+  const handleOutsidePointerDown = (event) => {
+    if (!wrapper.contains(event.target)) {
+      closeResults();
+    }
+  };
+
+  input.addEventListener("input", handleInput);
+  input.addEventListener("focus", handleFocus);
+  input.addEventListener("keydown", handleKeydown);
+  results.addEventListener("click", handleResultClick);
+  document.addEventListener("pointerdown", handleOutsidePointerDown);
+
+  summarySearchCleanup = () => {
+    input.removeEventListener("input", handleInput);
+    input.removeEventListener("focus", handleFocus);
+    input.removeEventListener("keydown", handleKeydown);
+    results.removeEventListener("click", handleResultClick);
+    document.removeEventListener("pointerdown", handleOutsidePointerDown);
+  };
+}
+
+function formatSummaryPercent(value){
+  const safeValue = Math.max(0, Math.min(100, Number(value) || 0));
+  const rounded = Math.round(safeValue * 10) / 10;
+  const hasDecimal = Math.abs(rounded % 1) > 0;
+  const formatted = rounded.toLocaleString("es-AR", {
+    minimumFractionDigits: hasDecimal ? 1 : 0,
+    maximumFractionDigits: 1
+  });
+  return `${formatted}%`;
+}
+
+function formatSummarySignedPercent(value){
+  const safeValue = Number(value) || 0;
+  const rounded = Math.round(safeValue * 10) / 10;
+  const absValue = Math.abs(rounded);
+  const hasDecimal = Math.abs(absValue % 1) > 0;
+  const formatted = absValue.toLocaleString("es-AR", {
+    minimumFractionDigits: hasDecimal ? 1 : 0,
+    maximumFractionDigits: 1
+  });
+  const sign = rounded > 0 ? "+" : rounded < 0 ? "-" : "";
+  return `${sign}${formatted}%`;
+}
+
+function buildSummaryRingGradient(segments = []){
+  const total = segments.reduce((sum, segment) => (
+    sum + Math.max(0, Number(segment?.value) || 0)
+  ), 0);
+
+  if(total <= 0){
+    return "conic-gradient(#303b35 0deg 360deg)";
+  }
+
+  let consumed = 0;
+  const stops = [];
+
+  segments.forEach((segment) => {
+    const value = Math.max(0, Number(segment?.value) || 0);
+    if(value <= 0) return;
+
+    const start = (consumed / total) * 360;
+    consumed += value;
+    const end = (consumed / total) * 360;
+    stops.push(`${segment.color} ${start}deg ${end}deg`);
+  });
+
+  if(!stops.length){
+    return "conic-gradient(#303b35 0deg 360deg)";
+  }
+
+  return `conic-gradient(${stops.join(", ")})`;
+}
+
+function getSummaryDashboardData(){
+  const achievementStats = getAchievementStats();
+  const totalTasks = Math.max(0, Number(achievementStats.totalTasks) || 0);
+  const completedTasks = Math.max(0, Number(achievementStats.completedTasks) || 0);
+  const pendingTasks = Math.max(0, totalTasks - completedTasks);
+  const scheduledTasks = Math.max(0, Number(achievementStats.scheduledTasks) || 0);
+  const projectsCount = Math.max(0, Number(achievementStats.projectsCount) || 0);
+  const completionRate = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+
+  let dailyTotal = 0;
+  let dailyCompleted = 0;
+  Object.values(tasks || {}).forEach((list) => {
+    if(!Array.isArray(list)) return;
+    dailyTotal += list.length;
+    dailyCompleted += list.filter((task) => !!task?.done).length;
+  });
+
+  let projectTotal = 0;
+  let projectCompleted = 0;
+  Object.values(projects || {}).forEach((project) => {
+    if(!Array.isArray(project?.tasks)) return;
+    projectTotal += project.tasks.length;
+    projectCompleted += project.tasks.filter((task) => !!task?.done).length;
+  });
+
+  const pendingDaily = Math.max(0, dailyTotal - dailyCompleted);
+  const pendingProject = Math.max(0, projectTotal - projectCompleted);
+
+  const today = new Date();
+  const todayIso = formatLocalDate(today);
+  const todayList = Array.isArray(tasks?.[todayIso]) ? tasks[todayIso] : [];
+  const todayCompleted = todayList.filter((task) => !!task?.done).length;
+
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayIso = formatLocalDate(yesterday);
+  const yesterdayList = Array.isArray(tasks?.[yesterdayIso]) ? tasks[yesterdayIso] : [];
+  const yesterdayCompleted = yesterdayList.filter((task) => !!task?.done).length;
+  const todayDelta = yesterdayCompleted > 0
+    ? ((todayCompleted - yesterdayCompleted) / yesterdayCompleted) * 100
+    : (todayCompleted > 0 ? 100 : 0);
+
+  const trend14 = [];
+  for(let daysAgo = 13; daysAgo >= 0; daysAgo--){
+    const date = new Date(today);
+    date.setDate(today.getDate() - daysAgo);
+    const iso = formatLocalDate(date);
+    const list = Array.isArray(tasks?.[iso]) ? tasks[iso] : [];
+    const total = list.length;
+    const completed = list.filter((task) => !!task?.done).length;
+    const label = date.toLocaleDateString("es-AR", { day: "numeric", month: "short" }).replace(/\./g, "");
+
+    trend14.push({ iso, label, total, completed });
+  }
+
+  const previousWeekCompleted = trend14
+    .slice(0, 7)
+    .reduce((sum, day) => sum + day.completed, 0);
+  const currentWeekCompleted = trend14
+    .slice(7)
+    .reduce((sum, day) => sum + day.completed, 0);
+  const currentWeekTotal = trend14
+    .slice(7)
+    .reduce((sum, day) => sum + day.total, 0);
+  const weekDelta = previousWeekCompleted > 0
+    ? ((currentWeekCompleted - previousWeekCompleted) / previousWeekCompleted) * 100
+    : (currentWeekCompleted > 0 ? 100 : 0);
+
+  const trend12 = trend14.slice(-12);
+  const trendMaxTotal = Math.max(1, ...trend12.map((day) => day.total));
+  const trendAverageTotal = trend12.length
+    ? trend12.reduce((sum, day) => sum + day.total, 0) / trend12.length
+    : 0;
+  const trendHighlightIndex = trend12.reduce((bestIndex, day, index, list) => (
+    day.total > list[bestIndex].total ? index : bestIndex
+  ), 0);
+  const trendBestDay = trend12[trendHighlightIndex] || null;
+
+  const totalExp = Math.max(0, Number(player?.exp) || 0);
+  const levelState = getLevelProgressState();
+  const nextLevelExp = Math.max(totalExp + 1, getTotalExpForLevel(levelState.level + 1));
+  const leftToNextLevel = Math.max(0, nextLevelExp - totalExp);
+  const progressToNextLevel = nextLevelExp > 0 ? (totalExp / nextLevelExp) * 100 : 0;
+  const focusMinutes = Math.max(0, Math.floor(Number(player?.totalFocusMinutes) || 0));
+  const activeStreak = Math.max(0, Number(player?.activeStreak) || 0);
+  const longestStreak = Math.max(0, Number(player?.longestStreak) || 0);
+  const unlockedAchievements = Math.max(0, Number(Object.keys(player?.achievements || {}).length) || 0);
+
+  const ringSegments = [
+    { label: "Completadas", value: completedTasks, color: "var(--dashboard-accent-primary)" },
+    { label: "Pendientes diarias", value: pendingDaily, color: "color-mix(in srgb, var(--dashboard-accent-secondary) 72%, #5f73ff 28%)" },
+    { label: "Pendientes en proyectos", value: pendingProject, color: "color-mix(in srgb, var(--gradient-from) 28%, #ff7564 72%)" }
+  ];
+  const ringTotal = ringSegments.reduce((sum, segment) => (
+    sum + Math.max(0, Number(segment.value) || 0)
+  ), 0);
+  const ringSegmentsWithPercent = ringSegments.map((segment) => {
+    const value = Math.max(0, Number(segment.value) || 0);
+    const percent = ringTotal > 0 ? (value / ringTotal) * 100 : 0;
+    return { ...segment, percent };
+  });
+
+  const expenseItems = [
+    { label: "Completadas", value: completedTasks, tone: "positive" },
+    { label: "Pendientes", value: pendingTasks, tone: "negative" },
+    { label: "Programadas", value: scheduledTasks, tone: "positive" },
+    { label: "Proyectos", value: projectsCount, tone: "neutral" }
+  ];
+  const expenseMax = Math.max(1, ...expenseItems.map((item) => Math.max(0, Number(item.value) || 0)));
+
+  return {
+    totalTasks,
+    completedTasks,
+    pendingTasks,
+    completionRate,
+    scheduledTasks,
+    projectsCount,
+    todayCompleted,
+    todayTotal: todayList.length,
+    todayDelta,
+    weekDelta,
+    currentWeekCompleted,
+    currentWeekTotal,
+    totalExp,
+    nextLevelExp,
+    leftToNextLevel,
+    progressToNextLevel,
+    focusMinutes,
+    activeStreak,
+    longestStreak,
+    unlockedAchievements,
+    ringSegments: ringSegmentsWithPercent,
+    ringGradient: buildSummaryRingGradient(ringSegments),
+    ringTotal,
+    trend12,
+    trendMaxTotal,
+    trendAverageTotal,
+    trendBestDay,
+    expenseItems,
+    expenseMax
+  };
+}
+
+function renderSummaryView(){
+  const summary = getSummaryDashboardData();
+  const levelProgress = getLevelProgressState();
+  const safeName = String(currentUser?.displayName || "Usuario").trim() || "Usuario";
+  const safeNameHtml = escapeHtml(safeName);
+  const safePillNameHtml = escapeHtml(formatSummaryPillName(safeName));
+  const avatarSrc = String(currentUser?.photoURL || getLeaderboardFallbackPhoto(safeName));
+  const avatarFallbackSrc = getLeaderboardFallbackPhoto(safeName);
+  const safeAvatarHtml = escapeHtml(avatarSrc);
+  const safeAvatarFallbackHtml = escapeHtml(avatarFallbackSrc);
+  const safeRingGradient = escapeHtml(summary.ringGradient);
+  const highlightIso = summary.trendBestDay?.iso || "";
+
+  const trendBarsHtml = summary.trend12.map((day) => {
+    const ratio = day.total > 0 ? (day.total / summary.trendMaxTotal) * 100 : 0;
+    const barHeight = Math.max(8, Math.round(ratio));
+    const isHighlight = day.iso === highlightIso;
+    const completionForDay = day.total > 0 ? (day.completed / day.total) * 100 : 0;
+    const label = escapeHtml(day.label);
+    const title = escapeHtml(`${day.label}: ${day.completed}/${day.total} completadas`);
+    const completionText = formatSummaryPercent(completionForDay);
+
+    return `
+      <div class="summary-trend-col" title="${title}">
+        <span class="summary-trend-completion">${completionText}</span>
+        <span class="summary-trend-bar${isHighlight ? " is-highlight" : ""}" style="--bar-height:${barHeight}%"></span>
+        <span class="summary-trend-label">${label}</span>
+      </div>
+    `;
+  }).join("");
+
+  const ringLegendHtml = summary.ringSegments.map((segment) => `
+    <li>
+      <span class="summary-ring-dot" style="--ring-dot:${escapeHtml(segment.color)}"></span>
+      <span>${escapeHtml(segment.label)}</span>
+      <strong>${formatSummaryPercent(segment.percent)}</strong>
+    </li>
+  `).join("");
+
+  const averageLine = summary.trendMaxTotal > 0
+    ? Math.max(6, Math.round((summary.trendAverageTotal / summary.trendMaxTotal) * 100))
+    : 6;
+  const pendingShare = summary.totalTasks > 0
+    ? (summary.pendingTasks / summary.totalTasks) * 100
+    : 0;
+  const upcomingDailyTasks = getUpcomingDailyTasks(3);
+  const upcomingTaskSlots = Array.from({ length: 3 }, (_, index) => upcomingDailyTasks[index] || null);
+  const upcomingTasksHtml = upcomingTaskSlots.map((taskEntry, slotIndex) => {
+    if (!taskEntry) {
+      return `
+        <div class="summary-upcoming-item empty">
+          <div class="summary-upcoming-top">
+            <span class="summary-upcoming-date">-</span>
+            <span class="summary-upcoming-time">Sin horario</span>
+          </div>
+          <p class="summary-upcoming-text">Sin tarea pendiente</p>
+        </div>
+      `;
+    }
+
+    const safeDateLabel = escapeHtml(formatUpcomingDailyTaskDateLabel(taskEntry.dateStr));
+    const safeTimeLabel = escapeHtml(taskEntry.timeSlot || "Todo el dia");
+    const safeTaskText = escapeHtml(taskEntry.taskText || "");
+
+    return `
+      <button
+        type="button"
+        class="summary-upcoming-item summary-upcoming-link"
+        data-upcoming-task-index="${slotIndex}"
+        aria-label="Abrir tarea: ${safeTaskText}"
+      >
+        <div class="summary-upcoming-top">
+          <span class="summary-upcoming-date">${safeDateLabel}</span>
+          <span class="summary-upcoming-time">${safeTimeLabel}</span>
+        </div>
+        <p class="summary-upcoming-text">${safeTaskText}</p>
+      </button>
+    `;
+  }).join("");
+
+  board.innerHTML = `
+    <section class="summary-dashboard" aria-label="Resumen">
+      <div class="summary-topbar">
+        <div class="summary-brand">
+          <img class="summary-brand-mark summary-brand-logo" src="/icons/flav-icon.png" alt="" aria-hidden="true">
+          <span class="summary-brand-text" aria-label="MULTITAREAS"><span>MULTI</span><span>TAREAS</span></span>
+          <span class="summary-brand-meta" aria-label="Version de la app">
+            <span class="summary-brand-beta">BETA</span>
+            <span class="summary-brand-version" data-app-version></span>
+          </span>
+        </div>
+        <div class="summary-nav-row">
+          <nav class="summary-nav" aria-label="Secciones del dashboard">
+            <button class="summary-nav-item active" type="button" data-view="${VIEW_MODE_SUMMARY}">Resumen</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_TASKS}">Tareas diarias</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_PROJECTS}">Proyectos</button>
+          </nav>
+          <button
+            class="summary-mobile-plus-btn"
+            type="button"
+            aria-label="Ir a resumen y escribir tarea"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+	          <button
+	            class="summary-top-focus-btn"
+	            type="button"
+	            data-open-focus-mode="1"
+	            aria-label="Abrir sesión de enfoque"
+	          >
+		            <span class="summary-top-focus-icon" aria-hidden="true"></span>
+                <span class="summary-top-focus-label">Enfoque</span>
+	          </button>
+        </div>
+        <div class="summary-mobile-status-user-row">
+          <div class="summary-action-btn primary summary-status-pill-mobile" role="status" aria-live="polite">
+            <span id="summaryStatusTextMobile"></span>
+          </div>
+          <button class="summary-user-pill" type="button" aria-label="Abrir menú de perfil" aria-haspopup="menu" aria-expanded="false">
+            <img
+              src="${safeAvatarHtml}"
+              alt="Foto de ${safeNameHtml}"
+              onerror="this.src='${safeAvatarFallbackHtml}'"
+            >
+            <div>
+              <strong>${safePillNameHtml}</strong>
+              <span>Nivel ${formatSettingsStat(levelProgress.level)}</span>
+            </div>
+            <svg class="summary-user-pill-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="summary-hero">
+        <div class="summary-hero-copy">
+          <h2>Resumen</h2>
+          <div class="summary-search-shell">
+            <label class="summary-search">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="11" cy="11" r="7.5" stroke="currentColor" stroke-width="1.7"></circle>
+                <path d="M16.7 16.7 21 21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+              </svg>
+              <input id="summarySearchInput" type="text" value="" placeholder="Buscar tareas o crear una tarea rápida..." autocomplete="off" spellcheck="false">
+            </label>
+            <div class="summary-search-results" id="summarySearchResults" hidden></div>
+          </div>
+        </div>
+        <div class="summary-hero-actions">
+          <div class="summary-action-btn primary summary-status-pill" role="status" aria-live="polite">
+            <span id="summaryStatusText"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="summary-grid">
+        <article class="summary-card summary-card-main">
+          <div class="summary-kpi-header">
+            <strong>${formatSettingsStat(summary.totalTasks)}</strong>
+            <span class="summary-kpi-badge positive">${formatSummaryPercent(summary.completionRate)}</span>
+          </div>
+          <p>Total de tareas registradas</p>
+        </article>
+
+        <article class="summary-card summary-card-secondary">
+          <div class="summary-kpi-header">
+            <strong>${formatSettingsStat(summary.pendingTasks)}</strong>
+            <span class="summary-kpi-badge ${summary.pendingTasks > 0 ? "negative" : "positive"}">${formatSummaryPercent(pendingShare)}</span>
+          </div>
+          <p>Tareas pendientes actuales</p>
+        </article>
+
+        <article class="summary-card summary-card-calendar">
+          <div class="summary-dashboard-calendar" id="summaryDashboardCalendar"></div>
+        </article>
+
+        <article class="summary-card summary-card-ring">
+          <h3>Distribucion de avance</h3>
+          <div class="summary-ring-wrap">
+            <div class="summary-ring" style="--summary-ring-gradient:${safeRingGradient}">
+              <div class="summary-ring-center">
+                <span>Total</span>
+                <strong>${formatSettingsStat(summary.ringTotal)}</strong>
+              </div>
+            </div>
+            <ul class="summary-ring-legend">
+              ${ringLegendHtml}
+            </ul>
+          </div>
+        </article>
+
+        <article class="summary-card summary-card-plan">
+          <div class="summary-card-head">
+            <h3>Nivel actual</h3>
+            <span class="summary-inline-link">Objetivo nivel ${formatSettingsStat(levelProgress.level + 1)}</span>
+          </div>
+          <div class="summary-plan-values">
+            <div>
+              <span>Resultado actual</span>
+              <strong>${formatSettingsStat(summary.totalExp)} pts</strong>
+            </div>
+            <div>
+              <span>Faltan</span>
+              <strong>${formatSettingsStat(summary.leftToNextLevel)} pts</strong>
+            </div>
+          </div>
+          <div class="summary-plan-track">
+            <span style="width:${Math.max(2, Math.round(summary.progressToNextLevel))}%"></span>
+          </div>
+          <div class="summary-plan-footer">
+            <span class="summary-plan-streak-item">
+              <img class="summary-plan-streak-icon" src="/icons/fire-svgrepo-com.svg" alt="" aria-hidden="true">
+              <span>Racha activa: ${formatSettingsStat(summary.activeStreak)} dias</span>
+            </span>
+            <span class="summary-plan-streak-item">
+              <img class="summary-plan-streak-icon" src="/icons/fire-svgrepo-com.svg" alt="" aria-hidden="true">
+              <span>Mejor racha: ${formatSettingsStat(summary.longestStreak)} dias</span>
+            </span>
+          </div>
+        </article>
+
+        <article class="summary-card summary-card-foot">
+          <div class="summary-foot-item">
+            <div class="summary-foot-top">
+              <strong>${formatSettingsStat(summary.focusMinutes)} min</strong>
+              <button
+                class="summary-focus-play-btn"
+                id="summaryFocusPomodoroBtn"
+                type="button"
+                aria-label="Abrir modo enfoque"
+	              >
+	                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+	                  <path d="M8.9 6.7c0-.87.95-1.41 1.7-.96l7.36 4.23a1.1 1.1 0 0 1 0 1.9l-7.36 4.23a1.11 1.11 0 0 1-1.7-.95V6.7Z" fill="currentColor"></path>
+	                </svg>
+	              </button>
+            </div>
+            <p>Minutos en sesiones de enfoque</p>
+          </div>
+          <div class="summary-foot-item">
+            <div class="summary-foot-top">
+              <strong>${formatSettingsStat(summary.unlockedAchievements)}</strong>
+            </div>
+            <p>Logros desbloqueados</p>
+          </div>
+        </article>
+
+        <article class="summary-card summary-card-upcoming">
+          <div class="summary-card-head">
+            <h3>Proximas tareas</h3>
+          </div>
+          <div class="summary-upcoming-list">
+            ${upcomingTasksHtml}
+          </div>
+        </article>
+
+        <article class="summary-card summary-card-trend">
+          <div class="summary-card-head">
+            <h3>Ritmo diario</h3>
+            <span class="summary-inline-link ${summary.weekDelta >= 0 ? "positive" : "negative"}">${formatSummarySignedPercent(summary.weekDelta)}</span>
+          </div>
+          <div class="summary-trend-chart">
+            <span class="summary-trend-average" style="--avg-line:${averageLine}%"></span>
+            <div class="summary-trend-bars">
+              ${trendBarsHtml}
+            </div>
+          </div>
+          <div class="summary-trend-highlight">
+            <span>Mejor dia: <strong>${escapeHtml(summary.trendBestDay?.label || "Sin datos")}</strong></span>
+            <span>${formatSettingsStat(summary.trendBestDay?.completed || 0)} completadas</span>
+          </div>
+        </article>
+      </div>
+    </section>
+  `;
+
+  syncAppVersionLabels();
+  bindSummaryNavEvents();
+  bindSummaryUserPillMenu();
+  bindSummaryTopFocusButton();
+  bindSummaryMobilePlusButton();
+  renderSummaryDashboardCalendar();
+  bindSummarySearch();
+  syncSummaryStatusText();
+  document.getElementById("summaryFocusPomodoroBtn")?.addEventListener("click", () => {
+    openPomodoroMode();
+  });
+  board.querySelectorAll("[data-upcoming-task-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const slotIndex = Number(button.getAttribute("data-upcoming-task-index"));
+      const selectedTask = upcomingTaskSlots[slotIndex];
+      if (!selectedTask) return;
+      void navigateToSummarySearchEntry({
+        ...selectedTask,
+        sourceType: "daily"
+      });
+    });
+  });
+}
+
+function renderSummaryDashboardCalendar(){
+  const container = document.getElementById("summaryDashboardCalendar");
+  if(!container) return;
+
+  const year = currentCalendarDate.getFullYear();
+  const month = currentCalendarDate.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  const startDay = (firstDay.getDay() + 6) % 7;
+  const totalDays = lastDay.getDate();
+  const monthName = currentCalendarDate.toLocaleDateString("es-AR", { month: "long" });
+  const monthTitle = monthName ? `${monthName.charAt(0).toUpperCase()}${monthName.slice(1)}` : "";
+  const weekdays = ["L", "M", "X", "J", "V", "S", "D"];
+
+  const today = new Date();
+  const todayStr = formatLocalDate(today);
+  const todayTasks = Array.isArray(tasks?.[todayStr]) ? tasks[todayStr] : [];
+  const todayCompleted = todayTasks.filter((task) => !!task?.done).length;
+  const todayTotal = todayTasks.length;
+  const todayPending = Math.max(todayTotal - todayCompleted, 0);
+  const noPendingPhrases = [
+    "Genial, no tenes tareas para hoy",
+    "Que bien, tenes el resto del dia libre"
+  ];
+  const pendingLabel = `${formatSettingsStat(todayPending)} ${todayPending === 1 ? "tarea" : "tareas"}`;
+  const withPendingPhrases = [
+    `Te quedan ${pendingLabel} para completar tu dia`,
+    `${pendingLabel} por completar hoy y estas libre`
+  ];
+  const footerPhrases = todayPending > 0 ? withPendingPhrases : noPendingPhrases;
+  const footerPhraseIndex = (today.getFullYear() + today.getMonth() + today.getDate()) % footerPhrases.length;
+  const todayFooterMessage = `${String(footerPhrases[footerPhraseIndex] || "").replace(/[!.\s]+$/u, "")}!`;
+
+  let daysHtml = "";
+
+  for (let i = 0; i < startDay; i++) {
+    daysHtml += `<span class="summary-calendar-day empty" aria-hidden="true"></span>`;
+  }
+
+  for (let day = 1; day <= totalDays; day++) {
+    const dateObj = new Date(year, month, day);
+    const dateStr = formatLocalDate(dateObj);
+    const dayTasks = Array.isArray(tasks?.[dateStr]) ? tasks[dateStr] : [];
+    const total = dayTasks.length;
+    const completed = dayTasks.filter((task) => !!task?.done).length;
+    const isToday =
+      day === today.getDate() &&
+      month === today.getMonth() &&
+      year === today.getFullYear();
+    const hasAnyTasks = total > 0;
+    const shouldShowDot = hasAnyTasks && !isToday;
+    const classes = ["summary-calendar-day"];
+    if (isToday) classes.push("is-today");
+    if (hasAnyTasks) classes.push("has-tasks");
+    if (dateStr < todayStr) classes.push("is-past");
+
+    const dayTitle = hasAnyTasks
+      ? `${day}: ${completed}/${total} completadas`
+      : `${day}: sin tareas`;
+
+    daysHtml += `
+      <button class="${classes.join(" ")}" type="button" data-date="${dateStr}" title="${escapeHtml(dayTitle)}">
+        <span class="summary-calendar-day-number">${day}</span>
+        ${shouldShowDot ? `<span class="summary-calendar-day-dot" aria-hidden="true"></span>` : ""}
+      </button>
+    `;
+  }
+
+  const totalCells = startDay + totalDays;
+  const nextDays = (7 - (totalCells % 7)) % 7;
+
+  for (let i = 0; i < nextDays; i++) {
+    daysHtml += `<span class="summary-calendar-day empty" aria-hidden="true"></span>`;
+  }
+
+  container.innerHTML = `
+    <div class="summary-calendar-headline">
+      <h3>Calendario</h3>
+      <div class="summary-calendar-month-nav">
+        <button class="summary-calendar-nav-btn" type="button" data-calendar-shift="-1" aria-label="Mes anterior">‹</button>
+        <span class="summary-calendar-month-label">${escapeHtml(monthTitle)} de ${year}</span>
+        <button class="summary-calendar-nav-btn" type="button" data-calendar-shift="1" aria-label="Mes siguiente">›</button>
+      </div>
+    </div>
+
+    <div class="summary-calendar-weekdays">
+      ${weekdays.map((label) => `<span>${label}</span>`).join("")}
+    </div>
+
+    <div class="summary-calendar-grid">
+      ${daysHtml}
+    </div>
+
+    <div class="summary-calendar-footer">
+      <span class="summary-calendar-footer-message" title="${escapeHtml(todayFooterMessage)}">
+        <img class="summary-calendar-footer-icon" src="/icons/info-svgrepo-com.svg" alt="" aria-hidden="true">
+        <span class="summary-calendar-footer-text">${escapeHtml(todayFooterMessage)}</span>
+      </span>
+    </div>
+  `;
+
+  const navButtons = container.querySelectorAll("[data-calendar-shift]");
+  navButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const shift = Number(button.getAttribute("data-calendar-shift")) || 0;
+      currentCalendarDate.setMonth(currentCalendarDate.getMonth() + shift);
+      renderSummaryDashboardCalendar();
+      renderMiniCalendar();
+    });
+  });
+
+  const dayButtons = container.querySelectorAll(".summary-calendar-day[data-date]");
+  dayButtons.forEach((dayButton) => {
+    dayButton.addEventListener("click", () => {
+      const dateStr = dayButton.dataset.date;
+      if (!dateStr) return;
+
+      const currentToday = formatLocalDate(new Date());
+      if (dateStr < currentToday) {
+        showToast("No es posible crear tareas en días pasados");
+        return;
+      }
+
+      const isMobile = window.innerWidth <= 900;
+      if (isMobile && sidebar && !sidebar.classList.contains("collapsed")) {
+        sidebar.classList.add("collapsed");
+      }
+
+      openDayModal(dateStr);
+    });
+  });
+}
+
+function renderTasksView(){
+  const summary = getSummaryDashboardData();
+  const levelProgress = getLevelProgressState();
+  const safeName = String(currentUser?.displayName || "Usuario").trim() || "Usuario";
+  const safeNameHtml = escapeHtml(safeName);
+  const safePillNameHtml = escapeHtml(formatSummaryPillName(safeName));
+  const avatarSrc = String(currentUser?.photoURL || getLeaderboardFallbackPhoto(safeName));
+  const avatarFallbackSrc = getLeaderboardFallbackPhoto(safeName);
+  const safeAvatarHtml = escapeHtml(avatarSrc);
+  const safeAvatarFallbackHtml = escapeHtml(avatarFallbackSrc);
+  const weekRate = summary.currentWeekTotal > 0
+    ? (summary.currentWeekCompleted / summary.currentWeekTotal) * 100
+    : 0;
+  const todayRate = summary.todayTotal > 0
+    ? (summary.todayCompleted / summary.todayTotal) * 100
+    : 0;
+
+  board.innerHTML = `
+    <section class="summary-dashboard tasks-dashboard" aria-label="Tareas diarias">
+      <div class="summary-topbar">
+        <div class="summary-brand">
+          <img class="summary-brand-mark summary-brand-logo" src="/icons/flav-icon.png" alt="" aria-hidden="true">
+          <span class="summary-brand-text" aria-label="MULTITAREAS"><span>MULTI</span><span>TAREAS</span></span>
+          <span class="summary-brand-meta" aria-label="Version de la app">
+            <span class="summary-brand-beta">BETA</span>
+            <span class="summary-brand-version" data-app-version></span>
+          </span>
+        </div>
+        <div class="summary-nav-row">
+          <nav class="summary-nav" aria-label="Secciones del dashboard">
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_SUMMARY}">Resumen</button>
+            <button class="summary-nav-item active" type="button" data-view="${VIEW_MODE_TASKS}">Tareas diarias</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_PROJECTS}">Proyectos</button>
+          </nav>
+          <button
+            class="summary-mobile-plus-btn"
+            type="button"
+            aria-label="Ir a resumen y escribir tarea"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+	          <button
+	            class="summary-top-focus-btn"
+	            type="button"
+	            data-open-focus-mode="1"
+	            aria-label="Abrir sesión de enfoque"
+	          >
+		            <span class="summary-top-focus-icon" aria-hidden="true"></span>
+                <span class="summary-top-focus-label">Enfoque</span>
+	          </button>
+        </div>
+        <button class="summary-user-pill" type="button" aria-label="Abrir menú de perfil" aria-haspopup="menu" aria-expanded="false">
+          <img
+            src="${safeAvatarHtml}"
+            alt="Foto de ${safeNameHtml}"
+            onerror="this.src='${safeAvatarFallbackHtml}'"
+          >
+          <div>
+            <strong>${safePillNameHtml}</strong>
+            <span>Nivel ${formatSettingsStat(levelProgress.level)}</span>
+          </div>
+          <svg class="summary-user-pill-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+        </button>
+      </div>
+
+      <div class="summary-hero tasks-hero">
+        <div class="summary-hero-copy">
+          <h2>Tareas diarias</h2>
+          <p class="tasks-hero-subtitle">Organiza tu semana con un vistazo rapido de tus tareas por dia</p>
+        </div>
+        <div class="tasks-hero-stats">
+          <div class="tasks-hero-stat">
+            <span>Hoy</span>
+            <strong>${formatSettingsStat(summary.todayCompleted)} / ${formatSettingsStat(summary.todayTotal)}</strong>
+            <span class="summary-kpi-badge ${summary.todayCompleted >= summary.todayTotal && summary.todayTotal > 0 ? "positive" : "negative"}">${formatSummaryPercent(todayRate)}</span>
+          </div>
+          <div class="tasks-hero-stat">
+            <span>Pendientes</span>
+            <strong>${formatSettingsStat(summary.pendingTasks)}</strong>
+            <span class="summary-kpi-badge ${summary.pendingTasks > 0 ? "negative" : "positive"}">${formatSummaryPercent(summary.completionRate)}</span>
+          </div>
+          <div class="tasks-hero-stat">
+            <span>Semana</span>
+            <strong>${formatSummaryPercent(weekRate)}</strong>
+            <span class="summary-kpi-badge ${summary.weekDelta >= 0 ? "positive" : "negative"}">${formatSummarySignedPercent(summary.weekDelta)}</span>
+          </div>
+          <div class="tasks-hero-stat-merged" aria-label="Resumen de tareas diarias">
+            <div class="tasks-hero-stat-merged-item">
+              <span>Hoy</span>
+              <strong>${formatSettingsStat(summary.todayCompleted)} / ${formatSettingsStat(summary.todayTotal)}</strong>
+              <span class="summary-kpi-badge ${summary.todayCompleted >= summary.todayTotal && summary.todayTotal > 0 ? "positive" : "negative"}">${formatSummaryPercent(todayRate)}</span>
+            </div>
+            <div class="tasks-hero-stat-merged-item">
+              <span>Pendientes</span>
+              <strong>${formatSettingsStat(summary.pendingTasks)}</strong>
+              <span class="summary-kpi-badge ${summary.pendingTasks > 0 ? "negative" : "positive"}">${formatSummaryPercent(summary.completionRate)}</span>
+            </div>
+            <div class="tasks-hero-stat-merged-item">
+              <span>Semana</span>
+              <strong>${formatSummaryPercent(weekRate)}</strong>
+              <span class="summary-kpi-badge ${summary.weekDelta >= 0 ? "positive" : "negative"}">${formatSummarySignedPercent(summary.weekDelta)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tasks-daily-board" id="tasksDailyBoard"></div>
+    </section>
+  `;
+
+  const dailyBoard = board.querySelector("#tasksDailyBoard");
+  if(dailyBoard){
+    const today = new Date();
+    for (let i = 0; i < TASKS_BOARD_VISIBLE_DAYS; i++) {
+      const d = new Date();
+      d.setDate(today.getDate() + i);
+      dailyBoard.appendChild(createDayColumn(d));
+    }
+  }
+
+  syncAppVersionLabels();
+  bindSummaryNavEvents();
+  bindSummaryUserPillMenu();
+  bindSummaryTopFocusButton();
+  bindSummaryMobilePlusButton();
 }
 
 
@@ -5539,28 +9511,144 @@ function init() {
   board.innerHTML = "";
   updateViewButtons();
 
-  if(currentViewMode === "projects"){
-    renderProjectsView();
+  if(currentViewMode === VIEW_MODE_SUMMARY){
+    renderSummaryView();
     renderMiniCalendar();
     scheduleTaskNotifications();
     return;
   }
 
-  const today = new Date();
-
-  for (let i = 0; i < 7; i++) {
-    const d = new Date();
-    d.setDate(today.getDate() + i);
-    board.appendChild(createDayColumn(d));
+  if(currentViewMode === VIEW_MODE_TASKS){
+    renderTasksView();
+    renderMiniCalendar();
+    updateLevel();
+    scheduleTaskNotifications();
+    return;
   }
 
-  renderMiniCalendar();
-  updateLevel();
-  scheduleTaskNotifications();
+  if(currentViewMode === VIEW_MODE_PROJECTS){
+    renderProjectsView();
+    renderMiniCalendar();
+    scheduleTaskNotifications();
+    return;
+  }
 }
 
 function closeProjectDialogOverlay(){
   document.getElementById("projectDialogOverlay")?.remove();
+}
+
+function openProjectCoverPicker({ projectTitle = "", selectedBannerImage = "" } = {}){
+  closeProjectDialogOverlay();
+
+  return new Promise((resolve) => {
+    const safeTitle = String(projectTitle || "Proyecto").trim();
+    const currentSelection = String(selectedBannerImage || "").trim();
+    const presetPathSet = new Set(PROJECT_BANNER_ASSETS);
+    const customSelected = !!currentSelection && !presetPathSet.has(currentSelection);
+    const overlay = document.createElement("div");
+    overlay.className = "overlay open";
+    overlay.id = "projectDialogOverlay";
+    overlay.innerHTML = `
+      <div class="project-dialog-modal" role="dialog" aria-modal="true" aria-labelledby="projectCoverPickerTitle">
+        <div class="project-dialog-icon">
+          <svg viewBox="0 0 24 24" fill="none">
+            <rect x="3.5" y="5" width="17" height="14" rx="2.5" stroke="currentColor" stroke-width="1.8"/>
+            <path d="m7.5 14 3-3 2.3 2.3 2.7-2.8 2.5 2.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="9" cy="9" r="1.1" fill="currentColor"/>
+          </svg>
+        </div>
+        <h3 id="projectCoverPickerTitle">Portada del proyecto</h3>
+        <p>Selecciona una portada para <strong>${safeTitle}</strong>.</p>
+
+        <div class="project-cover-picker-grid" id="projectCoverPickerGrid">
+          ${PROJECT_BANNER_PRESETS.map((preset) => {
+            const isActive = currentSelection === preset.path;
+            return `
+              <button
+                class="project-cover-option${isActive ? " active" : ""}"
+                type="button"
+                data-banner-asset="${preset.path}"
+              >
+                <span class="project-cover-option-preview" style="background-image:url('${preset.path}')"></span>
+                <span class="project-cover-option-label">${getProjectBannerLabel(preset.path)}</span>
+              </button>
+            `;
+          }).join("")}
+          <button class="project-cover-option custom${customSelected ? " active" : ""}" type="button" data-banner-custom="true">
+            <span class="project-cover-option-preview project-cover-option-preview-custom"></span>
+            <span class="project-cover-option-label">Personalizada</span>
+          </button>
+        </div>
+
+        <div class="project-dialog-actions">
+          <button id="projectCoverDisable" class="btn-cancel" type="button">Quitar portada</button>
+          <button id="projectCoverCancel" class="project-dialog-primary" type="button">Cancelar</button>
+        </div>
+
+        <input id="projectCoverCustomInput" type="file" accept="image/*" hidden>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const grid = overlay.querySelector("#projectCoverPickerGrid");
+    const cancelBtn = overlay.querySelector("#projectCoverCancel");
+    const disableBtn = overlay.querySelector("#projectCoverDisable");
+    const customBtn = overlay.querySelector('[data-banner-custom="true"]');
+    const customInput = overlay.querySelector("#projectCoverCustomInput");
+    let settled = false;
+    const handleEscape = (e) => {
+      if (e.key === "Escape") {
+        finish(null);
+      }
+    };
+
+    const finish = (value = null) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", handleEscape);
+      overlay.remove();
+      resolve(value);
+    };
+
+    grid?.querySelectorAll("[data-banner-asset]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const selectedAsset = button.getAttribute("data-banner-asset") || "";
+        finish(selectedAsset || null);
+      });
+    });
+
+    customBtn?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      customInput?.click();
+    });
+
+    customInput?.addEventListener("change", async () => {
+      const selectedFile = customInput.files?.[0] || null;
+      customInput.value = "";
+      if (!selectedFile) return;
+
+      try {
+        const customBanner = await buildCustomProjectBannerDataUrl(selectedFile);
+        finish(customBanner);
+      } catch (err) {
+        showToast(err?.message || "No se pudo cargar la portada personalizada.");
+      }
+    });
+
+    disableBtn?.addEventListener("click", () => finish("__disable__"));
+    cancelBtn?.addEventListener("click", () => finish(null));
+
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) {
+        finish(null);
+      }
+    });
+
+    document.addEventListener("keydown", handleEscape);
+  });
 }
 
 function openProjectNameDialog(){
@@ -5756,7 +9844,9 @@ function playDeleteTaskSound() {
   deleteTaskSound.play();
 }
 
-function launchConfetti() {
+function launchConfetti(options = {}) {
+  const zIndex = Number(options?.zIndex);
+  const hasCustomZIndex = Number.isFinite(zIndex);
   const duration = 2000;
   const end = Date.now() + duration;
 
@@ -5770,6 +9860,9 @@ function launchConfetti() {
       ticks: 100,          // 🔥 viven más tiempo
       scalar: 1.1
     };
+    if (hasCustomZIndex) {
+      baseSettings.zIndex = zIndex;
+    }
 
     // Esquina inferior izquierda
     confetti({
@@ -5997,16 +10090,29 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     menu.classList.add("visible");
   });
 
-  overlay.addEventListener("touchstart", cleanup);
-  overlay.addEventListener("click", cleanup);
+  overlay.addEventListener("touchstart", (e) => {
+    if (e.target !== overlay) return;
+    cleanup();
+  });
+  overlay.addEventListener("pointerdown", (e) => {
+    if (e.target !== overlay) return;
+    cleanup();
+  });
+  overlay.addEventListener("click", (e) => {
+    if (e.target !== overlay) return;
+    cleanup();
+  });
   clone.addEventListener("touchstart", e => e.stopPropagation());
+  clone.addEventListener("pointerdown", e => e.stopPropagation());
+  clone.addEventListener("mousedown", e => e.stopPropagation());
   clone.addEventListener("click", e => e.stopPropagation());
   menu.addEventListener("touchstart", e => e.stopPropagation());
+  menu.addEventListener("pointerdown", e => e.stopPropagation());
+  menu.addEventListener("mousedown", e => e.stopPropagation());
   menu.addEventListener("click", e => e.stopPropagation());
 
   const renderMenuView = (markup, onMount) => {
     menu.innerHTML = markup;
-    bindMobileTapToClick(menu);
     menu.classList.toggle("submenu-open", !!menu.querySelector(".task-side-panel"));
     positionFocusElements();
     onMount?.();
@@ -6334,7 +10440,9 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   };
 
   const bindMainMenuActions = () => {
-    menu.querySelector('[data-action="edit"]').onclick = ()=>{
+    menu.querySelector('[data-action="edit"]').onclick = (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
 
       cleanup({ skipRefresh: true, keepScroll: true });
 
@@ -6386,6 +10494,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
 
     menu.querySelector('[data-action="reorder"]').onclick = (e) => {
       e.preventDefault();
+      e.stopPropagation();
       cleanup({ skipRefresh: true, keepScroll: true });
       setMobileTaskReorderMode(true);
     };
@@ -6394,6 +10503,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     if (scheduleButton) {
       scheduleButton.onclick = (e) => {
         e.preventDefault();
+        e.stopPropagation();
         openMobileSchedule();
       };
     }
@@ -6402,6 +10512,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     if (tagButton) {
       tagButton.onclick = (e) => {
         e.preventDefault();
+        e.stopPropagation();
         openMobileTags();
       };
     }
@@ -6410,6 +10521,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     if (postponeButton) {
       postponeButton.onclick = (e) => {
         e.preventDefault();
+        e.stopPropagation();
         openMobilePostpone();
       };
     }
@@ -6445,7 +10557,6 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   };
 
   bindMainMenuActions();
-  bindMobileTapToClick(menu);
 
   window.addEventListener("resize", handleViewportChange);
   window.addEventListener("scroll", handleViewportChange, true);
@@ -6814,9 +10925,9 @@ function openThemeModal() {
         <span>Zafiro</span>
       </div>
 
-      <div class="theme-card" data-theme="theme-jade">
-        <div class="theme-big preview-jade"></div>
-        <span>Jade</span>
+      <div class="theme-card" data-theme="theme-oliva">
+        <div class="theme-big preview-oliva"></div>
+        <span>Oliva</span>
       </div>
 
       <div class="theme-card" data-theme="theme-atardecer">
@@ -6854,7 +10965,7 @@ function openThemeModal() {
   cards.forEach(card => {
     card.addEventListener("click", async () => {
 
-      const selected = card.dataset.theme;
+      const selected = normalizeThemeName(card.dataset.theme);
       currentTheme = selected;
 
       applyTheme(selected);
@@ -6877,12 +10988,18 @@ function openThemeModal() {
 
 const themeToggle = document.getElementById("themeToggleTop");
 
+function normalizeThemeName(theme){
+  const safeTheme = String(theme || "").trim();
+  if (safeTheme === "theme-jade") return "theme-oliva";
+  return safeTheme;
+}
+
 const THEMES = [
   "theme-default",
   "theme-amatista",
   "theme-lava",
   "theme-zafiro",
-  "theme-jade",
+  "theme-oliva",
   "theme-atardecer",
   "theme-opalo",
   "theme-tulipan"
@@ -6897,8 +11014,17 @@ themeToggle.addEventListener("click", (e) => {
 });
 
 function applyTheme(theme) {
-  document.documentElement.classList.remove(...THEMES);
-  document.documentElement.classList.add(theme);
+  const rawTheme = String(theme || "").trim();
+  const normalizedTheme = normalizeThemeName(rawTheme);
+  const safeTheme = THEMES.includes(normalizedTheme)
+    ? normalizedTheme
+    : "theme-default";
+  currentTheme = safeTheme;
+  document.documentElement.classList.remove(...THEMES, "theme-jade");
+  document.documentElement.classList.add(safeTheme);
+  if (rawTheme !== normalizedTheme) {
+    localStorage.setItem("app_theme", safeTheme);
+  }
 }
 
 window.addEventListener("beforeunload", function (e) {
@@ -6962,8 +11088,6 @@ sidebarToggle.addEventListener("click", () => {
   }, 230); // mismo tiempo que la animación CSS
 });
 
-const mobileSidebarOpen = document.getElementById("mobileSidebarOpen");
-
 const desktopCollapsedCalendar = document.getElementById("desktopCollapsedCalendar");
 const desktopCollapsedHelp = document.getElementById("desktopCollapsedHelp");
 
@@ -6979,20 +11103,6 @@ if (desktopCollapsedHelp) {
     e.stopPropagation();
     closeCornerMenu();
     openSettingsOverlay("help");
-  });
-}
-
-if (mobileSidebarOpen && sidebar) {
-  mobileSidebarOpen.addEventListener("click", (e) => {
-    e.stopPropagation();
-
-    // Abrir sidebar
-    sidebar.classList.remove("collapsed");
-
-    // 🔥 Cerrar corner container si está abierto
-    if (profileMenuOpen) {
-      closeCornerMenu();
-    }
   });
 }
 
@@ -7017,16 +11127,35 @@ const modeToggleTopMobile = document.getElementById("modeToggleTopMobile");
 const modeBtnMobile = document.getElementById("modeToggleMobile");
 const settingsBtnMobile = document.getElementById("settingsToggleMobile");
 
-if (modeToggleTopMobile && modeBtn) {
+async function toggleThemeMode(){
+  document.documentElement.classList.toggle("light-mode");
+
+  const isLight = document.documentElement.classList.contains("light-mode");
+  const mode = isLight ? "light" : "dark";
+
+  localStorage.setItem("mt_theme_mode", mode);
+
+  if (currentUser) {
+    await setDoc(
+      doc(db, "users", currentUser.uid),
+      { mode },
+      { merge: true }
+    );
+  }
+
+  updateModeIcon();
+}
+
+if (modeToggleTopMobile) {
   modeToggleTopMobile.addEventListener("click", (e) => {
     e.stopPropagation();
-    modeBtn.click();
+    void toggleThemeMode();
   });
 }
 
 if(modeBtnMobile){
   modeBtnMobile.addEventListener("click", ()=>{
-    modeBtn.click();
+    void toggleThemeMode();
   });
 }
 
@@ -7041,28 +11170,13 @@ if(settingsBtnMobile){
   });
 }
 
+if (modeBtn) {
+  modeBtn.addEventListener("click", async () => {
+    await toggleThemeMode();
+  });
+}
+
 updateModeIcon();
-
-modeBtn.addEventListener("click", async () => {
-
-  document.documentElement.classList.toggle("light-mode");
-
-  const isLight = document.documentElement.classList.contains("light-mode");
-  const mobileIcon = document.getElementById("modeIconMobile");
-  const mode = isLight ? "light" : "dark";
-
-  localStorage.setItem("mt_theme_mode", mode);
-
-  if (currentUser) {
-    await setDoc(
-      doc(db, "users", currentUser.uid),
-      { mode },
-      { merge: true }
-    );
-  }
-
-  updateModeIcon();
-});
 
 function updateModeIcon() {
 
@@ -7092,7 +11206,8 @@ function updateModeIcon() {
         `;
     }
 
-    modeBtn.innerHTML = `
+    if (modeBtn) {
+      modeBtn.innerHTML = `
       <svg fill="currentColor" height="800px" width="800px" version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" 
          viewBox="0 0 512 512" xml:space="preserve">
       <g>
@@ -7110,6 +11225,7 @@ function updateModeIcon() {
       </g>
       </svg>
     `;
+    }
   } else {
 
     if(mobileIcon){
@@ -7231,7 +11347,8 @@ function updateModeIcon() {
         `;
     }
 
-    modeBtn.innerHTML = `
+    if (modeBtn) {
+      modeBtn.innerHTML = `
       <svg fill="currentColor" version="1.1" id="Capa_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" 
          width="30px" height="30px" viewBox="0 0 475.465 475.465"
          xml:space="preserve">
@@ -7347,6 +11464,7 @@ function updateModeIcon() {
       </g>
       </svg>
     `;
+    }
   }
 
 }
@@ -7473,12 +11591,7 @@ async function savePlayer(){
 
     await setDoc(
       doc(db, "leaderboard", userForSave.uid),
-      {
-        name: userForSave.displayName,
-        photo: userForSave.photoURL,
-        level: player.level,
-        exp: player.exp
-      },
+      buildLeaderboardDocPayload(userForSave, player),
       { merge:true }
     );
   } catch (err) {
@@ -7490,10 +11603,14 @@ async function savePlayer(){
 let leaderboardUnsub = null;
 
 function openLeaderboard(){
+  closeLevelMenu();
+  closeCornerMenu();
 
   if(leaderboardUnsub){
     leaderboardUnsub();
   }
+
+  leaderboardProfileCache.clear();
 
   const q = query(
     collection(db, "leaderboard"),
@@ -7510,18 +11627,32 @@ function openLeaderboard(){
     snapshot.forEach(docSnap => {
 
       const data = docSnap.data();
+      const leaderboardPlayer =
+        data?.player && typeof data.player === "object" ? data.player : null;
 
       users.push({
         uid: docSnap.id,
         name: data.name || "Usuario",
         photo: data.photo || "",
         level: data.level || 0,
-        exp: data.exp || 0
+        exp: data.exp || 0,
+        activeStreak: data.activeStreak,
+        longestStreak: data.longestStreak,
+        allTasksStreak: data.allTasksStreak,
+        totalFocusMinutes: data.totalFocusMinutes,
+        todayExpTasks: data.todayExpTasks,
+        achievementsUnlocked: data.achievementsUnlocked,
+        lastActiveDate: data.lastActiveDate,
+        lastAllTasksDate: data.lastAllTasksDate,
+        lastExpDate: data.lastExpDate,
+        updatedAt: data.updatedAt,
+        playerData: leaderboardPlayer
       });
 
     });
 
-    showLeaderboardModal(users);
+    const sanitizedUsers = users.filter((entry) => !isPlaceholderLeaderboardEntry(entry));
+    showLeaderboardModal(sanitizedUsers);
 
   });
 
@@ -7625,36 +11756,20 @@ if(leaderboardFromLevelBtn){
 
 window.mt = {
 
+  async summary(){
+    await setViewMode(VIEW_MODE_SUMMARY);
+  },
+
+  async resumen(){
+    await setViewMode(VIEW_MODE_SUMMARY);
+  },
+
   async projects(){
-
-    currentViewMode = "projects";
-    localStorage.setItem("mt_view_mode", currentViewMode);
-
-    if (currentUser) {
-      await setDoc(
-        doc(db, "users", currentUser.uid),
-        { viewMode: currentViewMode },
-        { merge: true }
-      );
-    }
-
-    init();
+    await setViewMode(VIEW_MODE_PROJECTS);
   },
 
   async tasks(){
-
-    currentViewMode = "tasks";
-    localStorage.setItem("mt_view_mode", currentViewMode);
-
-    if (currentUser) {
-      await setDoc(
-        doc(db, "users", currentUser.uid),
-        { viewMode: currentViewMode },
-        { merge: true }
-      );
-    }
-
-    init();
+    await setViewMode(VIEW_MODE_TASKS);
   },
   logros(){
     openAchievementsMenu();
@@ -7674,23 +11789,48 @@ window.testLogros = previewAchievementUnlocks;
 
 function updateViewButtons(){
 
+  const summaryBtn = document.getElementById("summaryViewBtn");
   const tasksBtn = document.getElementById("tasksViewBtn");
   const projectsBtn = document.getElementById("projectsViewBtn");
   const bubble = document.getElementById("toggleBubble");
+  const normalizedMode = normalizeViewMode(currentViewMode);
+  const modeIndex = {
+    [VIEW_MODE_SUMMARY]: 0,
+    [VIEW_MODE_TASKS]: 1,
+    [VIEW_MODE_PROJECTS]: 2
+  };
 
-  if(!tasksBtn || !projectsBtn || !bubble) return;
+  currentViewMode = normalizedMode;
 
-  if(currentViewMode === "tasks"){
-    tasksBtn.classList.add("active");
-    projectsBtn.classList.remove("active");
-
-    bubble.style.transform = "translateX(0)";
-  }else{
-    projectsBtn.classList.add("active");
-    tasksBtn.classList.remove("active");
-
-    bubble.style.transform = "translateX(100%)";
+  if(summaryBtn){
+    summaryBtn.classList.toggle("active", normalizedMode === VIEW_MODE_SUMMARY);
   }
+
+  if(tasksBtn){
+    tasksBtn.classList.toggle("active", normalizedMode === VIEW_MODE_TASKS);
+  }
+
+  if(projectsBtn){
+    projectsBtn.classList.toggle("active", normalizedMode === VIEW_MODE_PROJECTS);
+  }
+
+  if(bubble){
+    const index = modeIndex[normalizedMode] ?? modeIndex[VIEW_MODE_TASKS];
+    bubble.style.transform = `translateX(${index * 100}%)`;
+  }
+
+  if(board){
+    board.classList.toggle(
+      "summary-mode",
+      normalizedMode === VIEW_MODE_SUMMARY
+        || normalizedMode === VIEW_MODE_TASKS
+        || normalizedMode === VIEW_MODE_PROJECTS
+    );
+  }
+
+  document.body.classList.toggle("summary-page-mode", normalizedMode === VIEW_MODE_SUMMARY);
+  document.body.classList.toggle("tasks-page-mode", normalizedMode === VIEW_MODE_TASKS);
+  document.body.classList.toggle("projects-page-mode", normalizedMode === VIEW_MODE_PROJECTS);
 
 }
 
