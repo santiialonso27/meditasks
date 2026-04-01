@@ -7950,6 +7950,60 @@ function scrollSummaryMobileViewportToTop(behavior = "auto"){
   }
 }
 
+function waitForSummarySearchInputReady(maxAttempts = 40){
+  let attempts = 0;
+
+  return new Promise((resolve) => {
+    const tryResolve = () => {
+      attempts += 1;
+      const input = document.getElementById("summarySearchInput");
+      if (input instanceof HTMLInputElement) {
+        resolve(input);
+        return;
+      }
+      if (attempts >= maxAttempts) {
+        resolve(null);
+        return;
+      }
+      setTimeout(tryResolve, 18);
+    };
+
+    tryResolve();
+  });
+}
+
+function waitForSummaryScrollCompletion(behavior = "auto"){
+  const safeBehavior = behavior === "smooth" ? "smooth" : "auto";
+  const scrollHost = document.querySelector(".board-scroll");
+
+  if (safeBehavior !== "smooth") {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      scrollHost?.removeEventListener?.("scrollend", finish);
+      window.removeEventListener("scrollend", finish);
+    };
+
+    const timeoutId = setTimeout(finish, 320);
+
+    // Si el navegador soporta scrollend, esperamos el cierre real del movimiento.
+    scrollHost?.addEventListener?.("scrollend", finish, { once: true });
+    window.addEventListener("scrollend", finish, { once: true });
+  });
+}
+
 function focusSummarySearchInputForMobile(options = {}){
   const {
     scrollBehavior = "auto",
@@ -7966,6 +8020,7 @@ function focusSummarySearchInputForMobile(options = {}){
   }catch(_error){
     input.focus();
   }
+  input.click();
 
   const cursorPosition = String(input.value || "").length;
   try{
@@ -7997,7 +8052,7 @@ function bindSummaryMobilePlusButton(scope = board){
   plusButtons.forEach((button) => {
     let lastTouchActivation = 0;
 
-    const handlePlusActivation = (event) => {
+    const handlePlusActivation = async (event) => {
       event.preventDefault();
       event.stopPropagation();
 
@@ -8007,26 +8062,25 @@ function bindSummaryMobilePlusButton(scope = board){
 
       if (!isAlreadySummary) {
         void setViewMode(VIEW_MODE_SUMMARY);
-      }
-
-      if (isAlreadySummary) {
-        scrollSummaryMobileViewportToTop("smooth");
-
-        setTimeout(() => {
-          const focusedNow = focusSummarySearchInputForMobile({ skipScroll: true });
-          if (!focusedNow) {
-            setTimeout(() => {
-              focusSummarySearchInputForMobileWithRetry(10, { skipScroll: true });
-            }, 35);
-          }
-        }, 170);
+        await waitForSummarySearchInputReady();
+        scrollSummaryMobileViewportToTop("auto");
+        await waitForSummaryScrollCompletion("auto");
+        const focusedNow = focusSummarySearchInputForMobile({ skipScroll: true });
+        if (!focusedNow) {
+          setTimeout(() => {
+            focusSummarySearchInputForMobileWithRetry(12, { skipScroll: true });
+          }, 35);
+        }
         return;
       }
 
-      const focusedNow = focusSummarySearchInputForMobile();
+      scrollSummaryMobileViewportToTop("smooth");
+      await waitForSummaryScrollCompletion("smooth");
+
+      const focusedNow = focusSummarySearchInputForMobile({ skipScroll: true });
       if (!focusedNow) {
         setTimeout(() => {
-          focusSummarySearchInputForMobileWithRetry();
+          focusSummarySearchInputForMobileWithRetry(12, { skipScroll: true });
         }, 35);
       }
     };
