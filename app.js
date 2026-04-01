@@ -7950,26 +7950,32 @@ function scrollSummaryMobileViewportToTop(behavior = "auto"){
   }
 }
 
-function waitForSummarySearchInputReady(maxAttempts = 40){
-  let attempts = 0;
+function isSummaryMobileViewportAtTop(){
+  const scrollHost = document.querySelector(".board-scroll");
+  const hostTop = !scrollHost || scrollHost.scrollTop <= 2;
+  const windowTop = (window.scrollY || window.pageYOffset || 0) <= 2;
+  const docTop = (document.documentElement?.scrollTop || 0) <= 2;
+  return hostTop && windowTop && docTop;
+}
 
-  return new Promise((resolve) => {
-    const tryResolve = () => {
-      attempts += 1;
-      const input = document.getElementById("summarySearchInput");
-      if (input instanceof HTMLInputElement) {
-        resolve(input);
-        return;
-      }
-      if (attempts >= maxAttempts) {
-        resolve(null);
-        return;
-      }
-      setTimeout(tryResolve, 18);
-    };
+let summarySearchPlusGlowTimer = null;
+function triggerSummarySearchPlusGlowForMobile(){
+  if (!isMobileViewport()) return;
+  const searchField = document.querySelector(".summary-search");
+  if (!(searchField instanceof HTMLElement)) return;
 
-    tryResolve();
-  });
+  searchField.classList.remove("summary-search-plus-glow");
+  void searchField.offsetWidth;
+  searchField.classList.add("summary-search-plus-glow");
+
+  if (summarySearchPlusGlowTimer) {
+    clearTimeout(summarySearchPlusGlowTimer);
+  }
+
+  summarySearchPlusGlowTimer = setTimeout(() => {
+    searchField.classList.remove("summary-search-plus-glow");
+    summarySearchPlusGlowTimer = null;
+  }, 1050);
 }
 
 function waitForSummaryScrollCompletion(behavior = "auto"){
@@ -8062,25 +8068,36 @@ function bindSummaryMobilePlusButton(scope = board){
 
       if (!isAlreadySummary) {
         void setViewMode(VIEW_MODE_SUMMARY);
-        await waitForSummarySearchInputReady();
         scrollSummaryMobileViewportToTop("auto");
         await waitForSummaryScrollCompletion("auto");
         const focusedNow = focusSummarySearchInputForMobile({ skipScroll: true });
+        triggerSummarySearchPlusGlowForMobile();
         if (!focusedNow) {
           setTimeout(() => {
-            focusSummarySearchInputForMobileWithRetry(12, { skipScroll: true });
+            const retried = focusSummarySearchInputForMobile({ skipScroll: true });
+            triggerSummarySearchPlusGlowForMobile();
+            if (!retried) {
+              focusSummarySearchInputForMobileWithRetry(12, { skipScroll: true });
+            }
           }, 35);
         }
         return;
       }
 
-      scrollSummaryMobileViewportToTop("smooth");
-      await waitForSummaryScrollCompletion("smooth");
+      if (!isSummaryMobileViewportAtTop()) {
+        scrollSummaryMobileViewportToTop("smooth");
+        await waitForSummaryScrollCompletion("smooth");
+      }
 
       const focusedNow = focusSummarySearchInputForMobile({ skipScroll: true });
+      triggerSummarySearchPlusGlowForMobile();
       if (!focusedNow) {
         setTimeout(() => {
-          focusSummarySearchInputForMobileWithRetry(12, { skipScroll: true });
+          const retried = focusSummarySearchInputForMobile({ skipScroll: true });
+          triggerSummarySearchPlusGlowForMobile();
+          if (!retried) {
+            focusSummarySearchInputForMobileWithRetry(12, { skipScroll: true });
+          }
         }, 35);
       }
     };
@@ -11314,6 +11331,7 @@ function updateModeIcon() {
 
   const isLight = document.documentElement.classList.contains("light-mode");
   const mobileIcon = document.getElementById("modeIconMobile");
+  const mobileModeLabel = modeToggleTopMobile?.querySelector(".corner-menu-item-main span");
 
   if (isLight) {
 
@@ -11597,6 +11615,17 @@ function updateModeIcon() {
       </svg>
     `;
     }
+  }
+
+  if (mobileModeLabel) {
+    mobileModeLabel.textContent = isLight ? "Modo claro" : "Modo oscuro";
+  }
+
+  if (modeToggleTopMobile) {
+    modeToggleTopMobile.setAttribute(
+      "aria-label",
+      isLight ? "Cambiar a modo oscuro" : "Cambiar a modo claro"
+    );
   }
 
 }
