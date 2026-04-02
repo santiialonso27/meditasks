@@ -1847,6 +1847,10 @@
         transform:none;
       }
 
+      .task.mobile-swipe-enabled .cb{
+        display:none;
+      }
+
       .task.mobile-swipe-enabled .task-swipe-actions{
         position:absolute;
         inset:0;
@@ -1859,21 +1863,21 @@
         position:absolute;
         top:0;
         bottom:0;
-        width:112px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
+        width:0;
         color:#fff;
         opacity:0;
         overflow:hidden;
-        transition: opacity .14s linear;
+        transition: width .22s cubic-bezier(.22,.86,.31,1), opacity .14s linear;
       }
 
       .task.mobile-swipe-enabled .task-swipe-action-icon{
-        display:grid;
-        place-items:center;
+        position:absolute;
+        top:50%;
+        display:flex;
+        align-items:center;
+        justify-content:center;
         opacity:0;
-        transform:scale(.78);
+        transform:translateY(-50%) scale(.78);
         transition: transform .2s ease, opacity .2s ease;
         will-change:transform, opacity;
       }
@@ -1885,20 +1889,24 @@
 
       .task.mobile-swipe-enabled .task-swipe-complete{
         left:0;
-        justify-content:flex-start;
-        padding-left:24px;
         background:
           radial-gradient(120% 130% at 18% 0%, rgba(255,255,255,.26), transparent 46%),
           linear-gradient(140deg, #22c55e 0%, #16a34a 100%);
       }
 
+      .task.mobile-swipe-enabled .task-swipe-complete .task-swipe-action-icon{
+        left:24px;
+      }
+
       .task.mobile-swipe-enabled .task-swipe-delete{
         right:0;
-        justify-content:flex-end;
-        padding-right:24px;
         background:
           radial-gradient(120% 130% at 82% 0%, rgba(255,255,255,.24), transparent 44%),
           linear-gradient(140deg, #fb923c 0%, #ea580c 100%);
+      }
+
+      .task.mobile-swipe-enabled .task-swipe-delete .task-swipe-action-icon{
+        right:24px;
       }
 
       .task.mobile-swipe-enabled.swipe-undo-mode .task-swipe-complete,
@@ -1914,6 +1922,10 @@
       }
 
       .task.mobile-swipe-enabled.swipe-interacting .task-swipe-surface{
+        transition:none;
+      }
+
+      .task.mobile-swipe-enabled.swipe-interacting .task-swipe-action{
         transition:none;
       }
 

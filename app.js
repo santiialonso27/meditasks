@@ -316,9 +316,9 @@ const MOBILE_TASK_LONG_PRESS_MS = 420;
 const MOBILE_TASK_MOVE_TOLERANCE = 12;
 const MOBILE_TASK_FOCUS_KEYBOARD_DELAY_MS = 160;
 const MOBILE_TASK_SWIPE_LOCK_DISTANCE = 14;
-const MOBILE_TASK_SWIPE_MAX_OFFSET = 112;
-const MOBILE_TASK_SWIPE_TRIGGER_OFFSET = 78;
-const MOBILE_TASK_TAP_HINT_OFFSET = 42;
+const MOBILE_TASK_SWIPE_MAX_OFFSET = 84;
+const MOBILE_TASK_SWIPE_TRIGGER_OFFSET = 58;
+const MOBILE_TASK_TAP_HINT_OFFSET = 32;
 const MOBILE_TASK_TAP_HINT_HOLD_MS = 120;
 const MOBILE_DRAG_AUTOSCROLL_EDGE_PX = 72;
 const MOBILE_DRAG_AUTOSCROLL_MAX_SPEED = 16;
@@ -6712,17 +6712,19 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         const setSwipeActionVisual = (actionElement, mainIconElement, undoIconElement, progress, direction) => {
           if (!actionElement) return;
           const clamped = Math.max(0, Math.min(1, progress));
+          const visibleWidth = Math.round(clamped * MOBILE_TASK_SWIPE_MAX_OFFSET);
+          actionElement.style.width = `${visibleWidth}px`;
           actionElement.style.opacity = clamped > 0 ? "1" : "0";
           const activeIconElement = t.done ? undoIconElement : mainIconElement;
           const inactiveIconElement = t.done ? mainIconElement : undoIconElement;
           if (inactiveIconElement) {
             inactiveIconElement.style.opacity = "0";
-            inactiveIconElement.style.transform = `translateX(${direction > 0 ? -10 : 10}px) scale(.78)`;
+            inactiveIconElement.style.transform = `translateY(-50%) translateX(${direction > 0 ? -10 : 10}px) scale(.78)`;
           }
           if (!activeIconElement) return;
           if (clamped <= 0) {
             activeIconElement.style.opacity = "0";
-            activeIconElement.style.transform = `translateX(${direction > 0 ? -10 : 10}px) scale(.78)`;
+            activeIconElement.style.transform = `translateY(-50%) translateX(${direction > 0 ? -10 : 10}px) scale(.78)`;
             return;
           }
           const opacity = Math.min(1, 0.2 + (clamped * 0.8));
@@ -6730,7 +6732,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           const shift = (1 - clamped) * 10;
           const translateX = direction > 0 ? -shift : shift;
           activeIconElement.style.opacity = String(opacity);
-          activeIconElement.style.transform = `translateX(${translateX}px) scale(${scale})`;
+          activeIconElement.style.transform = `translateY(-50%) translateX(${translateX}px) scale(${scale})`;
         };
 
         const updateSwipeVisual = (rawOffset) => {
