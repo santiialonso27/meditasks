@@ -315,6 +315,9 @@ const MOBILE_BREAKPOINT = 900;
 const MOBILE_TASK_LONG_PRESS_MS = 420;
 const MOBILE_TASK_MOVE_TOLERANCE = 12;
 const MOBILE_TASK_FOCUS_KEYBOARD_DELAY_MS = 160;
+const MOBILE_TASK_SWIPE_LOCK_DISTANCE = 14;
+const MOBILE_TASK_SWIPE_MAX_OFFSET = 112;
+const MOBILE_TASK_SWIPE_TRIGGER_OFFSET = 78;
 const MOBILE_DRAG_AUTOSCROLL_EDGE_PX = 72;
 const MOBILE_DRAG_AUTOSCROLL_MAX_SPEED = 16;
 const MOBILE_DRAG_PREVIEW_STICKY_TOP = 0.38;
@@ -6428,75 +6431,99 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         : "";
       
       el.innerHTML = `
-        <div class="cb"></div>
-        ${!isProject && t.timeSlot ? `<span class="task-time">${t.timeSlot}</span>` : ""}
-        <div class="tmain">
-          <div class="ttext">${t.text}</div>
-          ${taskLabelMarkup}
+        <div class="task-swipe-actions" aria-hidden="true">
+          <div class="task-swipe-action task-swipe-complete">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m5 12.5 4 4L19 7"/>
+            </svg>
+          </div>
+          <div class="task-swipe-action task-swipe-delete">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7h16"/>
+              <path d="M9 7V5h6v2"/>
+              <path d="M7 7l1 12h8l1-12"/>
+              <path d="M10 11v5"/>
+              <path d="M14 11v5"/>
+            </svg>
+          </div>
         </div>
-        <div class="task-actions-anchor">
-          <div class="task-menu-stack">
-            ${!isProject ? `
-            <button class="task-menu-btn" data-action="schedule" type="button">
-              <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="8"/>
-                <path d="M12 8v4l3 2"/>
+        <div class="task-swipe-surface">
+          <div class="cb"></div>
+          ${!isProject && t.timeSlot ? `<span class="task-time">${t.timeSlot}</span>` : ""}
+          <div class="tmain">
+            <div class="ttext">${t.text}</div>
+            ${taskLabelMarkup}
+          </div>
+          <div class="task-actions-anchor">
+            <div class="task-menu-stack">
+              ${!isProject ? `
+              <button class="task-menu-btn" data-action="schedule" type="button">
+                <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="8"/>
+                  <path d="M12 8v4l3 2"/>
+                </svg>
+                <span>Definir horario</span>
+                <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 3 5 5-5 5"/>
+                </svg>
+              </button>
+              ` : ""}
+              <button class="task-menu-btn" data-action="tag" type="button">
+                <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M20 10 10 20l-7-7V4h9l8 6Z"/>
+                  <circle cx="7.5" cy="8.5" r="1"/>
+                </svg>
+                <span>Etiquetar tarea</span>
+                <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 3 5 5-5 5"/>
+                </svg>
+              </button>
+              ${!isProject ? `
+              <button class="task-menu-btn" data-action="postpone" type="button">
+                <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M5 9h4l-4 4h4"/>
+                  <path d="M11 13h4l-4 4h4"/>
+                  <path d="M17 9h2l-2 2h2"/>
+                </svg>
+                <span>Posponer tarea</span>
+                <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 3 5 5-5 5"/>
+                </svg>
+              </button>
+              ` : ""}
+              <button class="task-menu-btn danger" data-action="delete" type="button">
+                <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 7h16"/>
+                  <path d="M9 7V5h6v2"/>
+                  <path d="M7 7l1 12h8l1-12"/>
+                  <path d="M10 11v5"/>
+                  <path d="M14 11v5"/>
+                </svg>
+                <span>Borrar tarea</span>
+              </button>
+            </div>
+            ${!isProject ? `<div class="task-side-panel task-time-panel" aria-label="Seleccionar horario"></div>` : ""}
+            <div class="task-side-panel task-tag-panel" aria-label="Seleccionar etiqueta"></div>
+            <div class="task-side-panel task-tag-create-panel" aria-label="Crear etiqueta"></div>
+            ${!isProject ? `<div class="task-side-panel task-postpone-panel" aria-label="Posponer tarea"></div>` : ""}
+            <button class="icon task-action" aria-label="Editar tarea" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>
               </svg>
-              <span>Definir horario</span>
-              <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="m6 3 5 5-5 5"/>
-              </svg>
-            </button>
-            ` : ""}
-            <button class="task-menu-btn" data-action="tag" type="button">
-              <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M20 10 10 20l-7-7V4h9l8 6Z"/>
-                <circle cx="7.5" cy="8.5" r="1"/>
-              </svg>
-              <span>Etiquetar tarea</span>
-              <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="m6 3 5 5-5 5"/>
-              </svg>
-            </button>
-            ${!isProject ? `
-            <button class="task-menu-btn" data-action="postpone" type="button">
-              <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M5 9h4l-4 4h4"/>
-                <path d="M11 13h4l-4 4h4"/>
-                <path d="M17 9h2l-2 2h2"/>
-              </svg>
-              <span>Posponer tarea</span>
-              <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="m6 3 5 5-5 5"/>
-              </svg>
-            </button>
-            ` : ""}
-            <button class="task-menu-btn danger" data-action="delete" type="button">
-              <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M4 7h16"/>
-                <path d="M9 7V5h6v2"/>
-                <path d="M7 7l1 12h8l1-12"/>
-                <path d="M10 11v5"/>
-                <path d="M14 11v5"/>
-              </svg>
-              <span>Borrar tarea</span>
             </button>
           </div>
-          ${!isProject ? `<div class="task-side-panel task-time-panel" aria-label="Seleccionar horario"></div>` : ""}
-          <div class="task-side-panel task-tag-panel" aria-label="Seleccionar etiqueta"></div>
-          <div class="task-side-panel task-tag-create-panel" aria-label="Crear etiqueta"></div>
-          ${!isProject ? `<div class="task-side-panel task-postpone-panel" aria-label="Posponer tarea"></div>` : ""}
-          <button class="icon task-action" aria-label="Editar tarea" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M12 20h9"/>
-              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>
-            </svg>
-          </button>
         </div>
       `;
       const textDiv = el.querySelector(".ttext");
       const taskLabelDot = el.querySelector(".task-label-dot");
       const timePill = el.querySelector(".task-time");
+      const swipeSurface = el.querySelector(".task-swipe-surface");
+      const swipeCompleteAction = el.querySelector(".task-swipe-complete");
+      const swipeDeleteAction = el.querySelector(".task-swipe-delete");
+      let swipeCompleteHandler = null;
+      let swipeDeleteHandler = null;
+      let resetTaskSwipeState = () => {};
 
       if (timePill) {
         timePill.addEventListener("click", (e) => {
@@ -6562,10 +6589,19 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
 
       if (isMobileTaskFocusEnabled()) {
+        el.classList.add("mobile-swipe-enabled");
+
         let longPressTimer = null;
         let pressStartX = 0;
         let pressStartY = 0;
         let longPressTriggered = false;
+
+        let swipeTracking = false;
+        let swipeLocked = false;
+        let swipeActionInFlight = false;
+        let swipeOffset = 0;
+        let swipeStartX = 0;
+        let swipeStartY = 0;
 
         const clearLongPressTimer = () => {
           if (longPressTimer) {
@@ -6574,44 +6610,178 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           }
         };
 
+        const setSwipeActionVisual = (actionElement, progress, direction) => {
+          if (!actionElement) return;
+          if (progress <= 0) {
+            actionElement.style.opacity = "0";
+            actionElement.style.transform = "scale(.82)";
+            actionElement.style.filter = "brightness(.92)";
+            return;
+          }
+          const opacity = Math.min(1, 0.24 + (progress * 0.76));
+          const scale = Math.min(1, 0.82 + (progress * 0.18));
+          const shift = (1 - progress) * 11;
+          const translateX = direction > 0 ? -shift : shift;
+          actionElement.style.opacity = String(opacity);
+          actionElement.style.transform = `translateX(${translateX}px) scale(${scale})`;
+          actionElement.style.filter = `brightness(${0.92 + (progress * 0.08)})`;
+        };
+
+        const updateSwipeVisual = (rawOffset) => {
+          if (!swipeSurface) return;
+          const direction = rawOffset === 0 ? 0 : (rawOffset > 0 ? 1 : -1);
+          const absOffset = Math.abs(rawOffset);
+          const capped = Math.min(absOffset, MOBILE_TASK_SWIPE_MAX_OFFSET);
+          const overflow = Math.max(0, absOffset - MOBILE_TASK_SWIPE_MAX_OFFSET);
+          const easedOffset = (direction * (capped + (overflow * 0.2)));
+          swipeOffset = easedOffset;
+
+          swipeSurface.style.transform = `translate3d(${easedOffset}px, 0, 0)`;
+
+          const progress = Math.min(1, Math.abs(easedOffset) / MOBILE_TASK_SWIPE_TRIGGER_OFFSET);
+          el.style.setProperty("--task-swipe-progress", String(progress));
+          el.classList.toggle("swipe-right", direction > 0);
+          el.classList.toggle("swipe-left", direction < 0);
+
+          setSwipeActionVisual(swipeCompleteAction, direction > 0 ? progress : 0, 1);
+          setSwipeActionVisual(swipeDeleteAction, direction < 0 ? progress : 0, -1);
+        };
+
+        resetTaskSwipeState = (animate = true) => {
+          if (!swipeSurface) return;
+          swipeOffset = 0;
+          if (!animate) {
+            el.classList.add("swipe-interacting");
+          }
+          swipeSurface.style.transform = "translate3d(0, 0, 0)";
+          el.style.setProperty("--task-swipe-progress", "0");
+          el.classList.remove("swipe-right", "swipe-left", "swipe-committing");
+          setSwipeActionVisual(swipeCompleteAction, 0, 1);
+          setSwipeActionVisual(swipeDeleteAction, 0, -1);
+          if (!animate) {
+            requestAnimationFrame(() => {
+              el.classList.remove("swipe-interacting");
+            });
+          }
+        };
+
+        const ignoreSwipeTarget = (target) => (
+          target.closest(".cb")
+          || target.closest(".task-actions-anchor")
+          || target.closest(".task-time")
+          || target.closest(".task-label-dot")
+        );
+
         el.addEventListener("touchstart", (e) => {
           if (!isMobileTaskFocusEnabled()) return;
           if (isMobileTaskReorderEnabled()) return;
           if (e.touches.length !== 1) return;
-          if (e.target.closest(".cb") || e.target.closest(".task-actions-anchor")) return;
           if (activeTaskMobileFocus && activeTaskMobileFocus.taskElement !== el) return;
+
+          const touchTarget = e.target instanceof Element ? e.target : null;
+          if (!touchTarget) return;
 
           longPressTriggered = false;
           pressStartX = e.touches[0].clientX;
           pressStartY = e.touches[0].clientY;
 
+          swipeTracking = !ignoreSwipeTarget(touchTarget);
+          swipeLocked = false;
+          swipeActionInFlight = false;
+          swipeStartX = e.touches[0].clientX;
+          swipeStartY = e.touches[0].clientY;
+
           clearLongPressTimer();
-          longPressTimer = setTimeout(() => {
-            longPressTriggered = true;
-            showTaskMobileMenu(el, t, render);
-          }, MOBILE_TASK_LONG_PRESS_MS);
-        });
+          if (!ignoreSwipeTarget(touchTarget)) {
+            longPressTimer = setTimeout(() => {
+              longPressTriggered = true;
+              showTaskMobileMenu(el, t, render);
+            }, MOBILE_TASK_LONG_PRESS_MS);
+          }
+        }, { passive: true });
 
         el.addEventListener("touchmove", (e) => {
-          if (!longPressTimer) return;
+          if (!isMobileTaskFocusEnabled()) return;
+          if (isMobileTaskReorderEnabled()) return;
+          if (e.touches.length !== 1) return;
 
-          const moveX = Math.abs(e.touches[0].clientX - pressStartX);
-          const moveY = Math.abs(e.touches[0].clientY - pressStartY);
+          const touch = e.touches[0];
+          const moveX = Math.abs(touch.clientX - pressStartX);
+          const moveY = Math.abs(touch.clientY - pressStartY);
 
-          if (moveX > MOBILE_TASK_MOVE_TOLERANCE || moveY > MOBILE_TASK_MOVE_TOLERANCE) {
+          if (longPressTimer && (moveX > MOBILE_TASK_MOVE_TOLERANCE || moveY > MOBILE_TASK_MOVE_TOLERANCE)) {
             clearLongPressTimer();
           }
-        });
+
+          if (!swipeTracking || swipeActionInFlight) return;
+
+          const deltaX = touch.clientX - swipeStartX;
+          const deltaY = touch.clientY - swipeStartY;
+          const absX = Math.abs(deltaX);
+          const absY = Math.abs(deltaY);
+
+          if (!swipeLocked) {
+            if (absX < MOBILE_TASK_SWIPE_LOCK_DISTANCE) return;
+            if (absY >= absX) {
+              swipeTracking = false;
+              resetTaskSwipeState(true);
+              return;
+            }
+            swipeLocked = true;
+            clearLongPressTimer();
+            el.classList.add("swipe-interacting");
+          }
+
+          if (swipeLocked) {
+            e.preventDefault();
+            updateSwipeVisual(deltaX);
+          }
+        }, { passive: false });
 
         el.addEventListener("touchend", (e) => {
+          if (swipeLocked) {
+            e.preventDefault();
+            clearLongPressTimer();
+            el.classList.remove("swipe-interacting");
+
+            const direction = swipeOffset > 0 ? 1 : (swipeOffset < 0 ? -1 : 0);
+            const reachedActionThreshold = Math.abs(swipeOffset) >= MOBILE_TASK_SWIPE_TRIGGER_OFFSET;
+            const actionHandler = direction > 0 ? swipeCompleteHandler : swipeDeleteHandler;
+
+            if (direction !== 0 && reachedActionThreshold && actionHandler) {
+              swipeActionInFlight = true;
+              el.classList.add("swipe-committing");
+              updateSwipeVisual(direction * MOBILE_TASK_SWIPE_MAX_OFFSET);
+              window.setTimeout(() => {
+                Promise.resolve(actionHandler()).catch((error) => {
+                  console.error(error);
+                  if (el.isConnected) resetTaskSwipeState(true);
+                });
+              }, 90);
+            } else {
+              resetTaskSwipeState(true);
+            }
+
+            swipeLocked = false;
+            swipeTracking = false;
+            return;
+          }
+
           if (longPressTriggered) {
             e.preventDefault();
           }
           clearLongPressTimer();
+          swipeTracking = false;
+          swipeLocked = false;
         });
 
         el.addEventListener("touchcancel", () => {
           clearLongPressTimer();
+          swipeTracking = false;
+          swipeLocked = false;
+          swipeActionInFlight = false;
+          el.classList.remove("swipe-interacting");
+          resetTaskSwipeState(true);
         });
       }
 
@@ -6963,6 +7133,42 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         return true;
       };
 
+      const deleteTask = async () => {
+        closeTaskActionMenu();
+
+        if (soundEnabled) {
+          playDeleteTaskSound();
+        }
+
+        dayTasks.splice(i, 1);
+
+        await save();
+        render();
+        renderMiniCalendar();
+
+        updateDayModalTaskCount(iso);
+      };
+
+      swipeCompleteHandler = async () => {
+        const didComplete = await persistTaskCompletion(true, {
+          cbElement: el.querySelector(".cb"),
+        });
+        if (!didComplete && el.isConnected) {
+          resetTaskSwipeState(true);
+          return;
+        }
+        if (el.isConnected) {
+          resetTaskSwipeState(true);
+        }
+      };
+
+      swipeDeleteHandler = async () => {
+        await deleteTask();
+        if (el.isConnected) {
+          resetTaskSwipeState(true);
+        }
+      };
+
       taskActionButton.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -7259,19 +7465,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       taskDeleteButton.onclick = async (e) => {
         e.preventDefault();
         e.stopPropagation();
-        closeTaskActionMenu();
-
-        if (soundEnabled) {
-          playDeleteTaskSound();
-        }
-
-        dayTasks.splice(i,1);
-
-        await save();
-        render();
-        renderMiniCalendar();
-
-        updateDayModalTaskCount(iso);
+        await deleteTask();
       };
 
       el.querySelector(".cb").onclick = async () => {
