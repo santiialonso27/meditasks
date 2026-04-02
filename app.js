@@ -318,6 +318,8 @@ const MOBILE_TASK_FOCUS_KEYBOARD_DELAY_MS = 160;
 const MOBILE_TASK_SWIPE_LOCK_DISTANCE = 14;
 const MOBILE_TASK_SWIPE_MAX_OFFSET = 112;
 const MOBILE_TASK_SWIPE_TRIGGER_OFFSET = 78;
+const MOBILE_TASK_TAP_HINT_OFFSET = 42;
+const MOBILE_TASK_TAP_HINT_HOLD_MS = 120;
 const MOBILE_DRAG_AUTOSCROLL_EDGE_PX = 72;
 const MOBILE_DRAG_AUTOSCROLL_MAX_SPEED = 16;
 const MOBILE_DRAG_PREVIEW_STICKY_TOP = 0.38;
@@ -1178,6 +1180,71 @@ document.addEventListener("selectstart", (e) => {
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function askSwipeDeleteConfirmation() {
+  if (!isMobileViewport()) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise((resolve) => {
+    const existingOverlay = document.getElementById("swipeDeleteConfirmOverlay");
+    existingOverlay?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "swipeDeleteConfirmOverlay";
+    overlay.className = "swipe-delete-confirm-overlay";
+    overlay.innerHTML = `
+      <div class="swipe-delete-confirm-card" role="dialog" aria-modal="true" aria-labelledby="swipeDeleteConfirmTitle">
+        <p id="swipeDeleteConfirmTitle">Se eliminara la tarea</p>
+        <div class="swipe-delete-confirm-actions">
+          <button type="button" class="swipe-delete-confirm-btn confirm">Aceptar</button>
+          <button type="button" class="swipe-delete-confirm-btn cancel">Cancelar</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const confirmButton = overlay.querySelector(".swipe-delete-confirm-btn.confirm");
+    const cancelButton = overlay.querySelector(".swipe-delete-confirm-btn.cancel");
+    let settled = false;
+
+    const finalize = (accepted) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", handleKeydown);
+      overlay.classList.remove("open");
+
+      const cleanup = () => {
+        overlay.remove();
+      };
+
+      overlay.addEventListener("transitionend", cleanup, { once: true });
+      setTimeout(cleanup, 240);
+      resolve(accepted);
+    };
+
+    const handleKeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finalize(false);
+      }
+    };
+
+    confirmButton?.addEventListener("click", () => finalize(true));
+    cancelButton?.addEventListener("click", () => finalize(false));
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        finalize(false);
+      }
+    });
+    document.addEventListener("keydown", handleKeydown);
+
+    requestAnimationFrame(() => {
+      overlay.classList.add("open");
+    });
+  });
 }
 
 function pickRandomProjectBannerAsset(){
@@ -6433,18 +6500,34 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       el.innerHTML = `
         <div class="task-swipe-actions" aria-hidden="true">
           <div class="task-swipe-action task-swipe-complete">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="m5 12.5 4 4L19 7"/>
-            </svg>
+            <span class="task-swipe-action-icon task-swipe-action-icon-main">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m5 12.5 4 4L19 7"/>
+              </svg>
+            </span>
+            <span class="task-swipe-action-icon task-swipe-action-icon-undo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 14 4 9l5-5"/>
+                <path d="M4 9h9a6 6 0 0 1 0 12h-1"/>
+              </svg>
+            </span>
           </div>
           <div class="task-swipe-action task-swipe-delete">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 7h16"/>
-              <path d="M9 7V5h6v2"/>
-              <path d="M7 7l1 12h8l1-12"/>
-              <path d="M10 11v5"/>
-              <path d="M14 11v5"/>
-            </svg>
+            <span class="task-swipe-action-icon task-swipe-action-icon-main">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 7h16"/>
+                <path d="M9 7V5h6v2"/>
+                <path d="M7 7l1 12h8l1-12"/>
+                <path d="M10 11v5"/>
+                <path d="M14 11v5"/>
+              </svg>
+            </span>
+            <span class="task-swipe-action-icon task-swipe-action-icon-undo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 14 4 9l5-5"/>
+                <path d="M4 9h9a6 6 0 0 1 0 12h-1"/>
+              </svg>
+            </span>
           </div>
         </div>
         <div class="task-swipe-surface">
@@ -6521,8 +6604,13 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       const swipeSurface = el.querySelector(".task-swipe-surface");
       const swipeCompleteAction = el.querySelector(".task-swipe-complete");
       const swipeDeleteAction = el.querySelector(".task-swipe-delete");
+      const swipeCompleteMainIcon = swipeCompleteAction?.querySelector(".task-swipe-action-icon-main");
+      const swipeDeleteMainIcon = swipeDeleteAction?.querySelector(".task-swipe-action-icon-main");
+      const swipeCompleteUndoIcon = swipeCompleteAction?.querySelector(".task-swipe-action-icon-undo");
+      const swipeDeleteUndoIcon = swipeDeleteAction?.querySelector(".task-swipe-action-icon-undo");
       let swipeCompleteHandler = null;
       let swipeDeleteHandler = null;
+      let swipeUndoHandler = null;
       let resetTaskSwipeState = () => {};
 
       if (timePill) {
@@ -6590,6 +6678,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
       if (isMobileTaskFocusEnabled()) {
         el.classList.add("mobile-swipe-enabled");
+        el.classList.toggle("swipe-undo-mode", !!t.done);
 
         let longPressTimer = null;
         let pressStartX = 0;
@@ -6602,6 +6691,9 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         let swipeOffset = 0;
         let swipeStartX = 0;
         let swipeStartY = 0;
+        let touchEligibleForTapHint = false;
+        let touchMovedBeyondTap = false;
+        let tapHintTimer = null;
 
         const clearLongPressTimer = () => {
           if (longPressTimer) {
@@ -6610,21 +6702,35 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           }
         };
 
-        const setSwipeActionVisual = (actionElement, progress, direction) => {
+        const clearTapHintTimer = () => {
+          if (tapHintTimer) {
+            clearTimeout(tapHintTimer);
+            tapHintTimer = null;
+          }
+        };
+
+        const setSwipeActionVisual = (actionElement, mainIconElement, undoIconElement, progress, direction) => {
           if (!actionElement) return;
-          if (progress <= 0) {
-            actionElement.style.opacity = "0";
-            actionElement.style.transform = "scale(.82)";
-            actionElement.style.filter = "brightness(.92)";
+          const clamped = Math.max(0, Math.min(1, progress));
+          actionElement.style.opacity = clamped > 0 ? "1" : "0";
+          const activeIconElement = t.done ? undoIconElement : mainIconElement;
+          const inactiveIconElement = t.done ? mainIconElement : undoIconElement;
+          if (inactiveIconElement) {
+            inactiveIconElement.style.opacity = "0";
+            inactiveIconElement.style.transform = `translateX(${direction > 0 ? -10 : 10}px) scale(.78)`;
+          }
+          if (!activeIconElement) return;
+          if (clamped <= 0) {
+            activeIconElement.style.opacity = "0";
+            activeIconElement.style.transform = `translateX(${direction > 0 ? -10 : 10}px) scale(.78)`;
             return;
           }
-          const opacity = Math.min(1, 0.24 + (progress * 0.76));
-          const scale = Math.min(1, 0.82 + (progress * 0.18));
-          const shift = (1 - progress) * 11;
+          const opacity = Math.min(1, 0.2 + (clamped * 0.8));
+          const scale = Math.min(1, 0.78 + (clamped * 0.22));
+          const shift = (1 - clamped) * 10;
           const translateX = direction > 0 ? -shift : shift;
-          actionElement.style.opacity = String(opacity);
-          actionElement.style.transform = `translateX(${translateX}px) scale(${scale})`;
-          actionElement.style.filter = `brightness(${0.92 + (progress * 0.08)})`;
+          activeIconElement.style.opacity = String(opacity);
+          activeIconElement.style.transform = `translateX(${translateX}px) scale(${scale})`;
         };
 
         const updateSwipeVisual = (rawOffset) => {
@@ -6643,8 +6749,20 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           el.classList.toggle("swipe-right", direction > 0);
           el.classList.toggle("swipe-left", direction < 0);
 
-          setSwipeActionVisual(swipeCompleteAction, direction > 0 ? progress : 0, 1);
-          setSwipeActionVisual(swipeDeleteAction, direction < 0 ? progress : 0, -1);
+          setSwipeActionVisual(
+            swipeCompleteAction,
+            swipeCompleteMainIcon,
+            swipeCompleteUndoIcon,
+            direction > 0 ? progress : 0,
+            1
+          );
+          setSwipeActionVisual(
+            swipeDeleteAction,
+            swipeDeleteMainIcon,
+            swipeDeleteUndoIcon,
+            direction < 0 ? progress : 0,
+            -1
+          );
         };
 
         resetTaskSwipeState = (animate = true) => {
@@ -6655,14 +6773,26 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           }
           swipeSurface.style.transform = "translate3d(0, 0, 0)";
           el.style.setProperty("--task-swipe-progress", "0");
-          el.classList.remove("swipe-right", "swipe-left", "swipe-committing");
-          setSwipeActionVisual(swipeCompleteAction, 0, 1);
-          setSwipeActionVisual(swipeDeleteAction, 0, -1);
+          el.classList.remove("swipe-right", "swipe-left", "swipe-committing", "swipe-hinting");
+          setSwipeActionVisual(swipeCompleteAction, swipeCompleteMainIcon, swipeCompleteUndoIcon, 0, 1);
+          setSwipeActionVisual(swipeDeleteAction, swipeDeleteMainIcon, swipeDeleteUndoIcon, 0, -1);
           if (!animate) {
             requestAnimationFrame(() => {
               el.classList.remove("swipe-interacting");
             });
           }
+        };
+
+        const runTapHint = () => {
+          if (!el.isConnected) return;
+          if (swipeLocked || swipeActionInFlight) return;
+          clearTapHintTimer();
+          el.classList.add("swipe-hinting");
+          updateSwipeVisual(MOBILE_TASK_TAP_HINT_OFFSET);
+          tapHintTimer = window.setTimeout(() => {
+            if (!el.isConnected) return;
+            resetTaskSwipeState(true);
+          }, MOBILE_TASK_TAP_HINT_HOLD_MS);
         };
 
         const ignoreSwipeTarget = (target) => (
@@ -6684,15 +6814,22 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           longPressTriggered = false;
           pressStartX = e.touches[0].clientX;
           pressStartY = e.touches[0].clientY;
+          touchMovedBeyondTap = false;
 
-          swipeTracking = !ignoreSwipeTarget(touchTarget);
+          const shouldIgnoreTarget = ignoreSwipeTarget(touchTarget);
+          touchEligibleForTapHint = !shouldIgnoreTarget;
+          swipeTracking = !shouldIgnoreTarget;
           swipeLocked = false;
           swipeActionInFlight = false;
           swipeStartX = e.touches[0].clientX;
           swipeStartY = e.touches[0].clientY;
+          clearTapHintTimer();
+          if (Math.abs(swipeOffset) > 0.5) {
+            resetTaskSwipeState(false);
+          }
 
           clearLongPressTimer();
-          if (!ignoreSwipeTarget(touchTarget)) {
+          if (!shouldIgnoreTarget) {
             longPressTimer = setTimeout(() => {
               longPressTriggered = true;
               showTaskMobileMenu(el, t, render);
@@ -6711,6 +6848,9 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
           if (longPressTimer && (moveX > MOBILE_TASK_MOVE_TOLERANCE || moveY > MOBILE_TASK_MOVE_TOLERANCE)) {
             clearLongPressTimer();
+          }
+          if (moveX > MOBILE_TASK_MOVE_TOLERANCE || moveY > MOBILE_TASK_MOVE_TOLERANCE) {
+            touchMovedBeyondTap = true;
           }
 
           if (!swipeTracking || swipeActionInFlight) return;
@@ -6746,18 +6886,23 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
             const direction = swipeOffset > 0 ? 1 : (swipeOffset < 0 ? -1 : 0);
             const reachedActionThreshold = Math.abs(swipeOffset) >= MOBILE_TASK_SWIPE_TRIGGER_OFFSET;
-            const actionHandler = direction > 0 ? swipeCompleteHandler : swipeDeleteHandler;
+            const actionHandler = t.done
+              ? swipeUndoHandler
+              : (direction > 0 ? swipeCompleteHandler : swipeDeleteHandler);
 
             if (direction !== 0 && reachedActionThreshold && actionHandler) {
               swipeActionInFlight = true;
               el.classList.add("swipe-committing");
               updateSwipeVisual(direction * MOBILE_TASK_SWIPE_MAX_OFFSET);
-              window.setTimeout(() => {
-                Promise.resolve(actionHandler()).catch((error) => {
-                  console.error(error);
-                  if (el.isConnected) resetTaskSwipeState(true);
-                });
-              }, 90);
+              Promise.resolve(actionHandler()).catch((error) => {
+                console.error(error);
+                if (el.isConnected) resetTaskSwipeState(true);
+              }).finally(() => {
+                swipeActionInFlight = false;
+                if (el.isConnected) {
+                  el.classList.remove("swipe-committing");
+                }
+              });
             } else {
               resetTaskSwipeState(true);
             }
@@ -6771,15 +6916,21 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
             e.preventDefault();
           }
           clearLongPressTimer();
+          if (!longPressTriggered && touchEligibleForTapHint && !touchMovedBeyondTap) {
+            runTapHint();
+          }
           swipeTracking = false;
           swipeLocked = false;
+          touchEligibleForTapHint = false;
         });
 
         el.addEventListener("touchcancel", () => {
           clearLongPressTimer();
+          clearTapHintTimer();
           swipeTracking = false;
           swipeLocked = false;
           swipeActionInFlight = false;
+          touchEligibleForTapHint = false;
           el.classList.remove("swipe-interacting");
           resetTaskSwipeState(true);
         });
@@ -7163,7 +7314,25 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       };
 
       swipeDeleteHandler = async () => {
+        const shouldDelete = await askSwipeDeleteConfirmation();
+        if (!shouldDelete) {
+          if (el.isConnected) {
+            resetTaskSwipeState(true);
+          }
+          return;
+        }
         await deleteTask();
+        if (el.isConnected) {
+          resetTaskSwipeState(true);
+        }
+      };
+
+      swipeUndoHandler = async () => {
+        const didUndo = await persistTaskCompletion(false);
+        if (!didUndo && el.isConnected) {
+          resetTaskSwipeState(true);
+          return;
+        }
         if (el.isConnected) {
           resetTaskSwipeState(true);
         }

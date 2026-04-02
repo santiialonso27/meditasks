@@ -1843,6 +1843,10 @@
         touch-action:pan-y;
       }
 
+      .task.mobile-swipe-enabled:hover{
+        transform:none;
+      }
+
       .task.mobile-swipe-enabled .task-swipe-actions{
         position:absolute;
         inset:0;
@@ -1855,24 +1859,34 @@
         position:absolute;
         top:0;
         bottom:0;
-        width:90px;
+        width:112px;
         display:flex;
         align-items:center;
         justify-content:center;
         color:#fff;
         opacity:0;
-        transform:scale(.82);
-        filter:brightness(.92);
-        transition: opacity .2s ease, transform .2s ease, filter .2s ease;
+        overflow:hidden;
+        transition: opacity .14s linear;
       }
 
-      .task.mobile-swipe-enabled .task-swipe-action svg{
+      .task.mobile-swipe-enabled .task-swipe-action-icon{
+        display:grid;
+        place-items:center;
+        opacity:0;
+        transform:scale(.78);
+        transition: transform .2s ease, opacity .2s ease;
+        will-change:transform, opacity;
+      }
+
+      .task.mobile-swipe-enabled .task-swipe-action-icon svg{
         width:22px;
         height:22px;
       }
 
       .task.mobile-swipe-enabled .task-swipe-complete{
         left:0;
+        justify-content:flex-start;
+        padding-left:24px;
         background:
           radial-gradient(120% 130% at 18% 0%, rgba(255,255,255,.26), transparent 46%),
           linear-gradient(140deg, #22c55e 0%, #16a34a 100%);
@@ -1880,9 +1894,18 @@
 
       .task.mobile-swipe-enabled .task-swipe-delete{
         right:0;
+        justify-content:flex-end;
+        padding-right:24px;
         background:
           radial-gradient(120% 130% at 82% 0%, rgba(255,255,255,.24), transparent 44%),
           linear-gradient(140deg, #fb923c 0%, #ea580c 100%);
+      }
+
+      .task.mobile-swipe-enabled.swipe-undo-mode .task-swipe-complete,
+      .task.mobile-swipe-enabled.swipe-undo-mode .task-swipe-delete{
+        background:
+          radial-gradient(120% 130% at 50% 0%, rgba(255,255,255,.18), transparent 46%),
+          linear-gradient(140deg, #6b7280 0%, #4b5563 100%);
       }
 
       .task.mobile-swipe-enabled .task-swipe-surface{
@@ -1894,9 +1917,120 @@
         transition:none;
       }
 
+      .task.mobile-swipe-enabled.swipe-interacting .task-swipe-action-icon{
+        transition:none;
+      }
+
+      .task.mobile-swipe-enabled.swipe-hinting .task-swipe-surface{
+        transition: transform .3s cubic-bezier(.18,1.25,.34,1);
+      }
+
       .task.mobile-swipe-enabled.swipe-committing .task-swipe-surface{
         transition: transform .16s cubic-bezier(.16,1,.3,1);
       }
+    }
+
+    .swipe-delete-confirm-overlay{
+      position:fixed;
+      inset:0;
+      z-index:10060;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:18px;
+      background:rgba(7,10,16,.26);
+      backdrop-filter: blur(10px) saturate(128%);
+      -webkit-backdrop-filter: blur(10px) saturate(128%);
+      opacity:0;
+      transition:opacity .2s ease;
+    }
+
+    .swipe-delete-confirm-overlay.open{
+      opacity:1;
+    }
+
+    .swipe-delete-confirm-card{
+      width:min(340px, calc(100vw - 36px));
+      border-radius:22px;
+      border:1px solid color-mix(in srgb, var(--gradient-to) 28%, rgba(255,255,255,.2));
+      background:
+        radial-gradient(160% 140% at 12% 0%, color-mix(in srgb, var(--gradient-from) 16%, transparent), transparent 52%),
+        linear-gradient(170deg, rgba(18,23,36,.94), rgba(10,14,22,.96));
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.16),
+        0 24px 52px rgba(0,0,0,.38);
+      padding:22px 18px 16px;
+      text-align:center;
+    }
+
+    .swipe-delete-confirm-card p{
+      margin:0;
+      font-size:16px;
+      font-weight:700;
+      letter-spacing:-.01em;
+      color:var(--text);
+    }
+
+    .swipe-delete-confirm-actions{
+      margin-top:18px;
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:10px;
+    }
+
+    .swipe-delete-confirm-btn{
+      min-height:42px;
+      border-radius:12px;
+      border:1px solid color-mix(in srgb, var(--gradient-to) 22%, rgba(255,255,255,.14));
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.06)),
+        color-mix(in srgb, var(--gradient-from) 14%, rgba(16,22,34,.8));
+      color:var(--text);
+      font-size:14px;
+      font-weight:700;
+      cursor:pointer;
+    }
+
+    .swipe-delete-confirm-btn.confirm{
+      border-color: color-mix(in srgb, #ef4444 34%, rgba(255,255,255,.2));
+      color:#fee2e2;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.06)),
+        color-mix(in srgb, #ef4444 26%, rgba(20,12,14,.84));
+    }
+
+    :root.light-mode .swipe-delete-confirm-overlay{
+      background:rgba(15,23,42,.18);
+    }
+
+    :root.light-mode .swipe-delete-confirm-card{
+      border:1px solid color-mix(in srgb, var(--gradient-to) 22%, rgba(15,23,42,.18));
+      background:
+        radial-gradient(150% 130% at 12% 0%, color-mix(in srgb, var(--gradient-from) 14%, transparent), transparent 52%),
+        linear-gradient(170deg, rgba(255,255,255,.96), rgba(245,248,253,.98));
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.95),
+        0 20px 42px rgba(15,23,42,.2);
+    }
+
+    :root.light-mode .swipe-delete-confirm-card p{
+      color:#111827;
+    }
+
+    :root.light-mode .swipe-delete-confirm-btn{
+      border:1px solid color-mix(in srgb, var(--gradient-to) 22%, rgba(15,23,42,.18));
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.98), rgba(255,255,255,.84)),
+        color-mix(in srgb, var(--gradient-from) 10%, rgba(255,255,255,.9));
+      color:#111827;
+    }
+
+    :root.light-mode .swipe-delete-confirm-btn.confirm{
+      border-color: color-mix(in srgb, #ef4444 28%, rgba(15,23,42,.18));
+      color:#b91c1c;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.98), rgba(255,255,255,.84)),
+        color-mix(in srgb, #ef4444 12%, rgba(255,255,255,.9));
     }
 
     .col.task-focus-host{
