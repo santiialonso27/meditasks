@@ -80,12 +80,13 @@ let currentViewMode = normalizeViewMode(localStorage.getItem("mt_view_mode"));
 const summaryViewBtn = document.getElementById("summaryViewBtn");
 const tasksViewBtn = document.getElementById("tasksViewBtn");
 const projectsViewBtn = document.getElementById("projectsViewBtn");
-const APP_VERSION = "v2.5";
+const APP_VERSION = "v2.6";
 const CHANGELOG_MODAL_TARGET_VERSION = APP_VERSION;
 const CHANGELOG_MODAL_FIREBASE_FIELD = "lastSeenChangelogVersion";
 const CHANGELOG_MODAL_LOCAL_STORAGE_PREFIX = "mt_seen_changelog_version_";
 const CHANGELOG_MODAL_ITEMS = Object.freeze([
-  "Diseño renovado por completo",
+  "Nuevo: Desde el celular desliza la tarea hacia la derecha para marcarla como completa, o hacia la izquierda para borrarla.",
+  "Diseño renovado por completo.",
   "Nuevo: Vista de resumen.",
   "Nuevo: Modo sesión de enfoque.",
   "Nuevo: Agregar portadas a proyectos."
