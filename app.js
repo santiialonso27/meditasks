@@ -318,8 +318,9 @@ const MOBILE_TASK_FOCUS_KEYBOARD_DELAY_MS = 160;
 const MOBILE_TASK_SWIPE_LOCK_DISTANCE = 14;
 const MOBILE_TASK_SWIPE_MAX_OFFSET = 84;
 const MOBILE_TASK_SWIPE_TRIGGER_OFFSET = 58;
-const MOBILE_TASK_TAP_HINT_OFFSET = 32;
-const MOBILE_TASK_TAP_HINT_HOLD_MS = 120;
+const MOBILE_TASK_TAP_HINT_OFFSET = 44;
+const MOBILE_TASK_TAP_HINT_HOLD_MS = 220;
+const MOBILE_TASK_TAP_HINT_RETURN_MS = 520;
 const MOBILE_DRAG_AUTOSCROLL_EDGE_PX = 72;
 const MOBILE_DRAG_AUTOSCROLL_MAX_SPEED = 16;
 const MOBILE_DRAG_PREVIEW_STICKY_TOP = 0.38;
@@ -6775,7 +6776,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           }
           swipeSurface.style.transform = "translate3d(0, 0, 0)";
           el.style.setProperty("--task-swipe-progress", "0");
-          el.classList.remove("swipe-right", "swipe-left", "swipe-committing", "swipe-hinting");
+          el.classList.remove("swipe-right", "swipe-left", "swipe-committing", "swipe-hinting", "swipe-hinting-return");
           setSwipeActionVisual(swipeCompleteAction, swipeCompleteMainIcon, swipeCompleteUndoIcon, 0, 1);
           setSwipeActionVisual(swipeDeleteAction, swipeDeleteMainIcon, swipeDeleteUndoIcon, 0, -1);
           if (!animate) {
@@ -6789,11 +6790,18 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           if (!el.isConnected) return;
           if (swipeLocked || swipeActionInFlight) return;
           clearTapHintTimer();
+          el.classList.remove("swipe-hinting-return");
           el.classList.add("swipe-hinting");
           updateSwipeVisual(MOBILE_TASK_TAP_HINT_OFFSET);
           tapHintTimer = window.setTimeout(() => {
             if (!el.isConnected) return;
-            resetTaskSwipeState(true);
+            el.classList.remove("swipe-hinting");
+            el.classList.add("swipe-hinting-return");
+            updateSwipeVisual(0);
+            tapHintTimer = window.setTimeout(() => {
+              if (!el.isConnected) return;
+              resetTaskSwipeState(false);
+            }, MOBILE_TASK_TAP_HINT_RETURN_MS);
           }, MOBILE_TASK_TAP_HINT_HOLD_MS);
         };
 

@@ -1934,7 +1934,19 @@
       }
 
       .task.mobile-swipe-enabled.swipe-hinting .task-swipe-surface{
-        transition: transform .3s cubic-bezier(.18,1.25,.34,1);
+        transition: transform .44s cubic-bezier(.18,.96,.3,1);
+      }
+
+      .task.mobile-swipe-enabled.swipe-hinting .task-swipe-action{
+        transition: width .44s cubic-bezier(.2,.94,.34,1), opacity .16s linear;
+      }
+
+      .task.mobile-swipe-enabled.swipe-hinting-return .task-swipe-surface{
+        transition: transform .56s cubic-bezier(.2,1.38,.32,1);
+      }
+
+      .task.mobile-swipe-enabled.swipe-hinting-return .task-swipe-action{
+        transition: width .48s cubic-bezier(.2,1.08,.32,1), opacity .14s linear;
       }
 
       .task.mobile-swipe-enabled.swipe-committing .task-swipe-surface{
