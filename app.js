@@ -378,13 +378,39 @@ function positionTaskActionMenu(anchorElement) {
 
   const taskElement = anchorElement.closest(".task");
   const taskRect = taskElement?.getBoundingClientRect();
+  const dayOverlayContainer = anchorElement.closest("#dayOverlay.day-overlay-cardless .day-overlay-column");
+  const containerModal = dayOverlayContainer ? null : anchorElement.closest("#dayOverlay .modal");
   anchorElement.classList.remove("open-upwards");
   anchorElement.classList.remove("side-open-left");
+
+  const sidePanels = anchorElement.querySelectorAll(".task-side-panel");
+
+  // Reset previous clamping before measuring natural sizes.
+  menuElement.style.maxHeight = "none";
+  menuElement.style.overflowY = "visible";
+  sidePanels.forEach((panel) => {
+    panel.style.maxHeight = "none";
+    panel.style.overflowY = "visible";
+  });
 
   const anchorRect = anchorElement.getBoundingClientRect();
   const menuHeight = menuElement.offsetHeight;
   const gap = 16;
-  const viewportPadding = 24;
+  const viewportPadding = dayOverlayContainer ? 18 : 24;
+  const boundaryPadding = containerModal ? 20 : viewportPadding;
+  const boundaryRect = containerModal?.getBoundingClientRect();
+  const topBoundary = boundaryRect
+    ? boundaryRect.top + boundaryPadding
+    : viewportPadding;
+  const bottomBoundary = boundaryRect
+    ? boundaryRect.bottom - boundaryPadding
+    : window.innerHeight - viewportPadding;
+  const leftBoundary = boundaryRect
+    ? boundaryRect.left + boundaryPadding
+    : viewportPadding;
+  const rightBoundary = boundaryRect
+    ? boundaryRect.right - boundaryPadding
+    : window.innerWidth - viewportPadding;
 
   if (taskRect) {
     const belowOffset = Math.max(gap, Math.round(taskRect.bottom - anchorRect.top) + gap);
@@ -396,8 +422,8 @@ function positionTaskActionMenu(anchorElement) {
     anchorElement.style.removeProperty("--task-menu-above-offset");
   }
 
-  const spaceBelow = window.innerHeight - anchorRect.bottom - viewportPadding;
-  const spaceAbove = anchorRect.top - viewportPadding;
+  const spaceBelow = bottomBoundary - anchorRect.bottom;
+  const spaceAbove = anchorRect.top - topBoundary;
 
   if (spaceBelow < menuHeight + gap && spaceAbove > spaceBelow) {
     anchorElement.classList.add("open-upwards");
@@ -407,13 +433,27 @@ function positionTaskActionMenu(anchorElement) {
     ? Math.max(140, spaceAbove)
     : Math.max(140, spaceBelow);
 
-  menuElement.style.maxHeight = `${maxMenuSpace}px`;
-  menuElement.style.overflowY = "auto";
+  const shouldClampMenu = menuHeight > (maxMenuSpace - 1);
+  if (shouldClampMenu) {
+    menuElement.style.maxHeight = `${maxMenuSpace}px`;
+    menuElement.style.overflowY = "auto";
+  } else {
+    menuElement.style.maxHeight = "none";
+    menuElement.style.overflowY = "visible";
+  }
 
-  const sidePanels = anchorElement.querySelectorAll(".task-side-panel");
   sidePanels.forEach((panel) => {
-    panel.style.maxHeight = `${Math.max(160, maxMenuSpace)}px`;
-    panel.style.overflowY = "auto";
+    const panelMaxSpace = Math.max(160, maxMenuSpace);
+    const panelNaturalHeight = panel.scrollHeight || panel.offsetHeight || 0;
+    const shouldClampPanel = panelNaturalHeight > (panelMaxSpace - 1);
+
+    if (shouldClampPanel) {
+      panel.style.maxHeight = `${panelMaxSpace}px`;
+      panel.style.overflowY = "auto";
+    } else {
+      panel.style.maxHeight = "none";
+      panel.style.overflowY = "visible";
+    }
   });
 
   if (isMobileViewport()) {
@@ -423,13 +463,13 @@ function positionTaskActionMenu(anchorElement) {
       const preferAboveTop = anchorRect.top - panelHeight - 12;
       let top = preferBelowTop;
 
-      if (top + panelHeight > window.innerHeight - viewportPadding && preferAboveTop >= viewportPadding) {
+      if (top + panelHeight > bottomBoundary && preferAboveTop >= topBoundary) {
         top = preferAboveTop;
       }
 
       top = Math.min(
-        Math.max(viewportPadding, top),
-        Math.max(viewportPadding, window.innerHeight - panelHeight - viewportPadding)
+        Math.max(topBoundary, top),
+        Math.max(topBoundary, bottomBoundary - panelHeight)
       );
 
       panel.style.top = `${Math.round(top)}px`;
@@ -438,10 +478,10 @@ function positionTaskActionMenu(anchorElement) {
     return;
   }
 
-  const spaceRight = window.innerWidth - anchorRect.right - viewportPadding;
-  const spaceLeft = anchorRect.left - viewportPadding;
+  const spaceRight = rightBoundary - anchorRect.right;
+  const spaceLeft = anchorRect.left - leftBoundary;
   const widestPanel = 228 + 206 + 14;
-  if (spaceRight < widestPanel && spaceLeft > spaceRight) {
+  if (spaceRight < widestPanel && spaceLeft > spaceRight + 18) {
     anchorElement.classList.add("side-open-left");
   }
 }
@@ -455,9 +495,10 @@ function toggleTaskActionMenu(taskElement, anchorElement) {
 
   if (isSameMenu) return;
 
+  const isDayOverlayContext = !!taskElement.closest("#dayOverlay.day-overlay-cardless");
+
   const overlay = document.createElement("div");
   overlay.id = "taskActionOverlay";
-  overlay.addEventListener("click", closeTaskActionMenu);
   document.body.appendChild(overlay);
 
   const hostColumn = taskElement.closest(".col");
@@ -466,8 +507,9 @@ function toggleTaskActionMenu(taskElement, anchorElement) {
   taskElement.classList.add("menu-open");
   document.body.classList.add("task-action-focus");
   const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const scrollBlock = isDayOverlayContext ? "start" : "center";
   taskElement?.scrollIntoView({
-    block: "center",
+    block: scrollBlock,
     inline: "nearest",
     behavior: prefersReducedMotion ? "auto" : "smooth"
   });
@@ -480,7 +522,12 @@ function toggleTaskActionMenu(taskElement, anchorElement) {
   if (!prefersReducedMotion) {
     setTimeout(() => positionTaskActionMenu(anchorElement), 320);
   }
-  activeTaskActionMenu = { taskElement, anchorElement, hostColumn, overlayElement: overlay };
+  activeTaskActionMenu = {
+    taskElement,
+    anchorElement,
+    hostColumn,
+    overlayElement: overlay
+  };
 }
 
 function getStablePreviewPosition(targetIndex, percent, draggedIndex, isSameContainer) {
@@ -1153,19 +1200,12 @@ document.addEventListener("pointerdown", (e) => {
   const target = e.target instanceof Element ? e.target : null;
   if (!target) {
     closeProjectCardMenu();
-    closeTaskActionMenu();
     return;
   }
 
   if (!target.closest(".project-menu-wrap")) {
     closeProjectCardMenu();
   }
-  if (
-    target.closest(".task-actions-anchor")
-    || target.closest("#taskMobileMenu")
-    || target.closest("#taskMobileFocusClone")
-  ) return;
-  closeTaskActionMenu();
 });
 
 document.addEventListener("keydown", (e) => {
@@ -7505,13 +7545,24 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           ? [{ label: "Todo el dia", value: "" }, ...visibleTimeOptions.map((slot) => ({ label: slot, value: slot }))]
           : visibleTimeOptions.map((slot) => ({ label: slot, value: slot }));
 
-      taskTimePanel.innerHTML = scheduleOptions.map((option) => `
+      const scheduleBackMarkup = `
+          <button class="task-side-option task-submenu-back" type="button" data-time-back="true">
+            <span class="task-submenu-back-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 18l-6-6 6-6"/>
+              </svg>
+            </span>
+            <span>Volver</span>
+          </button>
+        `;
+
+      taskTimePanel.innerHTML = `${scheduleBackMarkup}${scheduleOptions.map((option) => `
           <button
             class="task-side-option${option.value === "" ? (!t.timeSlot ? " active" : "") : (t.timeSlot === option.value ? " active" : "")}"
             type="button"
             data-time-slot="${option.value}"
           >${option.label}</button>
-        `).join("");
+        `).join("")}`;
 
         taskScheduleButton.onclick = (e) => {
           e.preventDefault();
@@ -7523,7 +7574,15 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           positionTaskActionMenu(taskActionAnchor);
         };
 
-        taskTimePanel.querySelectorAll(".task-side-option").forEach((option) => {
+        const scheduleBackButton = taskTimePanel.querySelector('[data-time-back]');
+        scheduleBackButton?.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          taskActionAnchor.classList.remove("schedule-open");
+          positionTaskActionMenu(taskActionAnchor);
+        });
+
+        taskTimePanel.querySelectorAll("[data-time-slot]").forEach((option) => {
           option.addEventListener("click", async (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -8067,20 +8126,25 @@ function renderProjectsView(){
                 <span class="summary-top-focus-label">Enfoque</span>
 	          </button>
         </div>
-        <button class="summary-user-pill" type="button" aria-label="Abrir menú de perfil" aria-haspopup="menu" aria-expanded="false">
-          <img
-            src="${safeAvatarHtml}"
-            alt="Foto de ${safeNameHtml}"
-            onerror="this.src='${safeAvatarFallbackHtml}'"
-          >
-          <div>
-            <strong>${safePillNameHtml}</strong>
-            <span>${formatSettingsStat(projectsTotal)} proyectos activos</span>
+        <div class="summary-mobile-status-user-row">
+          <div class="summary-action-btn primary summary-status-pill-mobile" role="status" aria-live="polite">
+            <span id="summaryStatusTextMobile"></span>
           </div>
-          <svg class="summary-user-pill-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
-          </svg>
-        </button>
+          <button class="summary-user-pill" type="button" aria-label="Abrir menú de perfil" aria-haspopup="menu" aria-expanded="false">
+            <img
+              src="${safeAvatarHtml}"
+              alt="Foto de ${safeNameHtml}"
+              onerror="this.src='${safeAvatarFallbackHtml}'"
+            >
+            <div>
+              <strong>${safePillNameHtml}</strong>
+              <span>${formatSettingsStat(projectsTotal)} proyectos activos</span>
+            </div>
+            <svg class="summary-user-pill-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div class="summary-hero tasks-hero projects-hero">
@@ -8369,6 +8433,7 @@ function renderProjectsView(){
   bindSummaryUserPillMenu();
   bindSummaryTopFocusButton();
   bindSummaryMobilePlusButton();
+  syncSummaryStatusText();
 
 }
 
@@ -10041,9 +10106,6 @@ function renderTasksView(){
   const weekRate = summary.currentWeekTotal > 0
     ? (summary.currentWeekCompleted / summary.currentWeekTotal) * 100
     : 0;
-  const todayRate = summary.todayTotal > 0
-    ? (summary.todayCompleted / summary.todayTotal) * 100
-    : 0;
 
   board.innerHTML = `
     <section class="summary-dashboard tasks-dashboard" aria-label="Tareas diarias">
@@ -10081,20 +10143,25 @@ function renderTasksView(){
                 <span class="summary-top-focus-label">Enfoque</span>
 	          </button>
         </div>
-        <button class="summary-user-pill" type="button" aria-label="Abrir menú de perfil" aria-haspopup="menu" aria-expanded="false">
-          <img
-            src="${safeAvatarHtml}"
-            alt="Foto de ${safeNameHtml}"
-            onerror="this.src='${safeAvatarFallbackHtml}'"
-          >
-          <div>
-            <strong>${safePillNameHtml}</strong>
-            <span>Nivel ${formatSettingsStat(levelProgress.level)}</span>
+        <div class="summary-mobile-status-user-row">
+          <div class="summary-action-btn primary summary-status-pill-mobile" role="status" aria-live="polite">
+            <span id="summaryStatusTextMobile"></span>
           </div>
-          <svg class="summary-user-pill-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
-          </svg>
-        </button>
+          <button class="summary-user-pill" type="button" aria-label="Abrir menú de perfil" aria-haspopup="menu" aria-expanded="false">
+            <img
+              src="${safeAvatarHtml}"
+              alt="Foto de ${safeNameHtml}"
+              onerror="this.src='${safeAvatarFallbackHtml}'"
+            >
+            <div>
+              <strong>${safePillNameHtml}</strong>
+              <span>Nivel ${formatSettingsStat(levelProgress.level)}</span>
+            </div>
+            <svg class="summary-user-pill-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div class="summary-hero tasks-hero">
@@ -10106,33 +10173,27 @@ function renderTasksView(){
           <div class="tasks-hero-stat">
             <span>Hoy</span>
             <strong>${formatSettingsStat(summary.todayCompleted)} / ${formatSettingsStat(summary.todayTotal)}</strong>
-            <span class="summary-kpi-badge ${summary.todayCompleted >= summary.todayTotal && summary.todayTotal > 0 ? "positive" : "negative"}">${formatSummaryPercent(todayRate)}</span>
           </div>
           <div class="tasks-hero-stat">
             <span>Pendientes</span>
             <strong>${formatSettingsStat(summary.pendingTasks)}</strong>
-            <span class="summary-kpi-badge ${summary.pendingTasks > 0 ? "negative" : "positive"}">${formatSummaryPercent(summary.completionRate)}</span>
           </div>
           <div class="tasks-hero-stat">
             <span>Semana</span>
             <strong>${formatSummaryPercent(weekRate)}</strong>
-            <span class="summary-kpi-badge ${summary.weekDelta >= 0 ? "positive" : "negative"}">${formatSummarySignedPercent(summary.weekDelta)}</span>
           </div>
           <div class="tasks-hero-stat-merged" aria-label="Resumen de tareas diarias">
             <div class="tasks-hero-stat-merged-item">
               <span>Hoy</span>
               <strong>${formatSettingsStat(summary.todayCompleted)} / ${formatSettingsStat(summary.todayTotal)}</strong>
-              <span class="summary-kpi-badge ${summary.todayCompleted >= summary.todayTotal && summary.todayTotal > 0 ? "positive" : "negative"}">${formatSummaryPercent(todayRate)}</span>
             </div>
             <div class="tasks-hero-stat-merged-item">
               <span>Pendientes</span>
               <strong>${formatSettingsStat(summary.pendingTasks)}</strong>
-              <span class="summary-kpi-badge ${summary.pendingTasks > 0 ? "negative" : "positive"}">${formatSummaryPercent(summary.completionRate)}</span>
             </div>
             <div class="tasks-hero-stat-merged-item">
               <span>Semana</span>
               <strong>${formatSummaryPercent(weekRate)}</strong>
-              <span class="summary-kpi-badge ${summary.weekDelta >= 0 ? "positive" : "negative"}">${formatSummarySignedPercent(summary.weekDelta)}</span>
             </div>
           </div>
         </div>
@@ -10157,6 +10218,7 @@ function renderTasksView(){
   bindSummaryUserPillMenu();
   bindSummaryTopFocusButton();
   bindSummaryMobilePlusButton();
+  syncSummaryStatusText();
 }
 
 
@@ -10647,6 +10709,13 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   menu.id = "taskMobileMenu";
   const isProjectTask = !!taskElement.dataset.project;
   const mainMenuMarkup = `
+    <button class="task-menu-btn" data-action="close" type="button">
+      <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 6 18 18"/>
+        <path d="M18 6 6 18"/>
+      </svg>
+      <span>Cerrar</span>
+    </button>
     <button class="task-menu-btn" data-action="edit" type="button">
       <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 20h9"/>
@@ -10804,18 +10873,6 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     menu.classList.add("visible");
   });
 
-  overlay.addEventListener("touchstart", (e) => {
-    if (e.target !== overlay) return;
-    cleanup();
-  });
-  overlay.addEventListener("pointerdown", (e) => {
-    if (e.target !== overlay) return;
-    cleanup();
-  });
-  overlay.addEventListener("click", (e) => {
-    if (e.target !== overlay) return;
-    cleanup();
-  });
   clone.addEventListener("touchstart", e => e.stopPropagation());
   clone.addEventListener("pointerdown", e => e.stopPropagation());
   clone.addEventListener("mousedown", e => e.stopPropagation());
@@ -10917,7 +10974,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     `).join("");
 
     renderMenuView(`
-      ${showSubmenuHeader("Definir horario")}
+      ${showSubmenuHeader("Volver")}
       <div class="task-side-panel task-time-panel task-mobile-subpanel">
         ${optionsMarkup}
       </div>
@@ -11154,6 +11211,12 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   };
 
   const bindMainMenuActions = () => {
+    menu.querySelector('[data-action="close"]')?.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cleanup();
+    });
+
     menu.querySelector('[data-action="edit"]').onclick = (e)=>{
       e.preventDefault();
       e.stopPropagation();
@@ -11526,44 +11589,33 @@ function openDayModal(dateStr) {
   const overlay = document.createElement("div");
   overlay.className = "overlay open";
   overlay.id = "dayOverlay";
-
-  const modal = document.createElement("div");
-  modal.className = "modal";
+  overlay.classList.add("day-overlay-cardless");
 
   const [year, month, day] = dateStr.split("-").map(Number);
   const selectedDate = new Date(year, month - 1, day);
-
-  const taskCount = (tasks[dateStr] || []).length;
-  const label = taskCount === 1 ? "TAREA" : "TAREAS";
-
-  modal.innerHTML = `
-    <div class="mhead">
-      <strong>
-        <span class="task-count">${taskCount}</span> ${label} EN ESTE DÍA
-      </strong>
-      <button class="btn" id="closeDayModal">Cerrar</button>
-    </div>
-    <div class="mbody" id="dayModalBody"></div>
-  `;
-
-  overlay.appendChild(modal);
-  document.body.appendChild(overlay);
-
-  const body = modal.querySelector("#dayModalBody");
-
-  // 🔥 Reutilizamos tu función existente
   const column = createDayColumn(selectedDate);
-  const strong = modal.querySelector(".mhead strong");
-  strong.innerHTML = `
-    <span class="task-count">${taskCount}</span> ${label} EN ESTE DÍA
+  column.classList.add("day-overlay-column");
+
+  const closeButton = document.createElement("button");
+  closeButton.className = "day-column-close";
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "Cerrar vista del día");
+  closeButton.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M6 6 18 18" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+      <path d="M18 6 6 18" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+    </svg>
   `;
-
-  body.appendChild(column);
-
-  modal.querySelector("#closeDayModal").addEventListener("click", () => {
+  closeButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     overlay.remove();
     init(); // 🔥 refresca las 7 columnas
   });
+
+  column.appendChild(closeButton);
+  overlay.appendChild(column);
+  document.body.appendChild(overlay);
 
   overlay.addEventListener("click", e => {
     if (e.target === overlay) {
@@ -11574,16 +11626,9 @@ function openDayModal(dateStr) {
 }
 
 function updateDayModalTaskCount(dateStr){
-
-  const strong = document.querySelector("#dayOverlay .mhead strong");
-  if(!strong) return;
-
-  const count = (tasks[dateStr] || []).length;
-  const label = count === 1 ? "TAREA" : "TAREAS";
-
-  strong.innerHTML = `
-    <span class="task-count">${count}</span> ${label} EN ESTE DÍA
-  `;
+  const overlayOpen = !!document.querySelector("#dayOverlay.day-overlay-cardless");
+  if (!overlayOpen) return;
+  if (!dateStr) return;
 }
 
 function openThemeModal() {
