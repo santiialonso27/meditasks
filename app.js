@@ -1569,6 +1569,7 @@ function normalizePlayer(raw = {}) {
   const normalized = {
     exp: 0,
     level: 0,
+    totalCompletedTasks: 0,
     totalFocusMinutes: 0,
     todayExpTasks: 0,
     lastExpDate: null,
@@ -1598,6 +1599,14 @@ function normalizePlayer(raw = {}) {
     normalized.activeStreak = 0;
   }
   normalized.longestStreak = Math.max(normalized.longestStreak, normalized.activeStreak);
+  normalized.totalCompletedTasks = Math.max(
+    0,
+    Math.floor(
+      Number(
+        normalized.totalCompletedTasks ?? normalized.completedTasks ?? 0
+      ) || 0
+    )
+  );
   normalized.totalFocusMinutes = Math.max(0, Math.floor(Number(normalized.totalFocusMinutes) || 0));
 
   return normalized;
@@ -1611,6 +1620,7 @@ function hasPlayerProgress(candidate){
   return (
     Number(safeCandidate.exp) > 0 ||
     Number(safeCandidate.level) > 0 ||
+    Number(safeCandidate.totalCompletedTasks) > 0 ||
     Number(safeCandidate.totalFocusMinutes) > 0 ||
     achievementCount > 0 ||
     Number(safeCandidate.activeStreak) > 0 ||
@@ -1661,6 +1671,12 @@ function comparePlayerFreshness(playerA, playerB){
     return unlockedA > unlockedB ? 1 : -1;
   }
 
+  const completedA = Number(safeA.totalCompletedTasks) || 0;
+  const completedB = Number(safeB.totalCompletedTasks) || 0;
+  if (completedA !== completedB) {
+    return completedA > completedB ? 1 : -1;
+  }
+
   const levelA = Number(safeA.level) || 0;
   const levelB = Number(safeB.level) || 0;
   if (levelA !== levelB) {
@@ -1691,6 +1707,8 @@ function recoverPlayerExpFromHistory(){
   const normalizedExp = completedTasksExp + achievementExp;
   const currentExp = Math.max(0, Number(player?.exp) || 0);
   const nextExp = Math.max(currentExp, normalizedExp);
+  const currentCompletedTasks = Math.max(0, Number(player?.totalCompletedTasks) || 0);
+  const nextCompletedTasks = Math.max(currentCompletedTasks, completedTasks);
   const nextLevel = getLevelFromExp(nextExp);
   const currentLevel = Math.max(0, Number(player?.level) || 0);
   let changed = false;
@@ -1702,6 +1720,11 @@ function recoverPlayerExpFromHistory(){
 
   if (nextLevel !== currentLevel) {
     player.level = nextLevel;
+    changed = true;
+  }
+
+  if (nextCompletedTasks !== currentCompletedTasks) {
+    player.totalCompletedTasks = nextCompletedTasks;
     changed = true;
   }
 
@@ -2723,12 +2746,18 @@ function syncCurrentSessionPlayerIfNeeded(uid, updatedPlayer){
 function buildLeaderboardDocPayload(userData = {}, sourcePlayer = player){
   const safePlayer = normalizePlayer(sourcePlayer || {});
   const unlockedAchievements = Object.keys(safePlayer.achievements || {}).length;
+  const completedTasksFromPlayer = Math.max(0, Number(safePlayer.totalCompletedTasks) || 0);
+  const completedTasksFromCurrentSnapshot = sourcePlayer === player
+    ? Math.max(0, Number(getAchievementStats().completedTasks) || 0)
+    : completedTasksFromPlayer;
+  const completedTasks = Math.max(completedTasksFromPlayer, completedTasksFromCurrentSnapshot);
 
   return {
     name: userData?.name || userData?.displayName || userData?.email || "Usuario",
     photo: userData?.photo || userData?.photoURL || "",
     level: Math.max(0, Number(safePlayer.level) || 0),
     exp: Math.max(0, Number(safePlayer.exp) || 0),
+    completedTasks,
     activeStreak: Math.max(0, Number(safePlayer.activeStreak) || 0),
     longestStreak: Math.max(0, Number(safePlayer.longestStreak) || 0),
     allTasksStreak: Math.max(0, Number(safePlayer.allTasksStreak) || 0),
@@ -2755,6 +2784,47 @@ async function persistTargetPlayer(uid, userData, nextPlayer){
     buildLeaderboardDocPayload(userData, nextPlayer),
     { merge: true }
   );
+}
+
+async function fetchLeaderboardPlayerSnapshot(uid){
+  const safeUid = String(uid || "").trim();
+  if (!safeUid) return null;
+
+  try {
+    const leaderboardRef = doc(db, "leaderboard", safeUid);
+    const leaderboardSnap = await getDoc(leaderboardRef);
+    if (!leaderboardSnap.exists()) return null;
+
+    const data = leaderboardSnap.data() || {};
+    if (data?.player && typeof data.player === "object") {
+      const normalizedPlayer = normalizePlayer(data.player);
+      const completedTasks = Math.max(0, Number(data.completedTasks) || 0);
+      if (completedTasks > normalizedPlayer.totalCompletedTasks) {
+        normalizedPlayer.totalCompletedTasks = completedTasks;
+      }
+      return normalizedPlayer;
+    }
+
+    const fallbackSnapshot = normalizePlayer({
+      exp: data.exp,
+      level: data.level,
+      totalCompletedTasks: data.completedTasks,
+      activeStreak: data.activeStreak,
+      longestStreak: data.longestStreak,
+      allTasksStreak: data.allTasksStreak,
+      totalFocusMinutes: data.totalFocusMinutes,
+      todayExpTasks: data.todayExpTasks,
+      lastActiveDate: data.lastActiveDate,
+      lastAllTasksDate: data.lastAllTasksDate,
+      lastExpDate: data.lastExpDate,
+      updatedAt: data.updatedAt
+    });
+
+    return hasPlayerProgress(fallbackSnapshot) ? fallbackSnapshot : null;
+  } catch (err) {
+    console.warn("No se pudo leer el snapshot de player desde leaderboard.", err);
+    return null;
+  }
 }
 
 function isPomodoroOverlayOpen(){
@@ -4194,7 +4264,14 @@ onAuthStateChanged(auth, async (user) => {
       unsubscribe = null;
     }
 
-    const userRef = doc(db, "users", user.uid);
+	    const userRef = doc(db, "users", user.uid);
+	    let leaderboardPlayerSnapshotPromise = null;
+	    const getLeaderboardPlayerSnapshotOnce = () => {
+	      if (!leaderboardPlayerSnapshotPromise) {
+	        leaderboardPlayerSnapshotPromise = fetchLeaderboardPlayerSnapshot(user.uid);
+	      }
+	      return leaderboardPlayerSnapshotPromise;
+	    };
 
     await setDoc(
       userRef,
@@ -4320,11 +4397,23 @@ onAuthStateChanged(auth, async (user) => {
           shouldSyncPlayerToCloud = hasPlayerProgress(localPlayerSnapshot);
         }
 
-        if (recoverPlayerExpFromHistory()) {
-          shouldSyncPlayerToCloud = true;
-        }
+	        if (recoverPlayerExpFromHistory()) {
+	          shouldSyncPlayerToCloud = true;
+	        }
 
-        persistPlayerLocalSnapshot(player, user.uid);
+	        const leaderboardPlayerSnapshot = await getLeaderboardPlayerSnapshotOnce();
+	        if (leaderboardPlayerSnapshot) {
+	          const leaderboardVsCurrent = comparePlayerFreshness(
+	            leaderboardPlayerSnapshot,
+	            player
+	          );
+	          if (leaderboardVsCurrent > 0) {
+	            player = normalizePlayer(leaderboardPlayerSnapshot);
+	            shouldSyncPlayerToCloud = true;
+	          }
+	        }
+
+	        persistPlayerLocalSnapshot(player, user.uid);
 
         if (currentUser) {
           try {
@@ -4482,14 +4571,6 @@ function formatLeaderboardDate(value){
   return parsed.toLocaleDateString("es-AR");
 }
 
-function formatLeaderboardTimestamp(value){
-  const timestamp = Number(value) || 0;
-  if (timestamp <= 0) return "Sin registro";
-  const parsed = new Date(timestamp);
-  if (Number.isNaN(parsed.getTime())) return "Sin registro";
-  return parsed.toLocaleString("es-AR");
-}
-
 function hasLeaderboardDetailedFields(user = {}){
   if (user?.playerData && typeof user.playerData === "object") return true;
 
@@ -4497,6 +4578,7 @@ function hasLeaderboardDetailedFields(user = {}){
     "activeStreak",
     "longestStreak",
     "allTasksStreak",
+    "completedTasks",
     "totalFocusMinutes",
     "todayExpTasks",
     "achievementsUnlocked",
@@ -4513,6 +4595,7 @@ function hasLeaderboardProgress(user = {}){
   return (
     Math.max(0, Number(user.level) || 0) > 0 ||
     Math.max(0, Number(user.exp) || 0) > 0 ||
+    Math.max(0, Number(user.completedTasks) || 0) > 0 ||
     Math.max(0, Number(user.activeStreak) || 0) > 0 ||
     Math.max(0, Number(user.longestStreak) || 0) > 0 ||
     Math.max(0, Number(user.allTasksStreak) || 0) > 0 ||
@@ -4541,6 +4624,7 @@ function getLeaderboardPublicSummary(user = {}){
     photo: String(user.photo || ""),
     level: Math.max(0, Number(user.level) || 0),
     exp: Math.max(0, Number(user.exp) || 0),
+    completedTasks: Math.max(0, Number(user.completedTasks) || 0),
     activeStreak: Math.max(0, Number(user.activeStreak) || 0),
     longestStreak: Math.max(0, Number(user.longestStreak) || 0),
     allTasksStreak: Math.max(0, Number(user.allTasksStreak) || 0),
@@ -4561,11 +4645,13 @@ function getLeaderboardDetailedSummary(playerData = {}, baseUser = {}){
   const summary = getLeaderboardPublicSummary(baseUser);
   const levelFromPlayer = Math.max(0, Number(safePlayer.level) || 0);
   const expFromPlayer = Math.max(0, Number(safePlayer.exp) || 0);
+  const completedFromPlayer = Math.max(0, Number(safePlayer.totalCompletedTasks) || 0);
 
   return {
     ...summary,
     level: Math.max(summary.level, levelFromPlayer),
     exp: Math.max(summary.exp, expFromPlayer),
+    completedTasks: Math.max(0, Number(summary.completedTasks) || 0, completedFromPlayer),
     activeStreak: Math.max(0, Number(safePlayer.activeStreak) || 0),
     longestStreak: Math.max(0, Number(safePlayer.longestStreak) || 0),
     allTasksStreak: Math.max(0, Number(safePlayer.allTasksStreak) || 0),
@@ -4609,9 +4695,12 @@ function renderLeaderboardProfileMenu(summary = {}, { loading = false } = {}){
     `;
   }
 
+  const completedTasksValue = Math.max(0, Number(safeSummary.completedTasks) || 0);
+
   const stats = [
     { label: "Nivel", value: formatSettingsStat(safeSummary.level) },
     { label: "EXP total", value: `${formatSettingsStat(safeSummary.exp)} pts` },
+    { label: "Total de tareas completadas", value: formatSettingsStat(completedTasksValue) },
     {
       label: "Minutos en sesiones de enfoque",
       value: `${formatSettingsStat(safeSummary.totalFocusMinutes)} min`
@@ -4619,7 +4708,6 @@ function renderLeaderboardProfileMenu(summary = {}, { loading = false } = {}){
     { label: "Racha activa", value: `${formatSettingsStat(safeSummary.activeStreak)} días` },
     { label: "Mejor racha", value: `${formatSettingsStat(safeSummary.longestStreak)} días` },
     { label: "Logros desbloqueados", value: formatSettingsStat(safeSummary.achievementsUnlocked) },
-    { label: "Días perfectos seguidos", value: `${formatSettingsStat(safeSummary.allTasksStreak)} días` },
     { label: "Último día activo", value: formatLeaderboardDate(safeSummary.lastActiveDate) }
   ];
 
@@ -5864,8 +5952,12 @@ if(projectsViewBtn){
 let soundEnabled = JSON.parse(localStorage.getItem("soundEnabled"));
 if (soundEnabled === null) soundEnabled = true;
 
-async function save(){
+async function save({ includePlayer = false } = {}){
   scheduleTaskNotifications();
+
+  if (includePlayer) {
+    persistPlayerLocalSnapshot(player, currentUser?.uid);
+  }
 
   // 🔴 si no hay internet → guardar directo en local
   if(!navigator.onLine){
@@ -5895,7 +5987,8 @@ async function save(){
           projects: projects,
           labels: taskLabels,
           projectOrder,
-          viewMode: currentViewMode
+          viewMode: currentViewMode,
+          ...(includePlayer ? { player } : {})
         }
       );
 
@@ -5965,9 +6058,32 @@ function rewardExp(){
   return true;
 }
 
-function showExpGain(cbElement, amount = 100){
+function resolveExpGainAnchorRect(anchorElement){
+  if (!(anchorElement instanceof Element)) return null;
 
-  const rect = cbElement.getBoundingClientRect();
+  const taskElement = anchorElement.closest(".task");
+  const candidates = [
+    anchorElement,
+    taskElement?.querySelector(".cb"),
+    taskElement?.querySelector(".task-swipe-surface"),
+    taskElement
+  ];
+
+  for (const candidate of candidates) {
+    if (!(candidate instanceof Element)) continue;
+    const rect = candidate.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      return rect;
+    }
+  }
+
+  return null;
+}
+
+function showExpGain(anchorElement, amount = 100){
+
+  const rect = resolveExpGainAnchorRect(anchorElement);
+  if (!rect) return;
 
   const el = document.createElement("div");
   el.className = "exp-float";
@@ -7232,6 +7348,12 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
 
           if (t.done && !t.expGiven) {
             t.expGiven = true;
+            player.totalCompletedTasks = Math.max(
+              0,
+              Number(player.totalCompletedTasks) || 0
+            ) + 1;
+            player.updatedAt = Date.now();
+            shouldSavePlayer = true;
 
             if (player.todayExpTasks < 5) {
               const rewarded = rewardExp();
@@ -7239,7 +7361,12 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               if (rewarded) {
                 shouldSavePlayer = true;
                 expShown = true;
-                if (cbElement) showExpGain(cbElement, 100);
+                const rewardAnchor =
+                  cbElement
+                  || el.querySelector(".task-swipe-surface")
+                  || el.querySelector(".cb")
+                  || el;
+                showExpGain(rewardAnchor, 100);
               }
             } else if (!player.dailyLimitShown) {
               player.dailyLimitShown = true;
@@ -7273,27 +7400,25 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
             dayTasks.push(taskToMove);
           }
 
-          if (!isLast) {
-            const delay = expShown ? 900 : 0;
+	          if (!isLast) {
+	            const delay = expShown ? 900 : 0;
 
-            setTimeout(async () => {
-              await save();
-              if (shouldSavePlayer) await savePlayer();
-              render();
-              renderMiniCalendar();
-              checkAchievements({ dateContext: dayCompleted ? iso : null });
-            }, delay);
-            return true;
-          }
-        }
+	            setTimeout(async () => {
+	              await save({ includePlayer: shouldSavePlayer });
+	              render();
+	              renderMiniCalendar();
+	              checkAchievements({ dateContext: dayCompleted ? iso : null });
+	            }, delay);
+	            return true;
+	          }
+	        }
 
-        await save();
-        if (shouldSavePlayer) await savePlayer();
-        render();
-        renderMiniCalendar();
-        checkAchievements({ dateContext: dayCompleted ? iso : null });
-        return true;
-      };
+	        await save({ includePlayer: shouldSavePlayer });
+	        render();
+	        renderMiniCalendar();
+	        checkAchievements({ dateContext: dayCompleted ? iso : null });
+	        return true;
+	      };
 
       const deleteTask = async () => {
         closeTaskActionMenu();
@@ -10368,24 +10493,69 @@ deleteTaskSound.volume = 0.6;
 deleteTaskSound.preload = "auto";
 deleteTaskSound.load();
 
+let audioPlaybackPrimed = false;
+
+function primeAudioPlayback(){
+  if (audioPlaybackPrimed) return;
+  audioPlaybackPrimed = true;
+
+  const clips = [completeSound, dayCompleteSound, addTaskSound, deleteTaskSound];
+
+  clips.forEach((clip) => {
+    if (!clip) return;
+
+    const initialVolume = clip.volume;
+    clip.volume = 0;
+    try {
+      const playPromise = clip.play();
+      if (playPromise && typeof playPromise.then === "function") {
+        playPromise.then(() => {
+          clip.pause();
+          clip.currentTime = 0;
+          clip.volume = initialVolume;
+        }).catch(() => {
+          clip.volume = initialVolume;
+        });
+        return;
+      }
+    } catch {}
+
+    clip.pause();
+    clip.currentTime = 0;
+    clip.volume = initialVolume;
+  });
+}
+
+document.addEventListener("pointerdown", primeAudioPlayback, { once: true });
+document.addEventListener("touchstart", primeAudioPlayback, { once: true, passive: true });
+document.addEventListener("keydown", primeAudioPlayback, { once: true });
+
 function playRewardSound() {
-  completeSound.currentTime = 0;
-  completeSound.play();
+  safePlayAudio(completeSound);
 }
 
 function playDayCompleteSound() {
-  dayCompleteSound.currentTime = 0;
-  dayCompleteSound.play();
+  safePlayAudio(dayCompleteSound);
 }
 
 function playAddTaskSound() {
-  addTaskSound.currentTime = 0;
-  addTaskSound.play();
+  safePlayAudio(addTaskSound);
 }
 
 function playDeleteTaskSound() {
-  deleteTaskSound.currentTime = 0;
-  deleteTaskSound.play();
+  safePlayAudio(deleteTaskSound);
+}
+
+function safePlayAudio(audioElement){
+  if (!audioElement) return;
+
+  try {
+    audioElement.currentTime = 0;
+    const playPromise = audioElement.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+  } catch {}
 }
 
 function launchConfetti(options = {}) {
@@ -11383,14 +11553,7 @@ function openDayModal(dateStr) {
 
   // 🔥 Reutilizamos tu función existente
   const column = createDayColumn(selectedDate);
-
-  const title = column.querySelector(".col-title")?.textContent || "";
-  const sub = column.querySelector(".col-sub")?.textContent || "";
-
   const strong = modal.querySelector(".mhead strong");
-
-  strong.dataset.dateLabel = `${title} ${sub}`;
-
   strong.innerHTML = `
     <span class="task-count">${taskCount}</span> ${label} EN ESTE DÍA
   `;
@@ -11417,8 +11580,6 @@ function updateDayModalTaskCount(dateStr){
 
   const count = (tasks[dateStr] || []).length;
   const label = count === 1 ? "TAREA" : "TAREAS";
-
-  const dateLabel = strong.dataset.dateLabel || "";
 
   strong.innerHTML = `
     <span class="task-count">${count}</span> ${label} EN ESTE DÍA
@@ -11652,7 +11813,12 @@ if (desktopCollapsedHelp) {
 
 // 🔒 Bloquear zoom en mobile
 document.addEventListener('touchmove', function (e) {
-  if (e.scale !== 1) {
+  const hasScale = typeof e.scale === "number" && Number.isFinite(e.scale);
+  const isPinchGesture =
+    (hasScale && e.scale !== 1)
+    || (e.touches && e.touches.length > 1);
+
+  if (isPinchGesture) {
     e.preventDefault();
   }
 }, { passive: false });
@@ -12192,6 +12358,7 @@ function openLeaderboard(){
         photo: data.photo || "",
         level: data.level || 0,
         exp: data.exp || 0,
+        completedTasks: data.completedTasks,
         activeStreak: data.activeStreak,
         longestStreak: data.longestStreak,
         allTasksStreak: data.allTasksStreak,
