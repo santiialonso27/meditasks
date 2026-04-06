@@ -2696,6 +2696,7 @@ function printAdminConsoleHelp(){
   adminConsoleLog("Comandos disponibles:", "info");
   adminConsoleLog('/exp give <mail> <cantidad>', "info");
   adminConsoleLog('/level set <mail> <nivel>', "info");
+  adminConsoleLog('/sync check [mail]', "info");
   adminConsoleLog("/pomodoro", "info");
   adminConsoleLog("/help", "info");
   adminConsoleLog("/clear", "info");
@@ -2769,6 +2770,210 @@ async function resolveTargetUserByEmail(email){
   }
 
   return findUserDocumentByEmail(rawEmail);
+}
+
+function normalizeSyncValue(value){
+  return String(value ?? "").trim();
+}
+
+function valuesMatchForSync(expected, actual){
+  return normalizeSyncValue(expected) === normalizeSyncValue(actual);
+}
+
+function parseSyncTimestamp(value){
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, value);
+  }
+
+  if (value && typeof value.toMillis === "function") {
+    const millis = Number(value.toMillis());
+    return Number.isFinite(millis) ? Math.max(0, millis) : 0;
+  }
+
+  if (value && typeof value.seconds === "number") {
+    const millis = Number(value.seconds) * 1000;
+    return Number.isFinite(millis) ? Math.max(0, millis) : 0;
+  }
+
+  return 0;
+}
+
+function formatSyncTimestamp(value){
+  const safeTimestamp = parseSyncTimestamp(value);
+  if (!safeTimestamp) return "sin fecha";
+  return `${new Date(safeTimestamp).toLocaleString("es-AR")} (${safeTimestamp})`;
+}
+
+async function runProfileSyncCheck(targetUser, options = {}){
+  const compareWithCurrentAuth = !!options.compareWithCurrentAuth;
+  const safeUid = String(targetUser?.uid || "").trim();
+  const userData = targetUser?.data && typeof targetUser.data === "object"
+    ? targetUser.data
+    : {};
+  const response = {
+    uid: safeUid,
+    userData,
+    leaderboardData: null,
+    warnings: [],
+    mismatches: []
+  };
+
+  if (!safeUid) {
+    response.warnings.push("No se pudo determinar el UID del usuario a verificar.");
+    return response;
+  }
+
+  const expectedEmailLower = normalizeSyncValue(
+    userData.email || (compareWithCurrentAuth ? currentUser?.email : "")
+  ).toLowerCase();
+
+  if (expectedEmailLower && !valuesMatchForSync(expectedEmailLower, userData.emailLower || "")) {
+    response.mismatches.push({
+      field: "users.emailLower",
+      expected: expectedEmailLower,
+      actual: normalizeSyncValue(userData.emailLower || "")
+    });
+  }
+
+  if (compareWithCurrentAuth && currentUser?.uid === safeUid) {
+    if (!valuesMatchForSync(currentUser.displayName || "", userData.name || "")) {
+      response.mismatches.push({
+        field: "Auth.displayName -> users.name",
+        expected: normalizeSyncValue(currentUser.displayName || ""),
+        actual: normalizeSyncValue(userData.name || "")
+      });
+    }
+
+    if (!valuesMatchForSync(currentUser.photoURL || "", userData.photo || "")) {
+      response.mismatches.push({
+        field: "Auth.photoURL -> users.photo",
+        expected: normalizeSyncValue(currentUser.photoURL || ""),
+        actual: normalizeSyncValue(userData.photo || "")
+      });
+    }
+
+    if (!valuesMatchForSync(currentUser.email || "", userData.email || "")) {
+      response.mismatches.push({
+        field: "Auth.email -> users.email",
+        expected: normalizeSyncValue(currentUser.email || ""),
+        actual: normalizeSyncValue(userData.email || "")
+      });
+    }
+  }
+
+  let leaderboardSnap;
+  try {
+    leaderboardSnap = await getDoc(doc(db, "leaderboard", safeUid));
+  } catch (err) {
+    if (isFirestorePermissionError(err)) {
+      response.warnings.push(
+        "No hay permisos para leer leaderboard de este usuario. Validación limitada a Auth/users."
+      );
+      return response;
+    }
+    throw err;
+  }
+
+  if (!leaderboardSnap.exists()) {
+    response.warnings.push("No existe documento en leaderboard para este UID.");
+    return response;
+  }
+
+  const leaderboardData = leaderboardSnap.data() || {};
+  response.leaderboardData = leaderboardData;
+
+  const expectedName = normalizeSyncValue(
+    userData.name || (compareWithCurrentAuth ? currentUser?.displayName : "") || userData.email || "Usuario"
+  );
+  const expectedPhoto = normalizeSyncValue(
+    userData.photo || (compareWithCurrentAuth ? currentUser?.photoURL : "") || ""
+  );
+  const expectedEmail = normalizeSyncValue(
+    userData.email || (compareWithCurrentAuth ? currentUser?.email : "") || ""
+  );
+
+  if (!valuesMatchForSync(expectedName, leaderboardData.name || "")) {
+    response.mismatches.push({
+      field: "users.name -> leaderboard.name",
+      expected: expectedName,
+      actual: normalizeSyncValue(leaderboardData.name || "")
+    });
+  }
+
+  if (!valuesMatchForSync(expectedPhoto, leaderboardData.photo || "")) {
+    response.mismatches.push({
+      field: "users.photo -> leaderboard.photo",
+      expected: expectedPhoto,
+      actual: normalizeSyncValue(leaderboardData.photo || "")
+    });
+  }
+
+  if (expectedEmail) {
+    const leaderboardName = normalizeSyncValue(leaderboardData.name || "");
+    if (!leaderboardName) {
+      response.mismatches.push({
+        field: "leaderboard.name vacío",
+        expected: expectedName || expectedEmail,
+        actual: leaderboardName
+      });
+    }
+  }
+
+  const userPlayer = normalizePlayer(userData.player || {});
+  const leaderboardPlayer = leaderboardData.player && typeof leaderboardData.player === "object"
+    ? normalizePlayer(leaderboardData.player)
+    : null;
+
+  const leaderboardLevel = Math.max(0, Number(leaderboardData.level) || 0);
+  const leaderboardExp = Math.max(0, Number(leaderboardData.exp) || 0);
+
+  if (leaderboardLevel !== userPlayer.level) {
+    response.mismatches.push({
+      field: "users.player.level -> leaderboard.level",
+      expected: String(userPlayer.level),
+      actual: String(leaderboardLevel)
+    });
+  }
+
+  if (leaderboardExp !== userPlayer.exp) {
+    response.mismatches.push({
+      field: "users.player.exp -> leaderboard.exp",
+      expected: String(userPlayer.exp),
+      actual: String(leaderboardExp)
+    });
+  }
+
+  if (leaderboardPlayer) {
+    if (leaderboardPlayer.level !== userPlayer.level) {
+      response.mismatches.push({
+        field: "users.player.level -> leaderboard.player.level",
+        expected: String(userPlayer.level),
+        actual: String(leaderboardPlayer.level)
+      });
+    }
+
+    if (leaderboardPlayer.exp !== userPlayer.exp) {
+      response.mismatches.push({
+        field: "users.player.exp -> leaderboard.player.exp",
+        expected: String(userPlayer.exp),
+        actual: String(leaderboardPlayer.exp)
+      });
+    }
+  } else {
+    response.warnings.push("leaderboard.player no está presente; solo se validó nivel/exp planos.");
+  }
+
+  const userPlayerUpdatedAt = parseSyncTimestamp(userPlayer.updatedAt);
+  const leaderboardUpdatedAt = parseSyncTimestamp(leaderboardData.updatedAt);
+  if (userPlayerUpdatedAt && leaderboardUpdatedAt && leaderboardUpdatedAt < userPlayerUpdatedAt) {
+    response.mismatches.push({
+      field: "updatedAt",
+      expected: `leaderboard.updatedAt >= users.player.updatedAt (${formatSyncTimestamp(userPlayerUpdatedAt)})`,
+      actual: formatSyncTimestamp(leaderboardUpdatedAt)
+    });
+  }
+
+  return response;
 }
 
 function syncCurrentSessionPlayerIfNeeded(uid, updatedPlayer){
@@ -3980,6 +4185,82 @@ async function executeAdminConsoleCommand(rawCommand){
   if (/^\/pomodoro$/i.test(command)) {
     openPomodoroMode();
     adminConsoleLog("Modo enfoque desplegado. Configurá la sesión y empezá cuando quieras.", "ok");
+    return;
+  }
+
+  const syncCheckMatch = command.match(/^\/sync\s+check(?:\s+(\S+))?\s*$/i);
+  if (syncCheckMatch) {
+    const rawTargetEmail = String(syncCheckMatch[1] || "").trim();
+    const fallbackEmail = String(currentUser?.email || "").trim();
+    const targetEmail = rawTargetEmail || fallbackEmail;
+
+    if (!targetEmail) {
+      adminConsoleLog("Indicá un mail. Ejemplo: /sync check usuario@dominio.com", "error");
+      return;
+    }
+
+    let targetUser = null;
+    try {
+      targetUser = await resolveTargetUserByEmail(targetEmail);
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        adminConsoleLog(
+          "Permisos insuficientes para buscar usuarios por mail. Probá con tu propio mail o ejecutá validación admin desde backend.",
+          "error"
+        );
+        return;
+      }
+      throw err;
+    }
+
+    if (!targetUser) {
+      adminConsoleLog(`No encontré usuario con mail ${targetEmail}.`, "error");
+      return;
+    }
+
+    const compareWithCurrentAuth = !!(
+      currentUser &&
+      targetUser.uid &&
+      currentUser.uid === targetUser.uid
+    );
+
+    const result = await runProfileSyncCheck(targetUser, { compareWithCurrentAuth });
+    adminConsoleLog(
+      `Chequeo de sync completado para UID ${result.uid}.`,
+      result.mismatches.length ? "warn" : "ok"
+    );
+
+    if (compareWithCurrentAuth) {
+      adminConsoleLog("Fuente de comparación: Auth, users y leaderboard.", "info");
+    } else {
+      adminConsoleLog("Fuente de comparación: users y leaderboard.", "info");
+    }
+
+    if (result.warnings.length) {
+      result.warnings.forEach((warning) => {
+        adminConsoleLog(warning, "warn");
+      });
+    }
+
+    if (!result.mismatches.length) {
+      adminConsoleLog("No se detectaron desincronizaciones en campos clave.", "ok");
+    } else {
+      result.mismatches.forEach((item) => {
+        const expectedText = normalizeSyncValue(item.expected) || "(vacío)";
+        const actualText = normalizeSyncValue(item.actual) || "(vacío)";
+        adminConsoleLog(
+          `[${item.field}] esperado=${expectedText} | actual=${actualText}`,
+          "warn"
+        );
+      });
+    }
+
+    const userUpdatedAt = formatSyncTimestamp(result.userData?.player?.updatedAt);
+    const leaderboardUpdatedAt = formatSyncTimestamp(result.leaderboardData?.updatedAt);
+    adminConsoleLog(
+      `Timestamps: users.player.updatedAt=${userUpdatedAt} | leaderboard.updatedAt=${leaderboardUpdatedAt}`,
+      "info"
+    );
     return;
   }
 
