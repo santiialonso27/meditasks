@@ -10576,20 +10576,20 @@ function openProjectCoverPicker({ projectTitle = "", selectedBannerImage = "" } 
         <div class="project-cover-picker-grid" id="projectCoverPickerGrid">
           ${PROJECT_BANNER_PRESETS.map((preset) => {
             const isActive = currentSelection === preset.path;
+            const aria = getProjectBannerLabel(preset.path);
             return `
               <button
                 class="project-cover-option${isActive ? " active" : ""}"
                 type="button"
                 data-banner-asset="${preset.path}"
+                aria-label="${aria}"
               >
                 <span class="project-cover-option-preview" style="background-image:url('${preset.path}')"></span>
-                <span class="project-cover-option-label">${getProjectBannerLabel(preset.path)}</span>
               </button>
             `;
           }).join("")}
-          <button class="project-cover-option custom${customSelected ? " active" : ""}" type="button" data-banner-custom="true">
+          <button class="project-cover-option custom${customSelected ? " active" : ""}" type="button" data-banner-custom="true" aria-label="Portada personalizada">
             <span class="project-cover-option-preview project-cover-option-preview-custom"></span>
-            <span class="project-cover-option-label">Personalizada</span>
           </button>
         </div>
 
