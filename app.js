@@ -12650,7 +12650,7 @@ async function savePlayer(){
 
 let leaderboardUnsub = null;
 
-function openLeaderboard(){
+async function openLeaderboard(){
   closeLevelMenu();
   closeCornerMenu();
 
@@ -12667,22 +12667,21 @@ function openLeaderboard(){
     orderBy("name", "asc")
   );
 
-  leaderboardUnsub = onSnapshot(q, (snapshot)=>{
+  try {
+    const snapshot = await getDocs(q);
+    const users = [];
 
-    let users = [];
-
-    snapshot.forEach(docSnap => {
-
+    snapshot.forEach((docSnap) => {
       const data = docSnap.data();
       const leaderboardPlayer =
         data?.player && typeof data.player === "object" ? data.player : null;
 
-	      users.push({
-	        uid: docSnap.id,
-	        name: String(data.name || "").trim(),
-	        photo: data.photo || "",
-	        level: data.level || 0,
-	        exp: data.exp || 0,
+      users.push({
+        uid: docSnap.id,
+        name: String(data.name || "").trim(),
+        photo: data.photo || "",
+        level: data.level || 0,
+        exp: data.exp || 0,
         completedTasks: data.completedTasks,
         activeStreak: data.activeStreak,
         longestStreak: data.longestStreak,
@@ -12696,13 +12695,14 @@ function openLeaderboard(){
         updatedAt: data.updatedAt,
         playerData: leaderboardPlayer
       });
-
     });
 
-	    const usersWithName = users.filter((entry) => String(entry.name || "").trim().length > 0);
-	    showLeaderboardModal(usersWithName);
-
-  });
+    const usersWithName = users.filter((entry) => String(entry.name || "").trim().length > 0);
+    showLeaderboardModal(usersWithName);
+  } catch (err) {
+    console.error("No se pudo cargar leaderboard.", err);
+    showLeaderboardModal([]);
+  }
 
 }
 
