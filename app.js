@@ -12664,8 +12664,7 @@ function openLeaderboard(){
     collection(db, "leaderboard"),
     orderBy("level", "desc"),
     orderBy("exp", "desc"),
-    orderBy("name", "asc"),
-    limit(30)
+    orderBy("name", "asc")
   );
 
   leaderboardUnsub = onSnapshot(q, (snapshot)=>{
@@ -12678,12 +12677,12 @@ function openLeaderboard(){
       const leaderboardPlayer =
         data?.player && typeof data.player === "object" ? data.player : null;
 
-      users.push({
-        uid: docSnap.id,
-        name: data.name || "Usuario",
-        photo: data.photo || "",
-        level: data.level || 0,
-        exp: data.exp || 0,
+	      users.push({
+	        uid: docSnap.id,
+	        name: String(data.name || "").trim(),
+	        photo: data.photo || "",
+	        level: data.level || 0,
+	        exp: data.exp || 0,
         completedTasks: data.completedTasks,
         activeStreak: data.activeStreak,
         longestStreak: data.longestStreak,
@@ -12700,8 +12699,8 @@ function openLeaderboard(){
 
     });
 
-    const sanitizedUsers = users.filter((entry) => !isPlaceholderLeaderboardEntry(entry));
-    showLeaderboardModal(sanitizedUsers);
+	    const usersWithName = users.filter((entry) => String(entry.name || "").trim().length > 0);
+	    showLeaderboardModal(usersWithName);
 
   });
 
