@@ -23,7 +23,11 @@ import {
   where,
   orderBy,
   limit,
-  updateDoc
+  updateDoc,
+  writeBatch,
+  deleteDoc,
+  deleteField,
+  documentId
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -60,16 +64,23 @@ let tasks = {};
 let projects = {};
 let projectOrder = [];
 let taskLabels = [];
+let dailyCompletionHistory = {};
 const VIEW_MODE_SUMMARY = "summary";
 const VIEW_MODE_TASKS = "tasks";
 const VIEW_MODE_PROJECTS = "projects";
+const VIEW_MODE_SOCIAL = "social";
+const VIEW_MODE_STUDY_ROOMS = "study-rooms";
 const VALID_VIEW_MODES = new Set([
   VIEW_MODE_SUMMARY,
   VIEW_MODE_TASKS,
-  VIEW_MODE_PROJECTS
+  VIEW_MODE_PROJECTS,
+  VIEW_MODE_SOCIAL,
+  VIEW_MODE_STUDY_ROOMS
 ]);
 const SUMMARY_TASK_SEARCH_MAX_RESULTS = 9;
 const TASKS_BOARD_VISIBLE_DAYS = 8;
+const SUMMARY_DAILY_TREND_DAYS = 7;
+const SUMMARY_WEEK_DELTA_WINDOW_DAYS = 7;
 
 function normalizeViewMode(mode){
   const safeMode = String(mode || "").trim().toLowerCase();
@@ -80,22 +91,28 @@ let currentViewMode = normalizeViewMode(localStorage.getItem("mt_view_mode"));
 const summaryViewBtn = document.getElementById("summaryViewBtn");
 const tasksViewBtn = document.getElementById("tasksViewBtn");
 const projectsViewBtn = document.getElementById("projectsViewBtn");
-const APP_VERSION = "v2.6";
+const APP_VERSION = "v2.7";
 const CHANGELOG_MODAL_TARGET_VERSION = APP_VERSION;
 const CHANGELOG_MODAL_FIREBASE_FIELD = "lastSeenChangelogVersion";
 const CHANGELOG_MODAL_LOCAL_STORAGE_PREFIX = "mt_seen_changelog_version_";
+const GUIDED_TUTORIAL_COMPLETED_FIREBASE_FIELD = "guidedTutorialCompleted";
+const GUIDED_TUTORIAL_COMPLETED_AT_FIREBASE_FIELD = "guidedTutorialCompletedAt";
+const GUIDED_TUTORIAL_COMPLETED_LOCAL_STORAGE_PREFIX = "mt_guided_tutorial_completed_v1_";
 const CHANGELOG_MODAL_ITEMS = Object.freeze([
-  "Nuevo: Desde el celular desliza la tarea hacia la derecha para marcarla como completa, o hacia la izquierda para borrarla.",
-  "Diseño renovado por completo.",
-  "Nuevo: Vista de resumen.",
-  "Nuevo: Modo sesión de enfoque.",
-  "Nuevo: Agregar portadas a proyectos."
+  "Nuevo: Agrega amigos y chatea con ellos.",
+  "Nuevo: Invita amigos a salas de estudio/trabajo",
+  "Nuevo: Crea tu sala de estudio e invita amigos para completar cada uno sus tareas del momento.",
+  "Nuevo: Elegi que cancion de youtube o video te gustaria reproducir para todos en la sala.",
+  "Nuevo: Oculta las tareas completadas y desocultalas con un simple click.",
+  "Nuevos logros."
 ]);
 const storeKey = "mt_tasks_local";
 const PLAYER_STORE_KEY = "mt_player";
 const LEGACY_PLAYER_MIGRATION_DONE_KEY = "mt_player_legacy_migration_done_v1";
 const LEGACY_PLAYER_PAYLOAD_READY_KEY = "mt_player_legacy_payload_ready_v1";
 const LEGACY_PLAYER_CLAIMED_UID_KEY = "mt_player_legacy_claimed_uid_v1";
+const STUDY_ROOM_ACTIVE_SESSION_STORAGE_PREFIX = "mt_study_room_active_session_v1_";
+const STUDY_ROOM_CLOSURE_SUMMARY_SEEN_STORAGE_PREFIX = "mt_study_room_closure_seen_v1_";
 const ADMIN_CONSOLE_CREDENTIALS = Object.freeze({
   username: "admin",
   password: "admin01"
@@ -149,6 +166,175 @@ const adminConsoleState = {
   commandInput: null,
   output: null
 };
+const guidedTutorialState = {
+  active: false,
+  shouldPersistCompletion: false,
+  root: null,
+  backdrop: null,
+  spotlight: null,
+  callout: null,
+  calloutKicker: null,
+  calloutTitle: null,
+  calloutMessage: null,
+  prevButton: null,
+  nextButton: null,
+  skipButton: null,
+  closeButton: null,
+  stepIndex: 0,
+  steps: [],
+  currentTarget: null,
+  repositionRaf: 0,
+  resizeHandler: null,
+  scrollHandler: null,
+  keydownHandler: null,
+  stepToken: 0
+};
+const SOCIAL_DIRECTORY_CACHE_TTL_MS = 90 * 1000;
+const SOCIAL_REMOTE_CACHE_TTL_MS = 12 * 1000;
+const SOCIAL_SEARCH_MAX_RESULTS = 18;
+const SOCIAL_SEARCH_DEBOUNCE_MS = 260;
+const SOCIAL_CHAT_DELETE_HOLD_MS = 430;
+const SOCIAL_CHAT_DELETE_MOVE_TOLERANCE = 10;
+const STUDY_ROOMS_COLLECTION = "studyRooms";
+const STUDY_ROOMS_LIST_LIMIT = 40;
+const STUDY_ROOM_MAX_TITLE_LENGTH = 72;
+const STUDY_ROOM_MAX_TASK_LENGTH = 140;
+const STUDY_ROOM_CHAT_MAX_LENGTH = 420;
+const STUDY_ROOM_MUSIC_SEARCH_MAX_RESULTS = 8;
+const STUDY_ROOM_MUSIC_SEARCH_MIN_LENGTH = 2;
+const STUDY_ROOM_MUSIC_SEARCH_REQUEST_TIMEOUT_MS = 7000;
+const STUDY_ROOM_MUSIC_SEARCH_DEBOUNCE_MS = 280;
+const STUDY_ROOM_MUSIC_SEEK_SYNC_MIN_DELTA_SECONDS = 1.2;
+const STUDY_ROOM_MUSIC_SEEK_SYNC_THROTTLE_MS = 420;
+const STUDY_ROOM_MUSIC_SEEK_SYNC_DEBOUNCE_MS = 150;
+const STUDY_ROOM_MUSIC_SEEK_PENDING_TTL_MS = 2600;
+const STUDY_ROOM_MUSIC_SEEK_PENDING_TOLERANCE_SECONDS = 2.2;
+const STUDY_ROOM_MUSIC_SEARCH_ENDPOINTS = Object.freeze([
+  {
+    url: "https://www.youtube.com/feeds/videos.xml?search_query={query}",
+    parser: "youtube_rss"
+  },
+  {
+    url: "https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q={query}&key={apiKey}",
+    responsePath: "items",
+    onlyVideos: true
+  },
+  {
+    url: "https://yt.lemnoslife.com/noKey/search?part=snippet&type=video&maxResults=10&q={query}",
+    responsePath: "items",
+    onlyVideos: true
+  },
+  { url: "https://piped.video/api/v1/search?q={query}&filter=videos", onlyVideos: true },
+  { url: "https://pipedapi.kavin.rocks/search?q={query}&filter=videos", onlyVideos: true },
+  { url: "https://inv.nadeko.net/api/v1/search?q={query}&type=video&page=1", onlyVideos: true },
+  { url: "https://invidious.privacyredirect.com/api/v1/search?q={query}&type=video&page=1", onlyVideos: true },
+  { url: "https://invidious.fdn.fr/api/v1/search?q={query}&type=video&page=1", onlyVideos: true }
+]);
+const STUDY_ROOM_PUBLIC_FIELD = "studyRoomPublic";
+const STUDY_ROOM_OWNED_FIELD = "studyRoomOwned";
+const STUDY_ROOM_CLOSURE_SUMMARY_FIELD = "studyRoomClosureSummary";
+const SOCIAL_FRIENDS_FIELD = "socialFriends";
+const SOCIAL_INCOMING_REQUESTS_FIELD = "socialIncomingRequests";
+const SOCIAL_OUTGOING_REQUESTS_FIELD = "socialOutgoingRequests";
+const SOCIAL_ACCEPTED_FROM_FIELD = "socialAcceptedFrom";
+const SOCIAL_ACCEPTED_FLAGS_FIELD = "socialAcceptedFlags";
+const SOCIAL_REJECTED_REQUESTS_FIELD = "socialRejectedRequests";
+const SOCIAL_CHAT_OUTBOX_FIELD = "socialChatOutbox";
+const SOCIAL_CHAT_READS_FIELD = "socialChatReads";
+const SOCIAL_CHAT_STUDY_ROOM_INVITES_FIELD = "socialChatStudyRoomInvites";
+const SOCIAL_CHAT_LOCAL_READS_STORAGE_PREFIX = "mt_social_chat_reads_cache_v1_";
+const SOCIAL_CHAT_MAX_LENGTH = 420;
+const SOCIAL_CHAT_KIND_MESSAGE = "message";
+const SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE = "study-room-invite";
+const SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_PENDING = "pending";
+const SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_ACCEPTED = "accepted";
+const SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_REJECTED = "rejected";
+const SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_ROOM_CLOSED = "room-closed";
+const SOCIAL_CHAT_EMOJI_OPTIONS = Object.freeze([
+  "😀", "😄", "😁", "😂", "🤣", "😊", "🙂",
+  "😉", "😍", "😘", "😎", "🤩", "🥳", "🤓",
+  "🤔", "🤝", "👏", "🙌", "👍", "👌", "🙏",
+  "💪", "🔥", "✨", "⭐", "🌟", "🎯", "🚀",
+  "💡", "📚", "🧠", "🎉", "✅", "💬", "❤️"
+]);
+const socialState = {
+  localFriends: [],
+  localIncomingRequests: [],
+  localOutgoingRequests: [],
+  remoteFriends: [],
+  remoteIncomingRequests: [],
+  rejectedByUid: new Map(),
+  friends: [],
+  incomingRequests: [],
+  outgoingPendingByUid: new Map(),
+  friendsByUid: new Map(),
+  incomingByUid: new Map(),
+  chatActiveFriendUid: "",
+  chatMinimized: false,
+  chatDraftByUid: new Map(),
+  chatReadPendingByUid: new Map(),
+  chatReadWorkerRunning: false,
+  chatUnreadByUid: new Map(),
+  chatUnreadLiveOwnUnsub: null,
+  chatUnreadLiveFriendUnsubByUid: new Map(),
+  chatUnreadLiveFriendDocByUid: new Map(),
+  chatUnreadLiveOwnReadByUid: new Map(),
+  chatRemoteReadByUid: new Map(),
+  chatOwnReadByUid: new Map(),
+  chatMessages: [],
+  chatLoading: false,
+  chatError: "",
+  chatOwnDocData: null,
+  chatFriendDocData: null,
+  chatDeletePrompt: null,
+  chatOwnReady: false,
+  chatFriendReady: false,
+  chatOwnUnsub: null,
+  chatFriendUnsub: null,
+  searchQuery: "",
+  searchResults: [],
+  searchLoading: false,
+  searchError: "",
+  directoryUsers: [],
+  directoryFetchedAt: 0,
+  remoteFetchedAt: 0,
+  searchDebounceTimer: null,
+  searchToken: 0,
+  remoteFetchToken: 0,
+  hydrated: false
+};
+const studyRoomsState = {
+  rooms: [],
+  roomsLoading: false,
+  roomsError: "",
+  roomsListRenderSignature: "",
+  roomsUnsub: null,
+  roomsSource: "primary",
+  activeRoomId: "",
+  activeRoomSource: "primary",
+  activeRoomData: null,
+  activeRoomLoading: false,
+  activeRoomError: "",
+  activeRoomUnsub: null,
+  createTitleDraft: "",
+  taskDraftByRoomId: new Map(),
+  chatDraftByRoomId: new Map(),
+  presenceSyncedByRoomId: new Set(),
+  musicSearchDraftByRoomId: new Map(),
+  musicSearchResultsByRoomId: new Map(),
+  musicSearchLoadingByRoomId: new Map(),
+  musicSearchErrorByRoomId: new Map(),
+  musicSearchTokenByRoomId: new Map(),
+  musicSearchDebounceTimerByRoomId: new Map(),
+  musicIframeSignatureByRoomId: new Map(),
+  musicIframePendingStateByRoomId: new Map(),
+  musicIframePendingSeekByRoomId: new Map(),
+  musicIframeSeekSyncDraftByRoomId: new Map(),
+  musicIframeSeekSyncTimerByRoomId: new Map(),
+  musicIframeSeekSyncLastByRoomId: new Map(),
+  musicIframeSeekSyncInFlightByRoomId: new Set(),
+  musicIframeSeekObservedByRoomId: new Map()
+};
 const pomodoroState = {
   root: null,
   phaseBadge: null,
@@ -186,7 +372,17 @@ const pomodoroState = {
   expAmount: 0,
   lastSessionConfig: null
 };
+let studyRoomMusicIframeMessageListenerBound = false;
 let changelogModalPromptedVersion = "";
+let guidedTutorialCompletedForCurrentUser = false;
+let guidedTutorialAutoStartQueued = false;
+let guidedTutorialAutoStartInFlight = false;
+let guidedTutorialCompletionPersistPromise = null;
+let playerHydratedForSession = false;
+let activeStudyRoomSessionStartedAt = 0;
+let activeStudyRoomSessionRoomId = "";
+let lastHandledStudyRoomClosureSummaryId = "";
+const completedTaskSectionCollapsedByKey = new Map();
 
 function syncAppVersionLabels(){
   document.querySelectorAll("[data-app-version]").forEach((element) => {
@@ -223,6 +419,13 @@ const TASK_LABEL_COLORS = [
 ];
 
 const ACHIEVEMENTS = [
+  {
+    id: "tutorial_completado",
+    name: "Ruta inicial",
+    desc: "Completá el tutorial inicial por primera vez",
+    exp: 180,
+    check: (stats) => stats.tutorialCompleted
+  },
   {
     id: "mate_metodo",
     name: "Mate y método",
@@ -285,6 +488,83 @@ const ACHIEVEMENTS = [
     desc: "Programá 3 tareas con horario",
     exp: 200,
     check: (stats) => stats.scheduledTasks >= 3
+  },
+  {
+    id: "primer_amigo",
+    name: "Primer vínculo",
+    desc: "Agregá tu primer amigo",
+    exp: 160,
+    check: (stats) => stats.friendsCount >= 1
+  },
+  {
+    id: "ronda_social",
+    name: "Ronda social",
+    desc: "Llegá a 5 amistades",
+    exp: 280,
+    check: (stats) => stats.friendsCount >= 5
+  },
+  {
+    id: "charla_en_marcha",
+    name: "Charla en marcha",
+    desc: "Intercambiá 10 mensajes",
+    exp: 220,
+    check: (stats) => stats.messagesSent >= 10
+  },
+  {
+    id: "charla_constante",
+    name: "Charla constante",
+    desc: "Intercambiá 50 mensajes",
+    exp: 320,
+    check: (stats) => stats.messagesSent >= 50
+  },
+  {
+    id: "charla_imparable",
+    name: "Charla imparable",
+    desc: "Intercambiá 100 mensajes",
+    exp: 480,
+    check: (stats) => stats.messagesSent >= 100
+  },
+  {
+    id: "fundador_de_sala",
+    name: "Fundador de sala",
+    desc: "Creá tu primera sala de estudio",
+    exp: 260,
+    check: (stats) => stats.studyRoomsCreated >= 1
+  },
+  {
+    id: "dj_de_sala",
+    name: "DJ de sala",
+    desc: "Compartí tu primera canción o video en una sala",
+    exp: 220,
+    check: (stats) => stats.studyRoomMediaShared >= 1
+  },
+  {
+    id: "hora_de_sala",
+    name: "Hora de sala",
+    desc: "Acumulá 1 hora en salas de estudio",
+    exp: 320,
+    check: (stats) => stats.studyRoomMinutes >= 60
+  },
+  {
+    id: "maraton_de_sala",
+    name: "Maratón de sala",
+    desc: "Acumulá 5 horas en salas de estudio",
+    exp: 520,
+    check: (stats) => stats.studyRoomMinutes >= 300
+  },
+  {
+    id: "primer_check_sala",
+    name: "Primer check de sala",
+    desc: "Completá 1 tarea en una sala de estudio",
+    exp: 220,
+    check: (stats) => stats.studyRoomTasksCompleted >= 1
+  },
+  {
+    id: "equipo_en_marcha",
+    name: "Equipo en marcha",
+    desc: "Completá 5 tareas en salas de estudio",
+    exp: 420,
+    check: (stats) => stats.studyRoomTasksCompleted >= 5
   }
 ];
 
@@ -352,6 +632,8 @@ let mobileDragAutoScrollTouch = null;
 let mobileDragAutoScrollCallback = null;
 let mobileFocusScrollSnapshot = null;
 let activeDashboardProfileTrigger = null;
+let dashboardProfileTriggerResizeObserver = null;
+let socialChatPlusOutsideListenerBound = false;
 const scheduledTaskNotificationTimers = new Map();
 let taskNotificationAutoPromptAttempted = false;
 let summarySearchCleanup = null;
@@ -619,6 +901,8 @@ function clearTaskMobileFocus() {
 function resetTransientOverlays() {
   closeTaskActionMenu();
   clearTaskMobileFocus();
+  closeStudyRoomActionConfirmOverlay();
+  closeStudyRoomClosureSummaryOverlay();
   document.getElementById("taskActionOverlay")?.remove();
   document.getElementById("taskMobileOverlay")?.remove();
   document.body.classList.remove("task-action-focus");
@@ -648,6 +932,134 @@ function setStoredSeenChangelogVersion(version, uid = currentUser?.uid){
   } catch (error) {
     console.warn("No se pudo guardar localmente la versión de changelog vista.", error);
   }
+}
+
+function getGuidedTutorialCompletionStorageKey(uid = currentUser?.uid){
+  return `${GUIDED_TUTORIAL_COMPLETED_LOCAL_STORAGE_PREFIX}${uid || "guest"}`;
+}
+
+function getStoredGuidedTutorialCompleted(uid = currentUser?.uid){
+  try {
+    return localStorage.getItem(getGuidedTutorialCompletionStorageKey(uid)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setStoredGuidedTutorialCompleted(completed, uid = currentUser?.uid){
+  const storageKey = getGuidedTutorialCompletionStorageKey(uid);
+  const safeCompleted = Boolean(completed);
+  try {
+    if (!safeCompleted) {
+      localStorage.removeItem(storageKey);
+      return;
+    }
+    localStorage.setItem(storageKey, "1");
+  } catch (error) {
+    console.warn("No se pudo guardar localmente el estado del tutorial inicial.", error);
+  }
+}
+
+function syncGuidedTutorialCompletionFromUserData(userData = {}){
+  const cloudCompleted = Boolean(userData?.[GUIDED_TUTORIAL_COMPLETED_FIREBASE_FIELD]);
+  if (cloudCompleted && currentUser?.uid) {
+    setStoredGuidedTutorialCompleted(true, currentUser.uid);
+  }
+
+  const localCompleted = getStoredGuidedTutorialCompleted(currentUser?.uid);
+  guidedTutorialCompletedForCurrentUser = cloudCompleted || localCompleted;
+
+  if (!cloudCompleted && localCompleted && currentUser?.uid) {
+    void markGuidedTutorialAsCompletedForCurrentUser({ forceCloudSync: true });
+  }
+
+  return guidedTutorialCompletedForCurrentUser;
+}
+
+function resetGuidedTutorialAutostartState(){
+  guidedTutorialCompletedForCurrentUser = false;
+  guidedTutorialAutoStartQueued = false;
+  guidedTutorialAutoStartInFlight = false;
+  guidedTutorialCompletionPersistPromise = null;
+}
+
+function isChangelogUpdateModalOpen(){
+  return Boolean(document.getElementById("changelogUpdateOverlay"));
+}
+
+function queueGuidedTutorialAutostartIfNeeded(userData = {}){
+  if (!currentUser?.uid) return;
+
+  const alreadyCompleted = syncGuidedTutorialCompletionFromUserData(userData);
+  if (alreadyCompleted) {
+    if (isPlayerReadyForAchievementChecks()) {
+      checkAchievements({ silent: false });
+    }
+    maybeFlushAchievementUnlockQueue();
+    guidedTutorialAutoStartQueued = false;
+    return;
+  }
+
+  guidedTutorialAutoStartQueued = true;
+  void maybeRunGuidedTutorialAutostart();
+}
+
+async function maybeRunGuidedTutorialAutostart(){
+  if (!guidedTutorialAutoStartQueued) return;
+  if (guidedTutorialAutoStartInFlight) return;
+  if (!currentUser?.uid) return;
+  if (guidedTutorialState.active) return;
+  if (guidedTutorialCompletedForCurrentUser) {
+    guidedTutorialAutoStartQueued = false;
+    return;
+  }
+  if (isChangelogUpdateModalOpen()) return;
+
+  guidedTutorialAutoStartQueued = false;
+  guidedTutorialAutoStartInFlight = true;
+
+  try {
+    await startGuidedTutorial({ persistCompletion: true });
+  } catch (error) {
+    console.error("No se pudo iniciar automáticamente el tutorial inicial.", error);
+    guidedTutorialAutoStartQueued = true;
+  } finally {
+    guidedTutorialAutoStartInFlight = false;
+  }
+}
+
+async function markGuidedTutorialAsCompletedForCurrentUser({ forceCloudSync = false } = {}){
+  if (!currentUser?.uid) return;
+  if (guidedTutorialCompletedForCurrentUser && !forceCloudSync) return;
+
+  guidedTutorialCompletedForCurrentUser = true;
+  guidedTutorialAutoStartQueued = false;
+  setStoredGuidedTutorialCompleted(true, currentUser.uid);
+  if (isPlayerReadyForAchievementChecks()) {
+    checkAchievements({ silent: forceCloudSync });
+  }
+  maybeFlushAchievementUnlockQueue();
+
+  if (guidedTutorialCompletionPersistPromise) {
+    return guidedTutorialCompletionPersistPromise;
+  }
+
+  guidedTutorialCompletionPersistPromise = setDoc(
+    doc(db, "users", currentUser.uid),
+    {
+      [GUIDED_TUTORIAL_COMPLETED_FIREBASE_FIELD]: true,
+      [GUIDED_TUTORIAL_COMPLETED_AT_FIREBASE_FIELD]: Date.now()
+    },
+    { merge: true }
+  )
+    .catch((error) => {
+      console.warn("No se pudo guardar en Firebase la finalización del tutorial inicial.", error);
+    })
+    .finally(() => {
+      guidedTutorialCompletionPersistPromise = null;
+    });
+
+  return guidedTutorialCompletionPersistPromise;
 }
 
 function getChangelogItemsForUpdateModal(){
@@ -887,7 +1299,11 @@ function openChangelogUpdateModal(){
     isClosing = true;
     confirmBtn && (confirmBtn.disabled = true);
     closeChangelogUpdateModal();
-    await markChangelogAsSeen(CHANGELOG_MODAL_TARGET_VERSION);
+    try {
+      await markChangelogAsSeen(CHANGELOG_MODAL_TARGET_VERSION);
+    } finally {
+      void maybeRunGuidedTutorialAutostart();
+    }
   };
 
   confirmBtn?.addEventListener("click", () => {
@@ -1289,6 +1705,182 @@ function askSwipeDeleteConfirmation() {
   });
 }
 
+function closeStudyRoomActionConfirmOverlay(){
+  document.getElementById("studyRoomActionConfirmOverlay")?.remove();
+}
+
+function openStudyRoomActionConfirmDialog({
+  title = "Confirmar acción",
+  message = "",
+  confirmLabel = "Aceptar",
+  cancelLabel = "Cancelar"
+} = {}){
+  closeStudyRoomActionConfirmOverlay();
+
+  return new Promise((resolve) => {
+    const safeTitle = escapeHtml(String(title || "").trim() || "Confirmar acción");
+    const safeMessage = escapeHtml(String(message || "").trim());
+    const safeConfirmLabel = escapeHtml(String(confirmLabel || "").trim() || "Aceptar");
+    const safeCancelLabel = escapeHtml(String(cancelLabel || "").trim() || "Cancelar");
+
+    const overlay = document.createElement("div");
+    overlay.className = "overlay open study-room-confirm-overlay";
+    overlay.id = "studyRoomActionConfirmOverlay";
+    overlay.innerHTML = `
+      <div
+        class="study-room-confirm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="studyRoomConfirmTitle"
+        aria-describedby="studyRoomConfirmMessage"
+      >
+        <h3 id="studyRoomConfirmTitle">${safeTitle}</h3>
+        <p id="studyRoomConfirmMessage">${safeMessage}</p>
+        <div class="study-room-confirm-actions">
+          <button type="button" class="btn-cancel" id="studyRoomConfirmCancel">${safeCancelLabel}</button>
+          <button type="button" class="btn-danger" id="studyRoomConfirmAccept">${safeConfirmLabel}</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const cancelBtn = overlay.querySelector("#studyRoomConfirmCancel");
+    const confirmBtn = overlay.querySelector("#studyRoomConfirmAccept");
+    let settled = false;
+
+    const finish = (confirmed = false) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", handleKeydown);
+      overlay.remove();
+      resolve(confirmed);
+    };
+
+    const handleKeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    };
+
+    cancelBtn?.addEventListener("click", () => finish(false));
+    confirmBtn?.addEventListener("click", () => finish(true));
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        finish(false);
+      }
+    });
+    document.addEventListener("keydown", handleKeydown);
+
+    requestAnimationFrame(() => {
+      cancelBtn?.focus();
+    });
+  });
+}
+
+function closeStudyRoomClosureSummaryOverlay(){
+  document.getElementById("studyRoomClosureSummaryOverlay")?.remove();
+}
+
+function openStudyRoomClosureSummaryDialog(summaryData = null){
+  const summary = normalizeStudyRoomClosureSummary(summaryData);
+  if (!summary) return false;
+
+  closeStudyRoomClosureSummaryOverlay();
+
+  const safeRoomTitle = escapeHtml(summary.roomTitle || "Sala de estudio");
+  const safeClosedByName = escapeHtml(summary.closedByName || "Creador");
+  const safeClosedAt = escapeHtml(formatSocialTimestamp(summary.closedAt));
+  const safeCompletedCount = formatSettingsStat(summary.completedCount);
+  const safePendingCount = formatSettingsStat(summary.pendingCount);
+  const safeNextStepsCount = formatSettingsStat(summary.nextSteps.length);
+  const nextStepsHtml = summary.nextSteps.length
+    ? summary.nextSteps.map((step) => {
+      const safeText = escapeHtml(step.text || "");
+      const safeOwner = escapeHtml(step.ownerName || "Integrante");
+      return `
+        <li class="study-room-closure-step-item">
+          <span class="study-room-closure-step-text">${safeText}</span>
+          <span class="study-room-closure-step-owner">${safeOwner}</span>
+        </li>
+      `;
+    }).join("")
+    : `<li class="study-room-closure-step-item empty">No quedaron tareas pendientes.</li>`;
+
+  const overlay = document.createElement("div");
+  overlay.className = "overlay open study-room-closure-overlay";
+  overlay.id = "studyRoomClosureSummaryOverlay";
+  overlay.innerHTML = `
+    <div
+      class="study-room-closure-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="studyRoomClosureTitle"
+      aria-describedby="studyRoomClosureMessage"
+    >
+      <div class="study-room-closure-header">
+        <span class="study-room-closure-badge">Sala cerrada</span>
+        <h3 id="studyRoomClosureTitle">${safeRoomTitle}</h3>
+        <p id="studyRoomClosureMessage">La sala se cerró por ${safeClosedByName} (${safeClosedAt}).</p>
+      </div>
+      <div class="study-room-closure-metrics">
+        <div class="study-room-closure-metric">
+          <small>Hechas</small>
+          <strong>${safeCompletedCount}</strong>
+        </div>
+        <div class="study-room-closure-metric">
+          <small>Pendientes</small>
+          <strong>${safePendingCount}</strong>
+        </div>
+        <div class="study-room-closure-metric">
+          <small>Próximos pasos</small>
+          <strong>${safeNextStepsCount}</strong>
+        </div>
+      </div>
+      <div class="study-room-closure-next">
+        <h4>Próximos pasos sugeridos</h4>
+        <ul class="study-room-closure-steps">${nextStepsHtml}</ul>
+      </div>
+      <div class="study-room-closure-actions">
+        <button type="button" class="btn-cancel" id="studyRoomClosureSummaryClose">Entendido</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const closeButton = overlay.querySelector("#studyRoomClosureSummaryClose");
+  let settled = false;
+
+  const closeDialog = () => {
+    if (settled) return;
+    settled = true;
+    document.removeEventListener("keydown", handleKeydown);
+    overlay.remove();
+  };
+
+  const handleKeydown = (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    closeDialog();
+  };
+
+  closeButton?.addEventListener("click", closeDialog);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      closeDialog();
+    }
+  });
+  document.addEventListener("keydown", handleKeydown);
+
+  requestAnimationFrame(() => {
+    closeButton?.focus();
+  });
+
+  return true;
+}
+
 function pickRandomProjectBannerAsset(){
   if (!PROJECT_BANNER_ASSETS.length) return "";
   const index = Math.floor(Math.random() * PROJECT_BANNER_ASSETS.length);
@@ -1381,6 +1973,9 @@ async function buildCustomProjectBannerDataUrl(file){
 
 function ensureProjectBannerSettings(project, projectId = ""){
   if (!project || typeof project !== "object") return;
+  if (typeof project.completedTasksCollapsed !== "boolean") {
+    project.completedTasksCollapsed = false;
+  }
   if (typeof project.bannerEnabled !== "boolean") {
     project.bannerEnabled = true;
   }
@@ -1394,20 +1989,22 @@ function ensureProjectBannerSettings(project, projectId = ""){
 
 function parseStoredAppData(rawData) {
   if (!rawData || typeof rawData !== "object") {
-    return { tasks: {}, projects: {}, labels: [], projectOrder: [] };
+    return { tasks: {}, projects: {}, labels: [], projectOrder: [], dailyHistory: {} };
   }
 
   const hasStructuredShape =
     Object.prototype.hasOwnProperty.call(rawData, "tasks") ||
     Object.prototype.hasOwnProperty.call(rawData, "projects") ||
-    Object.prototype.hasOwnProperty.call(rawData, "labels");
+    Object.prototype.hasOwnProperty.call(rawData, "labels") ||
+    Object.prototype.hasOwnProperty.call(rawData, "dailyHistory");
 
   if (!hasStructuredShape) {
     return {
       tasks: rawData,
       projects: {},
       labels: [],
-      projectOrder: []
+      projectOrder: [],
+      dailyHistory: {}
     };
   }
 
@@ -1415,8 +2012,125 @@ function parseStoredAppData(rawData) {
     tasks: rawData.tasks || {},
     projects: rawData.projects || {},
     labels: Array.isArray(rawData.labels) ? rawData.labels : [],
-    projectOrder: Array.isArray(rawData.projectOrder) ? rawData.projectOrder : []
+    projectOrder: Array.isArray(rawData.projectOrder) ? rawData.projectOrder : [],
+    dailyHistory: normalizeDailyCompletionHistory(rawData.dailyHistory || {})
   };
+}
+
+function normalizeDailyCompletionHistory(rawHistory) {
+  if (!rawHistory || typeof rawHistory !== "object") return {};
+
+  const normalized = {};
+
+  Object.entries(rawHistory).forEach(([dateKey, entry]) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
+
+    const total = Math.max(0, Math.floor(Number(entry?.total) || 0));
+    const completed = Math.max(
+      0,
+      Math.min(total, Math.floor(Number(entry?.completed) || 0))
+    );
+    const updatedAt = Math.max(0, Number(entry?.updatedAt) || 0);
+
+    if (total <= 0) return;
+
+    normalized[dateKey] = {
+      total,
+      completed,
+      updatedAt
+    };
+  });
+
+  return normalized;
+}
+
+function mergeDailyCompletionHistory(...sources) {
+  const merged = {};
+
+  sources.forEach((source) => {
+    const normalizedSource = normalizeDailyCompletionHistory(source || {});
+
+    Object.entries(normalizedSource).forEach(([dateKey, entry]) => {
+      const current = merged[dateKey];
+      if (!current) {
+        merged[dateKey] = { ...entry };
+        return;
+      }
+
+      const currentUpdatedAt = Math.max(0, Number(current.updatedAt) || 0);
+      const nextUpdatedAt = Math.max(0, Number(entry.updatedAt) || 0);
+
+      if (nextUpdatedAt > currentUpdatedAt) {
+        merged[dateKey] = { ...entry };
+        return;
+      }
+
+      if (nextUpdatedAt === currentUpdatedAt) {
+        if (entry.total > current.total) {
+          merged[dateKey] = { ...entry };
+          return;
+        }
+        if (entry.total === current.total && entry.completed > current.completed) {
+          merged[dateKey] = { ...entry };
+        }
+      }
+    });
+  });
+
+  return merged;
+}
+
+function getDailyCompletionMetricsForDate(dateStr, todayIso = formatLocalDate(new Date())) {
+  if (dateStr < todayIso) {
+    const historyEntry = dailyCompletionHistory[dateStr];
+    if (historyEntry) {
+      const total = Math.max(0, Math.floor(Number(historyEntry.total) || 0));
+      const completed = Math.max(
+        0,
+        Math.min(total, Math.floor(Number(historyEntry.completed) || 0))
+      );
+      return { total, completed };
+    }
+  }
+
+  const list = Array.isArray(tasks?.[dateStr]) ? tasks[dateStr] : [];
+  return {
+    total: list.length,
+    completed: list.filter((task) => !!task?.done).length
+  };
+}
+
+function captureDailyCompletionSnapshot(dateStr, sourceList = null) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ""))) return false;
+
+  const list = Array.isArray(sourceList)
+    ? sourceList
+    : (Array.isArray(tasks?.[dateStr]) ? tasks[dateStr] : []);
+
+  const total = Math.max(0, list.length);
+  const completed = Math.max(0, list.filter((task) => !!task?.done).length);
+
+  if (total <= 0) return false;
+
+  const current = dailyCompletionHistory[dateStr];
+  if (current) {
+    const currentTotal = Math.max(0, Math.floor(Number(current.total) || 0));
+    const currentCompleted = Math.max(
+      0,
+      Math.min(currentTotal, Math.floor(Number(current.completed) || 0))
+    );
+
+    if (currentTotal > total) return false;
+    if (currentTotal === total && currentCompleted >= completed) return false;
+  }
+
+  dailyCompletionHistory[dateStr] = {
+    total,
+    completed: Math.min(total, completed),
+    updatedAt: Date.now()
+  };
+
+  return true;
 }
 
 function reconcileProjectOrder(order, projectMap) {
@@ -1569,6 +2283,49 @@ function sortTaskList(taskList) {
   });
 }
 
+function buildTaskCompletionStateKeyForColumn({ iso = "", projectId = null } = {}){
+  if (projectId !== null && projectId !== undefined) {
+    const safeProjectId = String(projectId || "").trim();
+    return safeProjectId ? `project:${safeProjectId}` : "";
+  }
+  const safeIso = String(iso || "").trim();
+  return safeIso ? `day:${safeIso}` : "";
+}
+
+function buildTaskCompletionStateKeyForStudyRoom(roomId = "", cardUid = ""){
+  const safeRoomId = String(roomId || "").trim();
+  const safeCardUid = String(cardUid || "").trim();
+  if (!safeRoomId || !safeCardUid) return "";
+  return `study-room:${safeRoomId}:${safeCardUid}`;
+}
+
+function isTaskCompletionSectionCollapsed(stateKey = ""){
+  const safeStateKey = String(stateKey || "").trim();
+  if (!safeStateKey) return false;
+  return completedTaskSectionCollapsedByKey.get(safeStateKey) === true;
+}
+
+function setTaskCompletionSectionCollapsed(stateKey = "", collapsed = false){
+  const safeStateKey = String(stateKey || "").trim();
+  if (!safeStateKey) return;
+  completedTaskSectionCollapsedByKey.set(safeStateKey, !!collapsed);
+}
+
+function getTaskCompletionToggleIconMarkup(collapsed = false){
+  const directionPath = collapsed ? "M7 10.5 12 15.5l5-5" : "M7 13.5 12 8.5l5 5";
+  return `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="${directionPath}"/>
+    </svg>
+  `;
+}
+
+function getTaskCompletionToggleAriaLabel(collapsed = false){
+  return collapsed
+    ? "Mostrar tareas completadas"
+    : "Ocultar tareas completadas";
+}
+
 async function closeMobileKeyboardIfNeeded() {
   const activeElement = document.activeElement;
   if (!activeElement) return;
@@ -1611,6 +2368,11 @@ function normalizePlayer(raw = {}) {
     level: 0,
     totalCompletedTasks: 0,
     totalFocusMinutes: 0,
+    totalMessagesSent: 0,
+    totalStudyRoomMinutes: 0,
+    totalStudyRoomsCreated: 0,
+    totalStudyRoomMediaShared: 0,
+    totalStudyRoomTasksCompleted: 0,
     todayExpTasks: 0,
     lastExpDate: null,
     dailyLimitShown: false,
@@ -1648,6 +2410,11 @@ function normalizePlayer(raw = {}) {
     )
   );
   normalized.totalFocusMinutes = Math.max(0, Math.floor(Number(normalized.totalFocusMinutes) || 0));
+  normalized.totalMessagesSent = Math.max(0, Math.floor(Number(normalized.totalMessagesSent) || 0));
+  normalized.totalStudyRoomMinutes = Math.max(0, Math.floor(Number(normalized.totalStudyRoomMinutes) || 0));
+  normalized.totalStudyRoomsCreated = Math.max(0, Math.floor(Number(normalized.totalStudyRoomsCreated) || 0));
+  normalized.totalStudyRoomMediaShared = Math.max(0, Math.floor(Number(normalized.totalStudyRoomMediaShared) || 0));
+  normalized.totalStudyRoomTasksCompleted = Math.max(0, Math.floor(Number(normalized.totalStudyRoomTasksCompleted) || 0));
 
   return normalized;
 }
@@ -1662,6 +2429,11 @@ function hasPlayerProgress(candidate){
     Number(safeCandidate.level) > 0 ||
     Number(safeCandidate.totalCompletedTasks) > 0 ||
     Number(safeCandidate.totalFocusMinutes) > 0 ||
+    Number(safeCandidate.totalMessagesSent) > 0 ||
+    Number(safeCandidate.totalStudyRoomMinutes) > 0 ||
+    Number(safeCandidate.totalStudyRoomsCreated) > 0 ||
+    Number(safeCandidate.totalStudyRoomMediaShared) > 0 ||
+    Number(safeCandidate.totalStudyRoomTasksCompleted) > 0 ||
     achievementCount > 0 ||
     Number(safeCandidate.activeStreak) > 0 ||
     Number(safeCandidate.longestStreak) > 0 ||
@@ -1727,6 +2499,36 @@ function comparePlayerFreshness(playerA, playerB){
   const focusMinutesB = Number(safeB.totalFocusMinutes) || 0;
   if (focusMinutesA !== focusMinutesB) {
     return focusMinutesA > focusMinutesB ? 1 : -1;
+  }
+
+  const socialMessagesA = Number(safeA.totalMessagesSent) || 0;
+  const socialMessagesB = Number(safeB.totalMessagesSent) || 0;
+  if (socialMessagesA !== socialMessagesB) {
+    return socialMessagesA > socialMessagesB ? 1 : -1;
+  }
+
+  const studyRoomMinutesA = Number(safeA.totalStudyRoomMinutes) || 0;
+  const studyRoomMinutesB = Number(safeB.totalStudyRoomMinutes) || 0;
+  if (studyRoomMinutesA !== studyRoomMinutesB) {
+    return studyRoomMinutesA > studyRoomMinutesB ? 1 : -1;
+  }
+
+  const studyRoomsCreatedA = Number(safeA.totalStudyRoomsCreated) || 0;
+  const studyRoomsCreatedB = Number(safeB.totalStudyRoomsCreated) || 0;
+  if (studyRoomsCreatedA !== studyRoomsCreatedB) {
+    return studyRoomsCreatedA > studyRoomsCreatedB ? 1 : -1;
+  }
+
+  const studyRoomMediaA = Number(safeA.totalStudyRoomMediaShared) || 0;
+  const studyRoomMediaB = Number(safeB.totalStudyRoomMediaShared) || 0;
+  if (studyRoomMediaA !== studyRoomMediaB) {
+    return studyRoomMediaA > studyRoomMediaB ? 1 : -1;
+  }
+
+  const studyRoomTasksCompletedA = Number(safeA.totalStudyRoomTasksCompleted) || 0;
+  const studyRoomTasksCompletedB = Number(safeB.totalStudyRoomTasksCompleted) || 0;
+  if (studyRoomTasksCompletedA !== studyRoomTasksCompletedB) {
+    return studyRoomTasksCompletedA > studyRoomTasksCompletedB ? 1 : -1;
   }
 
   const updatedAtA = Number(safeA.updatedAt) || 0;
@@ -1880,8 +2682,98 @@ function getAchievementStats(){
   const projectsCount = Object.keys(projects || {}).length;
   const today = formatLocalDate(new Date());
   const todayAllDone = isDayFullyCompleted(today);
+  const friendsCount = Array.isArray(socialState.friends) ? socialState.friends.length : 0;
+  const messagesSent = Math.max(0, Number(player?.totalMessagesSent) || 0);
+  const studyRoomMinutes = Math.max(0, Number(player?.totalStudyRoomMinutes) || 0);
+  const studyRoomsCreated = Math.max(0, Number(player?.totalStudyRoomsCreated) || 0);
+  const studyRoomMediaShared = Math.max(0, Number(player?.totalStudyRoomMediaShared) || 0);
+  const studyRoomTasksCompleted = Math.max(0, Number(player?.totalStudyRoomTasksCompleted) || 0);
+  const tutorialCompleted = guidedTutorialCompletedForCurrentUser === true;
 
-  return { completedTasks, scheduledTasks, totalTasks, projectsCount, todayAllDone };
+  return {
+    completedTasks,
+    scheduledTasks,
+    totalTasks,
+    projectsCount,
+    todayAllDone,
+    friendsCount,
+    messagesSent,
+    studyRoomMinutes,
+    studyRoomsCreated,
+    studyRoomMediaShared,
+    studyRoomTasksCompleted,
+    tutorialCompleted
+  };
+}
+
+function incrementPlayerCounter(counterKey, amount = 1){
+  const safeCounterKey = String(counterKey || "").trim();
+  const safeAmount = Math.max(0, Math.floor(Number(amount) || 0));
+  if (!safeCounterKey || !safeAmount) return false;
+
+  const currentValue = Math.max(0, Math.floor(Number(player?.[safeCounterKey]) || 0));
+  const nextValue = currentValue + safeAmount;
+  if (nextValue === currentValue) return false;
+
+  player[safeCounterKey] = nextValue;
+  player.updatedAt = Date.now();
+  return true;
+}
+
+async function persistPlayerProgressWithAchievementCheck({ silentAchievements = false } = {}){
+  const achievementChanged = checkAchievements({ silent: silentAchievements });
+  if (!achievementChanged) {
+    await savePlayer();
+  }
+}
+
+async function registerCollaborativeProgress(counterKey, amount = 1, { silentAchievements = false } = {}){
+  const changed = incrementPlayerCounter(counterKey, amount);
+  if (!changed) return false;
+  await persistPlayerProgressWithAchievementCheck({ silentAchievements });
+  return true;
+}
+
+function startStudyRoomSessionTracking(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+
+  if (
+    activeStudyRoomSessionRoomId === safeRoomId &&
+    Number(activeStudyRoomSessionStartedAt) > 0
+  ) {
+    return;
+  }
+
+  activeStudyRoomSessionRoomId = safeRoomId;
+  activeStudyRoomSessionStartedAt = Date.now();
+}
+
+function clearStudyRoomSessionTracking(){
+  activeStudyRoomSessionRoomId = "";
+  activeStudyRoomSessionStartedAt = 0;
+}
+
+async function finalizeStudyRoomSessionTracking(roomId = "", endedAt = Date.now()){
+  const safeRoomId = String(roomId || "").trim();
+  const trackedRoomId = String(activeStudyRoomSessionRoomId || "").trim();
+  const startedAt = Math.max(0, Number(activeStudyRoomSessionStartedAt) || 0);
+
+  clearStudyRoomSessionTracking();
+
+  if (!safeRoomId || !trackedRoomId || safeRoomId !== trackedRoomId || !startedAt) {
+    return false;
+  }
+
+  const safeEndedAt = Math.max(startedAt, Number(endedAt) || Date.now());
+  const elapsedMinutes = Math.floor((safeEndedAt - startedAt) / 60000);
+  if (elapsedMinutes <= 0) return false;
+
+  return registerCollaborativeProgress(
+    "totalStudyRoomMinutes",
+    elapsedMinutes,
+    { silentAchievements: false }
+  );
 }
 
 function isPreviousDay(prevDateStr, nextDateStr){
@@ -1976,19 +2868,29 @@ function notifyAchievementUnlocks(unlockedNow){
 const achievementUnlockQueue = [];
 let achievementUnlockActive = null;
 
+function shouldDeferAchievementUnlockPresentation(){
+  return Boolean(currentUser?.uid) && !guidedTutorialCompletedForCurrentUser;
+}
+
+function maybeFlushAchievementUnlockQueue(){
+  if (shouldDeferAchievementUnlockPresentation()) return;
+  if (!achievementUnlockActive) {
+    showNextAchievementUnlock();
+  }
+}
+
 function enqueueAchievementUnlocks(achievements, { preview = false } = {}){
   if (!Array.isArray(achievements) || achievements.length === 0) return;
   achievements.forEach((achievement) => {
     if (!achievement || !achievement.id) return;
     achievementUnlockQueue.push({ ...achievement, preview });
   });
-  if (!achievementUnlockActive) {
-    showNextAchievementUnlock();
-  }
+  maybeFlushAchievementUnlockQueue();
 }
 
 function showNextAchievementUnlock(){
   if (achievementUnlockActive) return;
+  if (shouldDeferAchievementUnlockPresentation()) return;
   const next = achievementUnlockQueue.shift();
   if (!next) return;
   achievementUnlockActive = next;
@@ -2072,11 +2974,14 @@ function renderAchievementsMenu(){
 
   const grid = root.querySelector("#achievementsGrid");
   const countEl = root.querySelector("#achievementsUnlockedCount");
+  const totalEl = root.querySelector("#achievementsUnlockedTotal");
   const expEl = root.querySelector("#achievementsExpTotal");
   if (!grid) return;
 
   const unlockedCount = ACHIEVEMENTS.filter((achievement) => isAchievementUnlocked(achievement.id)).length;
+  const totalAchievements = ACHIEVEMENTS.length;
   if (countEl) countEl.textContent = unlockedCount;
+  if (totalEl) totalEl.textContent = totalAchievements;
   if (expEl) expEl.textContent = getAchievementExpTotal();
   const stats = getAchievementStats();
   const activeStreakEl = root.querySelector("#achievementsActiveStreak");
@@ -2131,6 +3036,11 @@ function openAchievementsMenu(){
 
 function closeAchievementsMenu(){
   closeSettingsOverlay();
+}
+
+function isPlayerReadyForAchievementChecks(){
+  if (!currentUser?.uid) return true;
+  return playerHydratedForSession;
 }
 
 function checkAchievements({ dateContext = null, silent = false } = {}){
@@ -2697,7 +3607,10 @@ function printAdminConsoleHelp(){
   adminConsoleLog('/exp give <mail> <cantidad>', "info");
   adminConsoleLog('/level set <mail> <nivel>', "info");
   adminConsoleLog('/sync check [mail]', "info");
+  adminConsoleLog("/social", "info");
+  adminConsoleLog("/salas", "info");
   adminConsoleLog("/pomodoro", "info");
+  adminConsoleLog("/tutorial", "info");
   adminConsoleLog("/help", "info");
   adminConsoleLog("/clear", "info");
 }
@@ -2737,6 +3650,16 @@ function isFirestorePermissionError(err){
   const code = String(err?.code || "");
   const message = String(err?.message || "").toLowerCase();
   return code.includes("permission-denied") || message.includes("insufficient permissions");
+}
+
+function isFirestoreNotFoundError(err){
+  const code = String(err?.code || "");
+  const message = String(err?.message || "").toLowerCase();
+  return (
+    code.includes("not-found") ||
+    message.includes("no document to update") ||
+    message.includes("no document to delete")
+  );
 }
 
 async function resolveTargetUserByEmail(email){
@@ -3000,6 +3923,8 @@ function buildLeaderboardDocPayload(userData = {}, sourcePlayer = player){
   return {
     name: userData?.name || userData?.displayName || userData?.email || "Usuario",
     photo: userData?.photo || userData?.photoURL || "",
+    email: userData?.email || "",
+    emailLower: String(userData?.email || "").toLowerCase(),
     level: Math.max(0, Number(safePlayer.level) || 0),
     exp: Math.max(0, Number(safePlayer.exp) || 0),
     completedTasks,
@@ -3007,6 +3932,11 @@ function buildLeaderboardDocPayload(userData = {}, sourcePlayer = player){
     longestStreak: Math.max(0, Number(safePlayer.longestStreak) || 0),
     allTasksStreak: Math.max(0, Number(safePlayer.allTasksStreak) || 0),
     totalFocusMinutes: Math.max(0, Number(safePlayer.totalFocusMinutes) || 0),
+    totalMessagesSent: Math.max(0, Number(safePlayer.totalMessagesSent) || 0),
+    totalStudyRoomMinutes: Math.max(0, Number(safePlayer.totalStudyRoomMinutes) || 0),
+    totalStudyRoomsCreated: Math.max(0, Number(safePlayer.totalStudyRoomsCreated) || 0),
+    totalStudyRoomMediaShared: Math.max(0, Number(safePlayer.totalStudyRoomMediaShared) || 0),
+    totalStudyRoomTasksCompleted: Math.max(0, Number(safePlayer.totalStudyRoomTasksCompleted) || 0),
     todayExpTasks: Math.max(0, Number(safePlayer.todayExpTasks) || 0),
     achievementsUnlocked: Math.max(0, Number(unlockedAchievements) || 0),
     lastActiveDate: safePlayer.lastActiveDate || null,
@@ -3058,6 +3988,11 @@ async function fetchLeaderboardPlayerSnapshot(uid){
       longestStreak: data.longestStreak,
       allTasksStreak: data.allTasksStreak,
       totalFocusMinutes: data.totalFocusMinutes,
+      totalMessagesSent: data.totalMessagesSent,
+      totalStudyRoomMinutes: data.totalStudyRoomMinutes,
+      totalStudyRoomsCreated: data.totalStudyRoomsCreated,
+      totalStudyRoomMediaShared: data.totalStudyRoomMediaShared,
+      totalStudyRoomTasksCompleted: data.totalStudyRoomTasksCompleted,
       todayExpTasks: data.todayExpTasks,
       lastActiveDate: data.lastActiveDate,
       lastAllTasksDate: data.lastAllTasksDate,
@@ -4160,6 +5095,964 @@ document.addEventListener("keydown", (event) => {
   event.stopPropagation();
 }, true);
 
+function ensureGuidedTutorialStyles(){
+  if (document.getElementById("guidedTutorialStyles")) return;
+
+  const style = document.createElement("style");
+  style.id = "guidedTutorialStyles";
+  style.textContent = `
+    .guided-tutorial-root{
+      position: fixed;
+      inset: 0;
+      z-index: 140000;
+      pointer-events: auto;
+    }
+
+    .guided-tutorial-backdrop{
+      position: absolute;
+      inset: 0;
+      background: rgba(4, 8, 16, .62);
+      backdrop-filter: blur(2px);
+      transition: opacity .2s ease, backdrop-filter .2s ease;
+    }
+
+    .guided-tutorial-root.spotlight-active .guided-tutorial-backdrop{
+      opacity: 0;
+      backdrop-filter: blur(0);
+    }
+
+    .guided-tutorial-spotlight{
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 0;
+      height: 0;
+      border-radius: 14px;
+      box-shadow:
+        0 0 0 200vmax rgba(4, 8, 16, .72),
+        0 0 0 2px rgba(130, 230, 255, .78),
+        0 0 28px rgba(78, 205, 255, .42);
+      transition:
+        left .2s ease,
+        top .2s ease,
+        width .2s ease,
+        height .2s ease,
+        opacity .2s ease;
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    .guided-tutorial-spotlight.active{
+      opacity: 1;
+    }
+
+    .guided-tutorial-callout{
+      position: fixed;
+      width: min(500px, calc(100vw - 24px));
+      border-radius: 24px;
+      border: 1px solid rgba(149, 219, 255, .52);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,0) 42%),
+        linear-gradient(135deg, #3a94e7 0%, #3b9bee 56%, #3f9ef4 100%);
+      color: #f2f9ff;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.3),
+        0 18px 36px rgba(8, 20, 46, .45);
+      padding: 16px 20px 14px;
+      font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+      overflow: visible;
+    }
+
+    .guided-tutorial-callout::before,
+    .guided-tutorial-callout::after{
+      content: "";
+      position: absolute;
+      pointer-events: none;
+    }
+
+    .guided-tutorial-callout::before{
+      background: rgba(149, 219, 255, .52);
+    }
+
+    .guided-tutorial-callout::after{
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,0) 42%),
+        linear-gradient(135deg, #3a94e7 0%, #3b9bee 56%, #3f9ef4 100%);
+    }
+
+    .guided-tutorial-callout[data-placement="top"]::before{
+      width: 22px;
+      height: 14px;
+      left: calc(50% - 11px);
+      bottom: -12px;
+      clip-path: polygon(0 0, 100% 0, 50% 100%);
+    }
+
+    .guided-tutorial-callout[data-placement="top"]::after{
+      width: 18px;
+      height: 11px;
+      left: calc(50% - 9px);
+      bottom: -10px;
+      clip-path: polygon(0 0, 100% 0, 50% 100%);
+    }
+
+    .guided-tutorial-callout[data-placement="bottom"]::before{
+      width: 22px;
+      height: 14px;
+      left: calc(50% - 11px);
+      top: -12px;
+      clip-path: polygon(50% 0, 0 100%, 100% 100%);
+    }
+
+    .guided-tutorial-callout[data-placement="bottom"]::after{
+      width: 18px;
+      height: 11px;
+      left: calc(50% - 9px);
+      top: -10px;
+      clip-path: polygon(50% 0, 0 100%, 100% 100%);
+    }
+
+    .guided-tutorial-callout[data-placement="left"]::before{
+      width: 14px;
+      height: 22px;
+      right: -12px;
+      top: calc(50% - 11px);
+      clip-path: polygon(0 0, 100% 50%, 0 100%);
+    }
+
+    .guided-tutorial-callout[data-placement="left"]::after{
+      width: 11px;
+      height: 18px;
+      right: -10px;
+      top: calc(50% - 9px);
+      clip-path: polygon(0 0, 100% 50%, 0 100%);
+    }
+
+    .guided-tutorial-callout[data-placement="right"]::before{
+      width: 14px;
+      height: 22px;
+      left: -12px;
+      top: calc(50% - 11px);
+      clip-path: polygon(100% 0, 0 50%, 100% 100%);
+    }
+
+    .guided-tutorial-callout[data-placement="right"]::after{
+      width: 11px;
+      height: 18px;
+      left: -10px;
+      top: calc(50% - 9px);
+      clip-path: polygon(100% 0, 0 50%, 100% 100%);
+    }
+
+    .guided-tutorial-callout[data-placement="center"]::before,
+    .guided-tutorial-callout[data-placement="center"]::after{
+      display: none;
+    }
+
+    .guided-tutorial-kicker{
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-start;
+      min-width: 0;
+      min-height: 30px;
+      max-width: 100%;
+      padding: 4px 11px;
+      border-radius: 11px;
+      background: linear-gradient(180deg, rgba(59, 64, 73, .95), rgba(37, 40, 47, .95));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.22);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .01em;
+      line-height: 1.2;
+      text-transform: none;
+      text-align: left;
+      white-space: normal;
+      color: #f3f6fb;
+      margin: 0 12px 8px 0;
+      vertical-align: middle;
+    }
+
+    .guided-tutorial-title{
+      display: inline;
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: .01em;
+      color: #f7fbff;
+      vertical-align: middle;
+    }
+
+    .guided-tutorial-title:empty{
+      display: none;
+    }
+
+    .guided-tutorial-message{
+      margin: 10px 0 0;
+      font-size: 13px;
+      line-height: 1.34;
+      font-weight: 520;
+      color: rgba(244, 251, 255, .98);
+      text-wrap: pretty;
+    }
+
+    .guided-tutorial-actions{
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .guided-tutorial-btn{
+      appearance: none;
+      border: 1px solid rgba(238, 248, 255, .45);
+      background: rgba(22, 62, 100, .36);
+      color: rgba(246, 252, 255, .98);
+      border-radius: 10px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 630;
+      cursor: pointer;
+      transition: background .15s ease, border-color .15s ease;
+    }
+
+    .guided-tutorial-btn:hover{
+      background: rgba(17, 50, 84, .48);
+      border-color: rgba(250, 255, 255, .68);
+    }
+
+    .guided-tutorial-btn[disabled]{
+      opacity: .45;
+      cursor: default;
+    }
+
+    .guided-tutorial-btn.primary{
+      background: rgba(14, 44, 76, .52);
+      border-color: rgba(251, 255, 255, .74);
+    }
+
+    .guided-tutorial-btn.primary:hover{
+      background: rgba(10, 34, 60, .62);
+    }
+
+    @media (max-width: 900px){
+      .guided-tutorial-callout{
+        width: min(92vw, 430px);
+        border-radius: 18px;
+        padding: 12px 14px;
+      }
+
+      .guided-tutorial-kicker{
+        min-width: 0;
+        min-height: 26px;
+        padding: 3px 9px;
+        border-radius: 9px;
+        font-size: 10px;
+        line-height: 1.2;
+      }
+
+      .guided-tutorial-title{
+        font-size: 16px;
+      }
+
+      .guided-tutorial-message{
+        margin-top: 8px;
+        font-size: 12px;
+      }
+
+      .guided-tutorial-callout[data-placement="top"]::before,
+      .guided-tutorial-callout[data-placement="bottom"]::before{
+        width: 18px;
+        height: 11px;
+        left: calc(50% - 9px);
+      }
+
+      .guided-tutorial-callout[data-placement="top"]::after,
+      .guided-tutorial-callout[data-placement="bottom"]::after{
+        width: 14px;
+        height: 8px;
+        left: calc(50% - 7px);
+      }
+
+      .guided-tutorial-callout[data-placement="top"]::before{
+        bottom: -9px;
+      }
+
+      .guided-tutorial-callout[data-placement="top"]::after{
+        bottom: -7px;
+      }
+
+      .guided-tutorial-callout[data-placement="bottom"]::before{
+        top: -9px;
+      }
+
+      .guided-tutorial-callout[data-placement="bottom"]::after{
+        top: -7px;
+      }
+
+      .guided-tutorial-callout[data-placement="left"]::before,
+      .guided-tutorial-callout[data-placement="right"]::before{
+        width: 11px;
+        height: 18px;
+        top: calc(50% - 9px);
+      }
+
+      .guided-tutorial-callout[data-placement="left"]::after,
+      .guided-tutorial-callout[data-placement="right"]::after{
+        width: 8px;
+        height: 14px;
+        top: calc(50% - 7px);
+      }
+
+      .guided-tutorial-callout[data-placement="left"]::before{
+        right: -9px;
+      }
+
+      .guided-tutorial-callout[data-placement="left"]::after{
+        right: -7px;
+      }
+
+      .guided-tutorial-callout[data-placement="right"]::before{
+        left: -9px;
+      }
+
+      .guided-tutorial-callout[data-placement="right"]::after{
+        left: -7px;
+      }
+    }
+  `;
+
+  document.head.appendChild(style);
+}
+
+function buildGuidedTutorialSteps(){
+  return [
+    {
+      id: "main-nav",
+      mode: VIEW_MODE_SUMMARY,
+      title: "Navegacion principal",
+      message: "Desde esta barra cambias entre Resumen, Tareas diarias, Proyectos, Social y Salas de estudio.",
+      target: () => board?.querySelector(".summary-nav") || document.getElementById("viewToggle"),
+      placement: "bottom"
+    },
+    {
+      id: "summary-search",
+      mode: VIEW_MODE_SUMMARY,
+      title: "Busqueda y carga rapida",
+      message: "Escribi aqui para buscar tareas de cualquier vista o crear una tarea nueva en segundos.",
+      target: () => {
+        const searchInput = board?.querySelector("#summarySearchInput");
+        return (
+          searchInput?.closest(".summary-search")
+          || board?.querySelector(".summary-search")
+          || searchInput
+          || null
+        );
+      },
+      placement: "bottom"
+    },
+    {
+      id: "summary-calendar",
+      mode: VIEW_MODE_SUMMARY,
+      title: "Calendario interactivo",
+      message: "Este calendario marca dias con actividad y te deja entrar directo al dia para planificarlo.",
+      target: () => board?.querySelector("#summaryDashboardCalendar"),
+      placement: "right"
+    },
+    {
+      id: "daily-board",
+      mode: VIEW_MODE_TASKS,
+      title: "Tablero diario",
+      message: "Aca ves varios dias a la vez y podes mover tareas por prioridad o por fecha con arrastrar y soltar.",
+      target: () => board?.querySelector("#tasksDailyBoard"),
+      placement: "bottom"
+    },
+    {
+      id: "daily-add",
+      mode: VIEW_MODE_TASKS,
+      title: "Alta rapida de tareas",
+      message: "Cada columna tiene este campo para cargar tareas al instante en el dia correspondiente.",
+      target: () => (
+        board?.querySelector(".tasks-daily-board .col.today-highlight .adder .input")
+        || board?.querySelector(".tasks-daily-board .col .adder .input")
+      ),
+      placement: "top"
+    },
+    {
+      id: "daily-gestures",
+      mode: VIEW_MODE_TASKS,
+      title: "Gestos y acciones",
+      message: () => (
+        isMobileViewport()
+          ? "En celular: desliza la tarea a la derecha para completarla y a la izquierda para borrarla. Mantener pulsado abre acciones extra."
+          : "Hace click en el circulo de la izquierda para completar o desmarcar una tarea."
+      ),
+      target: () => (
+        board?.querySelector(".tasks-daily-board .task .task-swipe-surface")
+        || board?.querySelector(".tasks-daily-board .task")
+        || board?.querySelector(".tasks-daily-board .col .list")
+      ),
+      placement: "bottom"
+    },
+    {
+      id: "projects",
+      mode: VIEW_MODE_PROJECTS,
+      title: "Vista Proyectos",
+      message: "Usa proyectos para organizar tareas por tema sin fecha fija y separar frentes de trabajo.",
+      target: () => board?.querySelector("#projectsDashboardGrid"),
+      placement: "bottom"
+    },
+    {
+      id: "social",
+      mode: VIEW_MODE_SOCIAL,
+      title: "Vista Social",
+      message: "Desde aqui buscas personas, envias solicitudes y gestionas amistades para estudiar o trabajar con otros.",
+      target: () => {
+        const searchInput = board?.querySelector("#socialSearchInput");
+        return (
+          searchInput?.closest(".social-search")
+          || board?.querySelector(".social-card-search .social-search")
+          || board?.querySelector(".social-card-search")
+          || searchInput
+          || null
+        );
+      },
+      placement: "bottom"
+    },
+    {
+      id: "study-rooms-list",
+      mode: VIEW_MODE_STUDY_ROOMS,
+      title: "Salas de estudio",
+      message: "En este panel creas una sala, ves salas activas y te sumas a sesiones colaborativas.",
+      target: () => (
+        board?.querySelector("#studyRoomsCreateFormSlot .study-create-form")
+        || board?.querySelector("#studyRoomsActiveList")
+      ),
+      placement: "right"
+    },
+    {
+      id: "study-workspace",
+      mode: VIEW_MODE_STUDY_ROOMS,
+      title: "Workspace de sala",
+      message: "Dentro de la sala vas a encontrar un panel para tareas en la sesion de trabajo/estudio por usuario, donde todos pueden ver las tareas de los demas durante la sesion, ademas de musica/videos de youtube compartidos y en tiempo real, junto con un chat para la sala entera.",
+      target: () => board?.querySelector("#studyRoomWorkspace"),
+      placement: "left"
+    },
+    {
+      id: "profile-menu",
+      mode: VIEW_MODE_SUMMARY,
+      title: "Perfil y ajustes",
+      message: "Toca tu usuario para abrir el menu de perfil, ver progreso, entrar a ajustes y gestionar sesion.",
+      target: () => (
+        board?.querySelector(".summary-user-pill")
+        || document.getElementById("loginCircleBtn")
+      ),
+      placement: "bottom"
+    },
+    {
+      id: "finish",
+      mode: VIEW_MODE_SUMMARY,
+      title: "Recorrido completado",
+      message: "Listo. Ya viste los apartados clave. Cuando quieras repetir este tutorial, podes hacerlo desde el menu de Ajustes, en la pestana de Ayuda.",
+      target: null,
+      placement: "center"
+    }
+  ];
+}
+
+function waitForGuidedTutorialFrame(){
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(resolve);
+    });
+  });
+}
+
+function resolveGuidedTutorialTarget(step){
+  if (!step) return null;
+
+  if (typeof step.target === "function") {
+    try {
+      const resolved = step.target();
+      return resolved instanceof HTMLElement ? resolved : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  const selectors = Array.isArray(step.selector)
+    ? step.selector
+    : [step.selector];
+
+  for (const selector of selectors) {
+    if (!selector || typeof selector !== "string") continue;
+    const element = document.querySelector(selector);
+    if (element instanceof HTMLElement) return element;
+  }
+
+  return null;
+}
+
+function isGuidedTutorialTargetVisible(target){
+  if (!(target instanceof HTMLElement) || !target.isConnected) return false;
+  const rect = target.getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) return false;
+  if (rect.bottom < 0 || rect.right < 0) return false;
+  if (rect.top > window.innerHeight || rect.left > window.innerWidth) return false;
+  return true;
+}
+
+async function waitForGuidedTutorialTarget(step, stepToken, maxAttempts = 18){
+  if (!step || (typeof step.target !== "function" && !step.selector)) {
+    return null;
+  }
+
+  let fallback = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (!guidedTutorialState.active || guidedTutorialState.stepToken !== stepToken) {
+      return null;
+    }
+
+    const target = resolveGuidedTutorialTarget(step);
+    if (target) {
+      fallback = target;
+      if (isGuidedTutorialTargetVisible(target)) {
+        return target;
+      }
+    }
+
+    await waitForGuidedTutorialFrame();
+  }
+
+  return fallback;
+}
+
+function ensureGuidedTutorialOverlay(){
+  if (guidedTutorialState.root) return;
+
+  ensureGuidedTutorialStyles();
+
+  const root = document.createElement("div");
+  root.className = "guided-tutorial-root";
+  root.id = "guidedTutorialRoot";
+  root.innerHTML = `
+    <div class="guided-tutorial-backdrop" id="guidedTutorialBackdrop"></div>
+    <div class="guided-tutorial-spotlight" id="guidedTutorialSpotlight"></div>
+    <section class="guided-tutorial-callout" id="guidedTutorialCallout" role="dialog" aria-modal="true" aria-label="Tutorial inicial">
+      <div class="guided-tutorial-kicker" id="guidedTutorialKicker"></div>
+      <h3 class="guided-tutorial-title" id="guidedTutorialTitle"></h3>
+      <p class="guided-tutorial-message" id="guidedTutorialMessage"></p>
+      <div class="guided-tutorial-actions">
+        <button type="button" class="guided-tutorial-btn" id="guidedTutorialPrevBtn">Anterior</button>
+        <button type="button" class="guided-tutorial-btn primary" id="guidedTutorialNextBtn">Siguiente</button>
+      </div>
+    </section>
+  `;
+
+  document.body.appendChild(root);
+
+  guidedTutorialState.root = root;
+  guidedTutorialState.backdrop = root.querySelector("#guidedTutorialBackdrop");
+  guidedTutorialState.spotlight = root.querySelector("#guidedTutorialSpotlight");
+  guidedTutorialState.callout = root.querySelector("#guidedTutorialCallout");
+  guidedTutorialState.calloutKicker = root.querySelector("#guidedTutorialKicker");
+  guidedTutorialState.calloutTitle = root.querySelector("#guidedTutorialTitle");
+  guidedTutorialState.calloutMessage = root.querySelector("#guidedTutorialMessage");
+  guidedTutorialState.prevButton = root.querySelector("#guidedTutorialPrevBtn");
+  guidedTutorialState.nextButton = root.querySelector("#guidedTutorialNextBtn");
+  guidedTutorialState.skipButton = null;
+  guidedTutorialState.closeButton = null;
+
+  guidedTutorialState.prevButton?.addEventListener("click", () => {
+    void moveGuidedTutorialStep(-1);
+  });
+
+  guidedTutorialState.nextButton?.addEventListener("click", () => {
+    const isLastStep = guidedTutorialState.stepIndex >= guidedTutorialState.steps.length - 1;
+    if (isLastStep) {
+      stopGuidedTutorial({ completed: true, silentToast: false });
+      return;
+    }
+    void moveGuidedTutorialStep(1);
+  });
+}
+
+function setGuidedTutorialStepCopy(step){
+  if (!guidedTutorialState.callout || !step) return;
+
+  const totalSteps = guidedTutorialState.steps.length;
+  const safeTotal = Math.max(1, totalSteps);
+  const safeIndex = Math.max(0, guidedTutorialState.stepIndex);
+  const isLastStep = safeIndex >= safeTotal - 1;
+  const safeTitle = String(step.title || "Tutorial").trim() || "Tutorial";
+  const safeTitleUpper = safeTitle.toLocaleUpperCase("es-AR");
+
+  if (guidedTutorialState.calloutKicker) {
+    guidedTutorialState.calloutKicker.textContent = safeTitleUpper;
+  }
+  if (guidedTutorialState.calloutTitle) {
+    guidedTutorialState.calloutTitle.textContent = "";
+  }
+  if (guidedTutorialState.calloutMessage) {
+    let resolvedMessage = "";
+    if (typeof step.message === "function") {
+      try {
+        resolvedMessage = String(step.message() || "");
+      } catch (_error) {
+        resolvedMessage = "";
+      }
+    } else {
+      resolvedMessage = String(step.message || "");
+    }
+    guidedTutorialState.calloutMessage.textContent = resolvedMessage;
+  }
+
+  if (guidedTutorialState.prevButton) {
+    guidedTutorialState.prevButton.disabled = safeIndex === 0;
+  }
+  if (guidedTutorialState.nextButton) {
+    guidedTutorialState.nextButton.textContent = isLastStep ? "Finalizar" : "Siguiente";
+  }
+}
+
+function getGuidedTutorialPlacementOrder(preferred){
+  const base = ["bottom", "top", "right", "left"];
+  if (!preferred || preferred === "center") return [...base];
+  const safePreferred = String(preferred || "").trim().toLowerCase();
+  return [safePreferred, ...base.filter((item) => item !== safePreferred)];
+}
+
+function clampGuidedTutorialValue(value, min, max){
+  return Math.min(max, Math.max(min, value));
+}
+
+function computeGuidedTutorialCalloutPosition(
+  targetRect,
+  calloutRect,
+  placement,
+  viewportWidth,
+  viewportHeight,
+  padding,
+  gap
+){
+  const centerX = targetRect.left + (targetRect.width / 2);
+  const centerY = targetRect.top + (targetRect.height / 2);
+  let left = padding;
+  let top = padding;
+
+  if (placement === "top") {
+    left = centerX - (calloutRect.width / 2);
+    top = targetRect.top - calloutRect.height - gap;
+  } else if (placement === "bottom") {
+    left = centerX - (calloutRect.width / 2);
+    top = targetRect.bottom + gap;
+  } else if (placement === "left") {
+    left = targetRect.left - calloutRect.width - gap;
+    top = centerY - (calloutRect.height / 2);
+  } else if (placement === "right") {
+    left = targetRect.right + gap;
+    top = centerY - (calloutRect.height / 2);
+  }
+
+  const fits = (
+    left >= padding &&
+    top >= padding &&
+    (left + calloutRect.width) <= (viewportWidth - padding) &&
+    (top + calloutRect.height) <= (viewportHeight - padding)
+  );
+
+  return {
+    left: clampGuidedTutorialValue(left, padding, Math.max(padding, viewportWidth - calloutRect.width - padding)),
+    top: clampGuidedTutorialValue(top, padding, Math.max(padding, viewportHeight - calloutRect.height - padding)),
+    fits
+  };
+}
+
+function positionGuidedTutorialLayer(){
+  if (!guidedTutorialState.active) return;
+  const root = guidedTutorialState.root;
+  const callout = guidedTutorialState.callout;
+  const spotlight = guidedTutorialState.spotlight;
+  if (!callout || !spotlight) return;
+
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const padding = 12;
+  const gap = 14;
+  const step = guidedTutorialState.steps[guidedTutorialState.stepIndex];
+  const target = guidedTutorialState.currentTarget;
+  const hasVisibleTarget = isGuidedTutorialTargetVisible(target);
+
+  if (hasVisibleTarget) {
+    root?.classList.add("spotlight-active");
+    const rect = target.getBoundingClientRect();
+    const halo = 8;
+    const left = clampGuidedTutorialValue(rect.left - halo, 4, Math.max(4, viewportWidth - 4));
+    const top = clampGuidedTutorialValue(rect.top - halo, 4, Math.max(4, viewportHeight - 4));
+    const width = clampGuidedTutorialValue(rect.width + (halo * 2), 24, Math.max(24, viewportWidth - left - 4));
+    const height = clampGuidedTutorialValue(rect.height + (halo * 2), 24, Math.max(24, viewportHeight - top - 4));
+    spotlight.style.left = `${left}px`;
+    spotlight.style.top = `${top}px`;
+    spotlight.style.width = `${width}px`;
+    spotlight.style.height = `${height}px`;
+    spotlight.classList.add("active");
+  } else {
+    root?.classList.remove("spotlight-active");
+    spotlight.classList.remove("active");
+    spotlight.style.width = "0px";
+    spotlight.style.height = "0px";
+  }
+
+  callout.style.left = `${padding}px`;
+  callout.style.top = `${padding}px`;
+  callout.dataset.placement = "center";
+
+  const calloutRect = callout.getBoundingClientRect();
+  if (!hasVisibleTarget || !step || step.placement === "center") {
+    const centerLeft = (viewportWidth / 2) - (calloutRect.width / 2);
+    const centerTop = (viewportHeight / 2) - (calloutRect.height / 2);
+    callout.style.left = `${clampGuidedTutorialValue(centerLeft, padding, Math.max(padding, viewportWidth - calloutRect.width - padding))}px`;
+    callout.style.top = `${clampGuidedTutorialValue(centerTop, padding, Math.max(padding, viewportHeight - calloutRect.height - padding))}px`;
+    callout.dataset.placement = "center";
+    return;
+  }
+
+  const targetRect = target.getBoundingClientRect();
+  const placementOrder = getGuidedTutorialPlacementOrder(step.placement);
+  let chosenPlacement = placementOrder[0] || "bottom";
+  let chosenPosition = null;
+
+  for (const placement of placementOrder) {
+    const candidate = computeGuidedTutorialCalloutPosition(
+      targetRect,
+      calloutRect,
+      placement,
+      viewportWidth,
+      viewportHeight,
+      padding,
+      gap
+    );
+    if (candidate.fits) {
+      chosenPlacement = placement;
+      chosenPosition = candidate;
+      break;
+    }
+    if (!chosenPosition) {
+      chosenPosition = candidate;
+      chosenPlacement = placement;
+    }
+  }
+
+  if (!chosenPosition) {
+    chosenPosition = {
+      left: padding,
+      top: padding
+    };
+  }
+
+  callout.style.left = `${chosenPosition.left}px`;
+  callout.style.top = `${chosenPosition.top}px`;
+  callout.dataset.placement = chosenPlacement;
+}
+
+function scheduleGuidedTutorialPositioning(){
+  if (!guidedTutorialState.active) return;
+
+  if (guidedTutorialState.repositionRaf) {
+    cancelAnimationFrame(guidedTutorialState.repositionRaf);
+    guidedTutorialState.repositionRaf = 0;
+  }
+
+  guidedTutorialState.repositionRaf = requestAnimationFrame(() => {
+    guidedTutorialState.repositionRaf = 0;
+    positionGuidedTutorialLayer();
+  });
+}
+
+async function showGuidedTutorialStep(stepIndex){
+  if (!guidedTutorialState.active || !guidedTutorialState.steps.length) return;
+
+  const safeStepIndex = clampGuidedTutorialValue(
+    Number(stepIndex) || 0,
+    0,
+    guidedTutorialState.steps.length - 1
+  );
+  guidedTutorialState.stepIndex = safeStepIndex;
+  const step = guidedTutorialState.steps[safeStepIndex];
+  const stepToken = ++guidedTutorialState.stepToken;
+
+  if (step?.mode) {
+    const normalizedTargetMode = normalizeViewMode(step.mode);
+    if (normalizedTargetMode !== currentViewMode) {
+      await setViewMode(normalizedTargetMode);
+    }
+  }
+
+  if (!guidedTutorialState.active || guidedTutorialState.stepToken !== stepToken) return;
+
+  const target = await waitForGuidedTutorialTarget(step, stepToken);
+
+  if (!guidedTutorialState.active || guidedTutorialState.stepToken !== stepToken) return;
+
+  guidedTutorialState.currentTarget = target;
+
+  if (target instanceof HTMLElement) {
+    try {
+      target.scrollIntoView({
+        block: "center",
+        inline: "center",
+        behavior: "smooth"
+      });
+    } catch (_error) {
+      target.scrollIntoView();
+    }
+  }
+
+  setGuidedTutorialStepCopy(step);
+  await waitForGuidedTutorialFrame();
+
+  if (!guidedTutorialState.active || guidedTutorialState.stepToken !== stepToken) return;
+  scheduleGuidedTutorialPositioning();
+}
+
+async function moveGuidedTutorialStep(delta){
+  if (!guidedTutorialState.active) return;
+  const nextIndex = guidedTutorialState.stepIndex + Number(delta || 0);
+
+  if (nextIndex < 0) {
+    return;
+  }
+
+  if (nextIndex >= guidedTutorialState.steps.length) {
+    stopGuidedTutorial({ completed: true, silentToast: false });
+    return;
+  }
+
+  await showGuidedTutorialStep(nextIndex);
+}
+
+function cleanupGuidedTutorialListeners(){
+  if (guidedTutorialState.resizeHandler) {
+    window.removeEventListener("resize", guidedTutorialState.resizeHandler);
+  }
+  if (guidedTutorialState.scrollHandler) {
+    document.removeEventListener("scroll", guidedTutorialState.scrollHandler, true);
+  }
+  if (guidedTutorialState.keydownHandler) {
+    document.removeEventListener("keydown", guidedTutorialState.keydownHandler, true);
+  }
+
+  guidedTutorialState.resizeHandler = null;
+  guidedTutorialState.scrollHandler = null;
+  guidedTutorialState.keydownHandler = null;
+}
+
+function stopGuidedTutorial({ completed = false, silentToast = true } = {}){
+  const shouldPersistCompletion = Boolean(completed && guidedTutorialState.shouldPersistCompletion);
+
+  guidedTutorialState.stepToken += 1;
+  guidedTutorialState.active = false;
+
+  if (guidedTutorialState.repositionRaf) {
+    cancelAnimationFrame(guidedTutorialState.repositionRaf);
+    guidedTutorialState.repositionRaf = 0;
+  }
+
+  cleanupGuidedTutorialListeners();
+
+  if (guidedTutorialState.root) {
+    guidedTutorialState.root.remove();
+  }
+
+  guidedTutorialState.root = null;
+  guidedTutorialState.backdrop = null;
+  guidedTutorialState.spotlight = null;
+  guidedTutorialState.callout = null;
+  guidedTutorialState.calloutKicker = null;
+  guidedTutorialState.calloutTitle = null;
+  guidedTutorialState.calloutMessage = null;
+  guidedTutorialState.prevButton = null;
+  guidedTutorialState.nextButton = null;
+  guidedTutorialState.skipButton = null;
+  guidedTutorialState.closeButton = null;
+  guidedTutorialState.shouldPersistCompletion = false;
+  guidedTutorialState.steps = [];
+  guidedTutorialState.stepIndex = 0;
+  guidedTutorialState.currentTarget = null;
+
+  if (shouldPersistCompletion) {
+    void markGuidedTutorialAsCompletedForCurrentUser();
+  }
+
+  if (!silentToast) {
+    showToast(completed ? "Tutorial inicial completado." : "Tutorial cerrado.");
+  }
+}
+
+async function startGuidedTutorial({ persistCompletion = !guidedTutorialCompletedForCurrentUser } = {}){
+  if (guidedTutorialState.active) {
+    stopGuidedTutorial({ completed: false, silentToast: true });
+  }
+
+  closeAdminConsole();
+  closeCornerMenu();
+  if (typeof closeSettingsOverlay === "function") closeSettingsOverlay();
+  if (typeof closeFeedbackModal === "function") closeFeedbackModal();
+  if (typeof closeLevelMenu === "function") closeLevelMenu();
+  if (typeof resetTransientOverlays === "function") resetTransientOverlays();
+
+  ensureGuidedTutorialOverlay();
+
+  guidedTutorialState.active = true;
+  guidedTutorialState.shouldPersistCompletion = Boolean(persistCompletion);
+  guidedTutorialState.steps = buildGuidedTutorialSteps();
+  guidedTutorialState.stepIndex = 0;
+  guidedTutorialState.currentTarget = null;
+  guidedTutorialState.stepToken += 1;
+
+  guidedTutorialState.resizeHandler = () => {
+    scheduleGuidedTutorialPositioning();
+  };
+  window.addEventListener("resize", guidedTutorialState.resizeHandler, { passive: true });
+
+  guidedTutorialState.scrollHandler = () => {
+    scheduleGuidedTutorialPositioning();
+  };
+  document.addEventListener("scroll", guidedTutorialState.scrollHandler, true);
+
+  guidedTutorialState.keydownHandler = (event) => {
+    if (!guidedTutorialState.active) return;
+    const key = String(event.key || "");
+
+    if (key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    if (key === "ArrowLeft") {
+      event.preventDefault();
+      event.stopPropagation();
+      void moveGuidedTutorialStep(-1);
+      return;
+    }
+
+    if (key === "ArrowRight" || key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      const isLastStep = guidedTutorialState.stepIndex >= guidedTutorialState.steps.length - 1;
+      if (isLastStep) {
+        stopGuidedTutorial({ completed: true, silentToast: false });
+        return;
+      }
+      void moveGuidedTutorialStep(1);
+    }
+  };
+  document.addEventListener("keydown", guidedTutorialState.keydownHandler, true);
+
+  await showGuidedTutorialStep(0);
+}
+
 async function executeAdminConsoleCommand(rawCommand){
   const command = String(rawCommand || "").trim();
   if (!command) return;
@@ -4185,6 +6078,42 @@ async function executeAdminConsoleCommand(rawCommand){
   if (/^\/pomodoro$/i.test(command)) {
     openPomodoroMode();
     adminConsoleLog("Modo enfoque desplegado. Configurá la sesión y empezá cuando quieras.", "ok");
+    return;
+  }
+
+  const tutorialMatch = command.match(
+    /^\/tutorial(?:\s+(start|iniciar|reiniciar|restart|stop|salir|cancelar|cancel|end|fin))?\s*$/i
+  );
+  if (tutorialMatch) {
+    const action = String(tutorialMatch[1] || "start").trim().toLowerCase();
+    const stopActions = new Set(["stop", "salir", "cancelar", "cancel", "end", "fin"]);
+
+    if (stopActions.has(action)) {
+      if (!guidedTutorialState.active) {
+        adminConsoleLog("No hay un tutorial activo en este momento.", "info");
+        return;
+      }
+      adminConsoleLog("Este tutorial es obligatorio: completá todos los pasos para finalizarlo.", "info");
+      return;
+    }
+
+    await startGuidedTutorial();
+    adminConsoleLog(
+      "Tutorial inicial iniciado. Completá todos los pasos para finalizarlo.",
+      "ok"
+    );
+    return;
+  }
+
+  if (/^\/social$/i.test(command)) {
+    await setViewMode(VIEW_MODE_SOCIAL);
+    adminConsoleLog("Vista social abierta.", "ok");
+    return;
+  }
+
+  if (/^\/salas(?:\s+de\s+estudio)?$/i.test(command)) {
+    await setViewMode(VIEW_MODE_STUDY_ROOMS);
+    adminConsoleLog("Vista de salas de estudio abierta.", "ok");
     return;
   }
 
@@ -4452,6 +6381,7 @@ function ensureAdminDebugConsole(){
 }
 
 function handleAdminConsoleSequence(event){
+  if (guidedTutorialState.active) return;
   if (isPomodoroOverlayOpen()) return;
 
   if (event.code === "Escape" && adminConsoleState.root?.classList.contains("open")) {
@@ -4563,9 +6493,18 @@ function renderLoginCircle(photoURL, displayName){
 
 onAuthStateChanged(auth, async (user) => {
 
-  if (user) {
+	  if (user) {
 
-    currentUser = user;
+	    await leaveStudyRoomSession({ silent: true });
+		    currentUser = user;
+        playerHydratedForSession = false;
+        player = claimLegacyPlayerForUserIfNeeded(user.uid);
+	      resetGuidedTutorialAutostartState();
+	      guidedTutorialCompletedForCurrentUser = getStoredGuidedTutorialCompleted(user.uid);
+		    resetSocialState();
+		    resetStudyRoomsState();
+        lastHandledStudyRoomClosureSummaryId = "";
+	    void restoreStudyRoomActiveSessionFromStorage();
     document.body.classList.remove("logged-out");
     authGate?.classList.remove("open");
     resetAuthGateStyles();
@@ -4585,12 +6524,14 @@ onAuthStateChanged(auth, async (user) => {
       unsubscribe = null;
     }
 
-	    const userRef = doc(db, "users", user.uid);
-	    let leaderboardPlayerSnapshotPromise = null;
-	    const getLeaderboardPlayerSnapshotOnce = () => {
-	      if (!leaderboardPlayerSnapshotPromise) {
-	        leaderboardPlayerSnapshotPromise = fetchLeaderboardPlayerSnapshot(user.uid);
-	      }
+		    const userRef = doc(db, "users", user.uid);
+		    let leaderboardPlayerSnapshotPromise = null;
+	      let lastUserCoreRenderSignature = "";
+	      let lastUserProjectUiStateSignature = "";
+		    const getLeaderboardPlayerSnapshotOnce = () => {
+		      if (!leaderboardPlayerSnapshotPromise) {
+		        leaderboardPlayerSnapshotPromise = fetchLeaderboardPlayerSnapshot(user.uid);
+		      }
 	      return leaderboardPlayerSnapshotPromise;
 	    };
 
@@ -4610,10 +6551,12 @@ onAuthStateChanged(auth, async (user) => {
 
       if (!snapshot.exists()) return;   // 🔥 salir si el documento no existe
 
-      if (snapshot.exists()) {
-        const data = snapshot.data();
+	      if (snapshot.exists()) {
+	        const data = snapshot.data();
+	        applySocialStateFromUserData(data, { allowToast: true });
+          void maybeHandleStudyRoomClosureSummaryFromUserData(data);
 
-        officeModeEnabled = data.officeModeEnabled ?? data.securityPinEnabled ?? false;
+	        officeModeEnabled = data.officeModeEnabled ?? data.securityPinEnabled ?? false;
         officeModeTimeoutSeconds = normalizeOfficeModeTimeout(
           data.officeModeTimeoutSeconds
         );
@@ -4633,22 +6576,49 @@ onAuthStateChanged(auth, async (user) => {
             clearLockFeedback();
             resetInactivityTimer();
           }
-        }else{
-          clearTimeout(inactivityTimer);
-          isLocked = false;
-          hideLockScreen();
-        }
+	        }else{
+	          clearTimeout(inactivityTimer);
+	          isLocked = false;
+	          hideLockScreen();
+	        }
 
-        const cloudTasks = data.tasks || {};
-        const cloudProjects = data.projects || {};
+	          const nextProjectUiStateSignature = buildProjectsCompletedTasksCollapseSignature(
+	            data.projects || {}
+	          );
+	          const didProjectUiStateChange =
+	            nextProjectUiStateSignature !== lastUserProjectUiStateSignature;
+	          lastUserProjectUiStateSignature = nextProjectUiStateSignature;
+
+	          const nextCoreRenderSignature = buildUserCoreRenderSignature(data);
+	          const shouldRunFullAppRefresh = nextCoreRenderSignature !== lastUserCoreRenderSignature;
+	          lastUserCoreRenderSignature = nextCoreRenderSignature;
+	          if (!shouldRunFullAppRefresh) {
+	            if (didProjectUiStateChange) {
+	              const appliedProjectUiState = applyProjectsCompletedTasksCollapsedFromCloud(
+	                data.projects || {}
+	              );
+	              if (appliedProjectUiState && currentViewMode === VIEW_MODE_PROJECTS) {
+	                renderProjectsView();
+	              }
+	            }
+	            setStatusSaved();
+	            maybeShowChangelogUpdateModal(data || {});
+              queueGuidedTutorialAutostartIfNeeded(data || {});
+	            return;
+	          }
+
+	        const cloudTasks = data.tasks || {};
+	        const cloudProjects = data.projects || {};
         const cloudProjectOrder = Array.isArray(data.projectOrder) ? data.projectOrder : [];
         const cloudLabels = normalizeLabelCatalog(data.labels || []);
+        const cloudDailyHistory = normalizeDailyCompletionHistory(data.dailyHistory || {});
 
         const localData = parseStoredAppData(JSON.parse(localStorage.getItem(storeKey)) || {});
         const localTasks = localData.tasks || {};
         const localProjects = localData.projects || {};
         const localProjectOrder = Array.isArray(localData.projectOrder) ? localData.projectOrder : [];
         const localLabels = normalizeLabelCatalog(localData.labels || []);
+        const localDailyHistory = normalizeDailyCompletionHistory(localData.dailyHistory || {});
 
         // 🔥 fusionar tareas
         tasks = { ...cloudTasks };
@@ -4684,17 +6654,23 @@ onAuthStateChanged(auth, async (user) => {
         );
 
         taskLabels = mergeLabelCatalog(cloudLabels, localLabels);
+        dailyCompletionHistory = mergeDailyCompletionHistory(
+          cloudDailyHistory,
+          localDailyHistory
+        );
 
         const hasLocalTasks = Object.keys(localTasks).length > 0;
         const hasLocalProjects = Object.keys(localProjects).length > 0;
         const hasLocalLabels = localLabels.length > 0;
+        const hasLocalDailyHistory = Object.keys(localDailyHistory).length > 0;
 
-        if(hasLocalTasks || hasLocalProjects || hasLocalLabels || localProjectOrder.length > 0){
+        if(hasLocalTasks || hasLocalProjects || hasLocalLabels || localProjectOrder.length > 0 || hasLocalDailyHistory){
           await setDoc(userRef,{
             tasks,
             projects,
             labels: taskLabels,
-            projectOrder
+            projectOrder,
+            dailyHistory: dailyCompletionHistory
           },{ merge:true });
         }
 
@@ -4748,14 +6724,15 @@ onAuthStateChanged(auth, async (user) => {
           }
         }
 
-        if (shouldSyncPlayerToCloud && currentUser) {
-          await savePlayer();
-        }
+	        if (shouldSyncPlayerToCloud && currentUser) {
+	          await savePlayer();
+	        }
+	        playerHydratedForSession = true;
 
-        // 🔥 cargar tema del usuario
-        if (data.theme) {
-          currentTheme = normalizeThemeName(data.theme);
-          applyTheme(currentTheme);
+	        // 🔥 cargar tema del usuario
+	        if (data.theme) {
+	          currentTheme = normalizeThemeName(data.theme);
+	          applyTheme(currentTheme);
         }
 
         if (data.mode) {
@@ -4778,19 +6755,31 @@ onAuthStateChanged(auth, async (user) => {
         projects = localData.projects || {};
         projectOrder = reconcileProjectOrder(localData.projectOrder || [], projects);
         taskLabels = normalizeLabelCatalog(localData.labels || []);
+        dailyCompletionHistory = normalizeDailyCompletionHistory(localData.dailyHistory || {});
         await setDoc(
           userRef,
-          { tasks, projects, labels: taskLabels, projectOrder },
+          { tasks, projects, labels: taskLabels, projectOrder, dailyHistory: dailyCompletionHistory },
           { merge: true }
         );
+        applySocialStateFromUserData({}, { allowToast: false });
       }
 
-      // Limpiar local para evitar duplicados
-      localStorage.removeItem(storeKey);
+	      // Limpiar local para evitar duplicados
+	      localStorage.removeItem(storeKey);
 
-      init();
+        const shouldSkipFullInitWhileInStudyRooms =
+          hasRendered &&
+          currentViewMode === VIEW_MODE_STUDY_ROOMS;
+        if (shouldSkipFullInitWhileInStudyRooms) {
+          patchStudyRoomsListUI();
+          patchStudyRoomChatUI();
+          patchStudyRoomMusicUI();
+          syncStudyRoomChatHeightWithMusicPlayer();
+        } else {
+	        init();
+        }
 
-      updateLevel();
+	      updateLevel();
 
       if (!hasRendered) {
           document.body.classList.remove("app-loading");
@@ -4799,10 +6788,14 @@ onAuthStateChanged(auth, async (user) => {
           hasRendered = true;
         }
 
-      setStatusSaved();
-      maybeShowChangelogUpdateModal(snapshot.data() || {});
+	      setStatusSaved();
+	      maybeShowChangelogUpdateModal(snapshot.data() || {});
+	      queueGuidedTutorialAutostartIfNeeded(snapshot.data() || {});
+        if (isPlayerReadyForAchievementChecks()) {
+          checkAchievements({ silent: false });
+        }
 
-    });
+	    });
 
     updateGreeting(user);
     updateSubtitle(user);
@@ -4818,8 +6811,15 @@ onAuthStateChanged(auth, async (user) => {
           unsubscribe = null;
         }
 
-        currentUser = null;
-        changelogModalPromptedVersion = "";
+	        await leaveStudyRoomSession({ silent: true });
+		        currentUser = null;
+            playerHydratedForSession = false;
+	          stopGuidedTutorial({ completed: false, silentToast: true });
+	          resetGuidedTutorialAutostartState();
+		        resetSocialState();
+		        resetStudyRoomsState();
+        lastHandledStudyRoomClosureSummaryId = "";
+	        changelogModalPromptedVersion = "";
         closeChangelogUpdateModal();
         document.body.classList.add("logged-out");
         authGate?.classList.add("open");
@@ -4845,6 +6845,7 @@ onAuthStateChanged(auth, async (user) => {
         projects = localData.projects || {};
         projectOrder = reconcileProjectOrder(localData.projectOrder || [], projects);
         taskLabels = normalizeLabelCatalog(localData.labels || []);
+        dailyCompletionHistory = normalizeDailyCompletionHistory(localData.dailyHistory || {});
         player = readLocalPlayerSnapshot();
         init();
 
@@ -4880,8 +6881,2658 @@ function escapeHtml(value){
     .replace(/'/g, "&#39;");
 }
 
+function stableSerialize(value){
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableSerialize(entry)).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value)
+      .sort(([a], [b]) => String(a).localeCompare(String(b), "es", { sensitivity: "base" }))
+      .map(([key, entryValue]) => {
+        return `${JSON.stringify(String(key))}:${stableSerialize(entryValue)}`;
+      });
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+function stripProjectsUiOnlyState(projectsInput = {}){
+  const safeProjects = projectsInput && typeof projectsInput === "object" && !Array.isArray(projectsInput)
+    ? projectsInput
+    : {};
+  const sanitizedProjects = {};
+
+  Object.entries(safeProjects).forEach(([projectId, rawProject]) => {
+    const safeProjectId = String(projectId || "").trim();
+    if (!safeProjectId) return;
+
+    if (!rawProject || typeof rawProject !== "object" || Array.isArray(rawProject)) {
+      sanitizedProjects[safeProjectId] = rawProject ?? null;
+      return;
+    }
+
+    const { completedTasksCollapsed, ...restProject } = rawProject;
+    sanitizedProjects[safeProjectId] = restProject;
+  });
+
+  return sanitizedProjects;
+}
+
+function buildProjectsCompletedTasksCollapseSignature(projectsInput = {}){
+  const safeProjects = projectsInput && typeof projectsInput === "object" && !Array.isArray(projectsInput)
+    ? projectsInput
+    : {};
+  const collapsedByProject = {};
+
+  Object.entries(safeProjects).forEach(([projectId, rawProject]) => {
+    const safeProjectId = String(projectId || "").trim();
+    if (!safeProjectId) return;
+    const collapsed =
+      !!(rawProject && typeof rawProject === "object" && !Array.isArray(rawProject) && rawProject.completedTasksCollapsed === true);
+    collapsedByProject[safeProjectId] = collapsed;
+  });
+
+  return stableSerialize(collapsedByProject);
+}
+
+function applyProjectsCompletedTasksCollapsedFromCloud(cloudProjectsInput = {}){
+  const safeCloudProjects =
+    cloudProjectsInput && typeof cloudProjectsInput === "object" && !Array.isArray(cloudProjectsInput)
+      ? cloudProjectsInput
+      : {};
+  let changed = false;
+
+  Object.entries(safeCloudProjects).forEach(([projectId, cloudProject]) => {
+    const safeProjectId = String(projectId || "").trim();
+    if (!safeProjectId) return;
+    const localProject = projects?.[safeProjectId];
+    if (!localProject || typeof localProject !== "object" || Array.isArray(localProject)) return;
+
+    const nextCollapsed =
+      !!(cloudProject && typeof cloudProject === "object" && !Array.isArray(cloudProject) && cloudProject.completedTasksCollapsed === true);
+
+    if ((localProject.completedTasksCollapsed === true) !== nextCollapsed) {
+      localProject.completedTasksCollapsed = nextCollapsed;
+      changed = true;
+    }
+  });
+
+  return changed;
+}
+
+function buildUserCoreRenderSignature(data = {}){
+  const safeData = data && typeof data === "object" && !Array.isArray(data)
+    ? data
+    : {};
+
+  return stableSerialize({
+    tasks: safeData.tasks || {},
+    projects: stripProjectsUiOnlyState(safeData.projects || {}),
+    projectOrder: Array.isArray(safeData.projectOrder) ? safeData.projectOrder : [],
+    labels: Array.isArray(safeData.labels) ? safeData.labels : [],
+    dailyHistory: safeData.dailyHistory || {},
+    player: safeData.player || {},
+    theme: normalizeThemeName(safeData.theme || ""),
+    mode: String(safeData.mode || "").trim().toLowerCase()
+  });
+}
+
 function getLeaderboardFallbackPhoto(name){
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(String(name || "Usuario"))}&background=random`;
+}
+
+function getSocialReadsCacheStorageKey(uid = ""){
+  const safeUid = String(uid || currentUser?.uid || "").trim();
+  if (!safeUid) return "";
+  return `${SOCIAL_CHAT_LOCAL_READS_STORAGE_PREFIX}${safeUid}`;
+}
+
+function readSocialReadCache(uid = ""){
+  const key = getSocialReadsCacheStorageKey(uid);
+  if (!key) return new Map();
+
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Map();
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return new Map();
+    }
+
+    const map = new Map();
+    Object.entries(parsed).forEach(([peerUid, value]) => {
+      const safePeerUid = String(peerUid || "").trim();
+      if (!safePeerUid) return;
+      const timestamp = Math.max(0, Number(value) || 0);
+      if (!timestamp) return;
+      map.set(safePeerUid, timestamp);
+    });
+    return map;
+  } catch (_error) {
+    return new Map();
+  }
+}
+
+function writeSocialReadCache(readMap = new Map(), uid = ""){
+  const key = getSocialReadsCacheStorageKey(uid);
+  if (!key) return;
+
+  if (!(readMap instanceof Map) || readMap.size === 0) {
+    localStorage.removeItem(key);
+    return;
+  }
+
+  const payload = {};
+  readMap.forEach((value, peerUid) => {
+    const safePeerUid = String(peerUid || "").trim();
+    const timestamp = Math.max(0, Number(value) || 0);
+    if (!safePeerUid || !timestamp) return;
+    payload[safePeerUid] = timestamp;
+  });
+
+  try {
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch (_error) {}
+}
+
+function resetSocialState(){
+  if (socialState.searchDebounceTimer) {
+    clearTimeout(socialState.searchDebounceTimer);
+    socialState.searchDebounceTimer = null;
+  }
+
+  stopSocialUnreadLiveListeners();
+
+  if (typeof socialState.chatOwnUnsub === "function") {
+    try {
+      socialState.chatOwnUnsub();
+    } catch (_error) {}
+  }
+
+  if (typeof socialState.chatFriendUnsub === "function") {
+    try {
+      socialState.chatFriendUnsub();
+    } catch (_error) {}
+  }
+
+  socialState.localFriends = [];
+  socialState.localIncomingRequests = [];
+  socialState.localOutgoingRequests = [];
+  socialState.remoteFriends = [];
+  socialState.remoteIncomingRequests = [];
+  socialState.rejectedByUid = new Map();
+  socialState.friends = [];
+  socialState.incomingRequests = [];
+  socialState.outgoingPendingByUid = new Map();
+  socialState.friendsByUid = new Map();
+  socialState.incomingByUid = new Map();
+  socialState.chatActiveFriendUid = "";
+  socialState.chatMinimized = false;
+  socialState.chatDraftByUid = new Map();
+  socialState.chatReadPendingByUid = new Map();
+  socialState.chatReadWorkerRunning = false;
+  socialState.chatUnreadByUid = new Map();
+  socialState.chatUnreadLiveOwnUnsub = null;
+  socialState.chatUnreadLiveFriendUnsubByUid = new Map();
+  socialState.chatUnreadLiveFriendDocByUid = new Map();
+  socialState.chatUnreadLiveOwnReadByUid = new Map();
+  socialState.chatRemoteReadByUid = new Map();
+  socialState.chatOwnReadByUid = new Map();
+  socialState.chatMessages = [];
+  socialState.chatLoading = false;
+  socialState.chatError = "";
+  socialState.chatOwnDocData = null;
+  socialState.chatFriendDocData = null;
+  socialState.chatDeletePrompt = null;
+  socialState.chatOwnReady = false;
+  socialState.chatFriendReady = false;
+  socialState.chatOwnUnsub = null;
+  socialState.chatFriendUnsub = null;
+  socialState.searchQuery = "";
+  socialState.searchResults = [];
+  socialState.searchLoading = false;
+  socialState.searchError = "";
+  socialState.directoryUsers = [];
+  socialState.directoryFetchedAt = 0;
+  socialState.remoteFetchedAt = 0;
+  socialState.searchToken = 0;
+  socialState.remoteFetchToken = 0;
+  socialState.hydrated = false;
+  syncSocialNavUnreadBadge(board);
+}
+
+function resetStudyRoomsState(){
+  if (typeof studyRoomsState.roomsUnsub === "function") {
+    try {
+      studyRoomsState.roomsUnsub();
+    } catch (_error) {}
+  }
+
+  if (typeof studyRoomsState.activeRoomUnsub === "function") {
+    try {
+      studyRoomsState.activeRoomUnsub();
+    } catch (_error) {}
+  }
+
+  if (studyRoomsState.musicSearchDebounceTimerByRoomId instanceof Map) {
+    studyRoomsState.musicSearchDebounceTimerByRoomId.forEach((timerId) => {
+      try {
+        clearTimeout(timerId);
+      } catch (_error) {}
+    });
+  }
+  if (studyRoomsState.musicIframeSeekSyncTimerByRoomId instanceof Map) {
+    studyRoomsState.musicIframeSeekSyncTimerByRoomId.forEach((timerId) => {
+      try {
+        clearTimeout(timerId);
+      } catch (_error) {}
+    });
+  }
+
+  studyRoomsState.rooms = [];
+  studyRoomsState.roomsLoading = false;
+  studyRoomsState.roomsError = "";
+  studyRoomsState.roomsListRenderSignature = "";
+  studyRoomsState.roomsUnsub = null;
+  studyRoomsState.roomsSource = "primary";
+  studyRoomsState.activeRoomId = "";
+  studyRoomsState.activeRoomSource = "primary";
+  studyRoomsState.activeRoomData = null;
+  studyRoomsState.activeRoomLoading = false;
+  studyRoomsState.activeRoomError = "";
+  studyRoomsState.activeRoomUnsub = null;
+  studyRoomsState.createTitleDraft = "";
+  studyRoomsState.taskDraftByRoomId = new Map();
+  studyRoomsState.chatDraftByRoomId = new Map();
+  studyRoomsState.presenceSyncedByRoomId = new Set();
+  studyRoomsState.musicSearchDraftByRoomId = new Map();
+  studyRoomsState.musicSearchResultsByRoomId = new Map();
+  studyRoomsState.musicSearchLoadingByRoomId = new Map();
+  studyRoomsState.musicSearchErrorByRoomId = new Map();
+  studyRoomsState.musicSearchTokenByRoomId = new Map();
+  studyRoomsState.musicSearchDebounceTimerByRoomId = new Map();
+  studyRoomsState.musicIframeSignatureByRoomId = new Map();
+  studyRoomsState.musicIframePendingStateByRoomId = new Map();
+  studyRoomsState.musicIframePendingSeekByRoomId = new Map();
+  studyRoomsState.musicIframeSeekSyncDraftByRoomId = new Map();
+  studyRoomsState.musicIframeSeekSyncTimerByRoomId = new Map();
+  studyRoomsState.musicIframeSeekSyncLastByRoomId = new Map();
+  studyRoomsState.musicIframeSeekSyncInFlightByRoomId = new Set();
+  studyRoomsState.musicIframeSeekObservedByRoomId = new Map();
+  clearStudyRoomSessionTracking();
+}
+
+function getStudyRoomActiveSessionStorageKey(uid = ""){
+  const safeUid = String(uid || currentUser?.uid || "").trim();
+  if (!safeUid) return "";
+  return `${STUDY_ROOM_ACTIVE_SESSION_STORAGE_PREFIX}${safeUid}`;
+}
+
+function readStoredStudyRoomActiveSession(uid = ""){
+  const key = getStudyRoomActiveSessionStorageKey(uid);
+  if (!key) return "";
+
+  try {
+    const roomId = String(localStorage.getItem(key) || "").trim();
+    return roomId;
+  } catch {
+    return "";
+  }
+}
+
+function persistStudyRoomActiveSession(roomId = "", uid = ""){
+  const key = getStudyRoomActiveSessionStorageKey(uid);
+  if (!key) return;
+
+  const safeRoomId = String(roomId || "").trim();
+  try {
+    if (!safeRoomId) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, safeRoomId);
+  } catch {}
+}
+
+function clearStoredStudyRoomActiveSession(uid = ""){
+  persistStudyRoomActiveSession("", uid);
+}
+
+function getStudyRoomClosureSummarySeenStorageKey(uid = ""){
+  const safeUid = String(uid || currentUser?.uid || "").trim();
+  if (!safeUid) return "";
+  return `${STUDY_ROOM_CLOSURE_SUMMARY_SEEN_STORAGE_PREFIX}${safeUid}`;
+}
+
+function readStoredStudyRoomClosureSummarySeenId(uid = ""){
+  const key = getStudyRoomClosureSummarySeenStorageKey(uid);
+  if (!key) return "";
+
+  try {
+    return String(localStorage.getItem(key) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function persistStudyRoomClosureSummarySeenId(summaryId = "", uid = ""){
+  const key = getStudyRoomClosureSummarySeenStorageKey(uid);
+  if (!key) return;
+  const safeSummaryId = String(summaryId || "").trim();
+
+  try {
+    if (!safeSummaryId) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, safeSummaryId);
+  } catch {}
+}
+
+async function restoreStudyRoomActiveSessionFromStorage(){
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!ownUid) return false;
+
+  const currentActiveRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  if (currentActiveRoomId) return true;
+
+  const storedRoomId = readStoredStudyRoomActiveSession(ownUid);
+  if (!storedRoomId) return false;
+
+  const opened = await openStudyRoomSession(storedRoomId);
+  if (!opened) {
+    clearStoredStudyRoomActiveSession(ownUid);
+  }
+  return opened;
+}
+
+function normalizeTextForSearch(value = ""){
+  const raw = String(value ?? "");
+  const lowered = raw.toLowerCase().trim();
+  if (typeof lowered.normalize !== "function") {
+    return lowered;
+  }
+
+  return lowered.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeSocialUser(entry = {}, fallbackUid = ""){
+  const uid = String(entry?.uid || fallbackUid || "").trim();
+  if (!uid) return null;
+
+  const email = String(entry?.email || "").trim();
+  const name = String(entry?.name || entry?.displayName || "Usuario").trim() || "Usuario";
+  const photo = String(entry?.photo || "").trim();
+  const requestedAt = Math.max(0, Number(entry?.requestedAt) || 0);
+  const addedAt = Math.max(0, Number(entry?.addedAt) || 0);
+
+  return {
+    uid,
+    name,
+    nameLower: name.toLowerCase(),
+    nameSearch: normalizeTextForSearch(name),
+    email,
+    emailLower: email.toLowerCase(),
+    photo,
+    requestedAt,
+    addedAt
+  };
+}
+
+function parseSocialUserMap(rawMap = {}){
+  if (!rawMap || typeof rawMap !== "object" || Array.isArray(rawMap)) {
+    return [];
+  }
+
+  const entries = [];
+
+  Object.entries(rawMap).forEach(([uid, value]) => {
+    if (!value || typeof value !== "object") return;
+    const normalized = normalizeSocialUser(value, uid);
+    if (!normalized) return;
+    entries.push(normalized);
+  });
+
+  return entries;
+}
+
+function parseSocialTimestampMap(rawMap = {}){
+  if (!rawMap || typeof rawMap !== "object" || Array.isArray(rawMap)) {
+    return new Map();
+  }
+
+  const parsed = new Map();
+
+  Object.entries(rawMap).forEach(([uid, value]) => {
+    const safeUid = String(uid || "").trim();
+    if (!safeUid) return;
+
+    const timestamp = Math.max(0, Number(value) || 0);
+    if (!timestamp) return;
+    parsed.set(safeUid, timestamp);
+  });
+
+  return parsed;
+}
+
+function parseSocialOutgoingMap(rawMap = {}){
+  if (!rawMap || typeof rawMap !== "object" || Array.isArray(rawMap)) {
+    return [];
+  }
+
+  const entries = [];
+
+  Object.entries(rawMap).forEach(([uid, value]) => {
+    const safeUid = String(uid || "").trim();
+    if (!safeUid || !value || typeof value !== "object") return;
+
+    const normalized = normalizeSocialUser(
+      {
+        uid: safeUid,
+        name: value.name || "Usuario",
+        photo: value.photo || "",
+        requestedAt: value.requestedAt
+      },
+      safeUid
+    );
+
+    if (!normalized) return;
+
+    entries.push({
+      ...normalized,
+      status: String(value.status || "pending").trim().toLowerCase() || "pending"
+    });
+  });
+
+  return entries;
+}
+
+function parseSocialChatReadsMap(rawMap = {}){
+  if (!rawMap || typeof rawMap !== "object" || Array.isArray(rawMap)) {
+    return new Map();
+  }
+
+  const parsed = new Map();
+
+  Object.entries(rawMap).forEach(([uid, value]) => {
+    const safeUid = String(uid || "").trim();
+    if (!safeUid) return;
+
+    let timestamp = 0;
+    if (typeof value === "number") {
+      timestamp = Math.max(0, Number(value) || 0);
+    } else if (value && typeof value === "object") {
+      timestamp = Math.max(0, Number(value.lastReadAt) || 0);
+    }
+
+    if (!timestamp) return;
+    parsed.set(safeUid, timestamp);
+  });
+
+  return parsed;
+}
+
+function getSocialReadTimestampFromDoc(data = {}, peerUid = ""){
+  const safePeerUid = String(peerUid || "").trim();
+  if (!safePeerUid || !data || typeof data !== "object") return 0;
+
+  const readMap = data?.[SOCIAL_CHAT_READS_FIELD];
+  if (!readMap || typeof readMap !== "object" || Array.isArray(readMap)) {
+    return 0;
+  }
+
+  const entry = readMap[safePeerUid];
+  if (typeof entry === "number") {
+    return Math.max(0, Number(entry) || 0);
+  }
+
+  if (!entry || typeof entry !== "object") {
+    return 0;
+  }
+
+  return Math.max(0, Number(entry.lastReadAt) || 0);
+}
+
+function countUnreadSocialMessagesFromFriendDoc(friendUid, friendDocData = {}, ownUid = "", readAt = 0){
+  const safeFriendUid = String(friendUid || "").trim();
+  const safeOwnUid = String(ownUid || "").trim();
+  if (!safeFriendUid || !safeOwnUid) return 0;
+
+  const thread = parseSocialChatThread(
+    getSocialChatThreadFromDoc(friendDocData, safeOwnUid),
+    { fromUid: safeFriendUid, toUid: safeOwnUid }
+  );
+
+  const safeReadAt = Math.max(0, Number(readAt) || 0);
+  return thread.reduce((count, message) => {
+    const fromUid = String(message?.fromUid || "").trim();
+    const createdAt = Math.max(0, Number(message?.createdAt) || 0);
+    if (fromUid !== safeFriendUid) return count;
+    return createdAt > safeReadAt ? count + 1 : count;
+  }, 0);
+}
+
+function getSocialChatThreadFromDoc(data = {}, peerUid = ""){
+  const safePeerUid = String(peerUid || "").trim();
+  if (!safePeerUid || !data || typeof data !== "object") return {};
+
+  const outbox = data?.[SOCIAL_CHAT_OUTBOX_FIELD];
+  if (!outbox || typeof outbox !== "object" || Array.isArray(outbox)) {
+    return {};
+  }
+
+  const thread = outbox[safePeerUid];
+  if (!thread || typeof thread !== "object" || Array.isArray(thread)) {
+    return {};
+  }
+
+  return thread;
+}
+
+function normalizeSocialChatMessageKind(rawKind = ""){
+  const safeKind = String(rawKind || "").trim().toLowerCase();
+  if (safeKind === SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE) {
+    return SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE;
+  }
+  return SOCIAL_CHAT_KIND_MESSAGE;
+}
+
+function normalizeSocialChatStudyRoomInviteStatus(rawStatus = ""){
+  const safeStatus = String(rawStatus || "").trim().toLowerCase();
+  if (safeStatus === SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_ACCEPTED) {
+    return SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_ACCEPTED;
+  }
+  if (safeStatus === SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_REJECTED) {
+    return SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_REJECTED;
+  }
+  if (safeStatus === SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_ROOM_CLOSED) {
+    return SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_ROOM_CLOSED;
+  }
+  return SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_PENDING;
+}
+
+function normalizeSocialChatStudyRoomInvitePayload(rawPayload = {}, defaults = {}){
+  const source = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
+    ? rawPayload
+    : {};
+  const fallback = defaults && typeof defaults === "object" && !Array.isArray(defaults)
+    ? defaults
+    : {};
+
+  const roomId = String(
+    source.roomId ||
+    source.id ||
+    fallback.roomId ||
+    fallback.id ||
+    ""
+  ).trim();
+  const roomTitle = String(
+    source.roomTitle ||
+    source.title ||
+    fallback.roomTitle ||
+    fallback.title ||
+    "Sala de estudio"
+  ).trim() || "Sala de estudio";
+  const invitedByUid = String(
+    source.invitedByUid ||
+    source.inviterUid ||
+    source.fromUid ||
+    fallback.invitedByUid ||
+    fallback.inviterUid ||
+    ""
+  ).trim();
+  const invitedByName = String(
+    source.invitedByName ||
+    source.inviterName ||
+    source.fromName ||
+    fallback.invitedByName ||
+    fallback.inviterName ||
+    ""
+  ).trim();
+
+  return {
+    roomId,
+    roomTitle,
+    invitedByUid,
+    invitedByName
+  };
+}
+
+function normalizeSocialChatStudyRoomInviteResponse(entry = {}, fallback = {}){
+  const source = entry && typeof entry === "object" && !Array.isArray(entry)
+    ? entry
+    : {};
+  const fallbackEntry = fallback && typeof fallback === "object" && !Array.isArray(fallback)
+    ? fallback
+    : {};
+
+  const statusSource = typeof entry === "string"
+    ? entry
+    : source.status;
+  const status = normalizeSocialChatStudyRoomInviteStatus(statusSource);
+
+  return {
+    status,
+    roomId: String(source.roomId || fallbackEntry.roomId || "").trim(),
+    roomTitle: String(source.roomTitle || fallbackEntry.roomTitle || "").trim() || "Sala de estudio",
+    invitedByUid: String(source.invitedByUid || fallbackEntry.invitedByUid || "").trim(),
+    invitedByName: String(source.invitedByName || fallbackEntry.invitedByName || "").trim(),
+    updatedAt: Math.max(0, Number(source.updatedAt || source.respondedAt) || 0),
+    respondedAt: Math.max(0, Number(source.respondedAt || source.updatedAt) || 0)
+  };
+}
+
+function parseSocialChatStudyRoomInviteResponsesByMessageId(ownData = {}, friendUid = ""){
+  const safeFriendUid = String(friendUid || "").trim();
+  if (!safeFriendUid || !ownData || typeof ownData !== "object") {
+    return new Map();
+  }
+
+  const rawStore = ownData?.[SOCIAL_CHAT_STUDY_ROOM_INVITES_FIELD];
+  if (!rawStore || typeof rawStore !== "object" || Array.isArray(rawStore)) {
+    return new Map();
+  }
+
+  const rawByFriend = rawStore[safeFriendUid];
+  if (!rawByFriend || typeof rawByFriend !== "object" || Array.isArray(rawByFriend)) {
+    return new Map();
+  }
+
+  const parsed = new Map();
+  Object.entries(rawByFriend).forEach(([messageId, value]) => {
+    const safeMessageId = String(messageId || "").trim();
+    if (!safeMessageId) return;
+    parsed.set(safeMessageId, normalizeSocialChatStudyRoomInviteResponse(value));
+  });
+  return parsed;
+}
+
+function isSocialChatStudyRoomInviteMessage(message = {}){
+  return normalizeSocialChatMessageKind(message?.kind) === SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE;
+}
+
+function parseSocialChatThread(rawThread = {}, defaults = {}){
+  if (!rawThread || typeof rawThread !== "object" || Array.isArray(rawThread)) {
+    return [];
+  }
+
+  const messages = [];
+
+  Object.entries(rawThread).forEach(([fallbackId, value]) => {
+    if (!value || typeof value !== "object") return;
+
+    const id = String(value.id || fallbackId || "").trim();
+    const text = String(value.text || "").trim();
+    if (!id || !text) return;
+
+    const fromUid = String(value.fromUid || defaults.fromUid || "").trim();
+    const toUid = String(value.toUid || defaults.toUid || "").trim();
+    const createdAt = Math.max(0, Number(value.createdAt) || 0);
+    const kind = normalizeSocialChatMessageKind(value.kind || value.type);
+    const studyRoomInvite = kind === SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE
+      ? normalizeSocialChatStudyRoomInvitePayload(value.studyRoomInvite, {
+          roomId: value.roomId,
+          roomTitle: value.roomTitle,
+          invitedByUid: value.invitedByUid || fromUid,
+          invitedByName: value.invitedByName
+        })
+      : null;
+
+    messages.push({
+      id,
+      fromUid,
+      toUid,
+      text: text.slice(0, SOCIAL_CHAT_MAX_LENGTH),
+      createdAt,
+      kind,
+      studyRoomInvite
+    });
+  });
+
+  messages.sort((a, b) => {
+    const byTime = (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0);
+    if (byTime !== 0) return byTime;
+    return String(a.id || "").localeCompare(String(b.id || ""), "es", { sensitivity: "base" });
+  });
+
+  return messages;
+}
+
+function buildSocialConversationMessages(friendUid, { ownData = {}, friendData = {} } = {}){
+  const safeFriendUid = String(friendUid || "").trim();
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!safeFriendUid || !ownUid) return [];
+
+  const ownThread = parseSocialChatThread(
+    getSocialChatThreadFromDoc(ownData, safeFriendUid),
+    { fromUid: ownUid, toUid: safeFriendUid }
+  );
+  const friendThread = parseSocialChatThread(
+    getSocialChatThreadFromDoc(friendData, ownUid),
+    { fromUid: safeFriendUid, toUid: ownUid }
+  );
+  const inviteResponsesByMessageId = parseSocialChatStudyRoomInviteResponsesByMessageId(
+    ownData,
+    safeFriendUid
+  );
+
+  const mergedByKey = new Map();
+  [...ownThread, ...friendThread].forEach((message) => {
+    const key = `${String(message.fromUid || "")}:${String(message.id || "")}`;
+    if (!key) return;
+    mergedByKey.set(key, message);
+  });
+
+  const orderedMessages = Array.from(mergedByKey.values()).sort((a, b) => {
+    const byTime = (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0);
+    if (byTime !== 0) return byTime;
+    return String(a.id || "").localeCompare(String(b.id || ""), "es", { sensitivity: "base" });
+  });
+
+  return orderedMessages.map((message) => {
+    const safeMessage = message && typeof message === "object" ? message : {};
+    const kind = normalizeSocialChatMessageKind(safeMessage.kind || safeMessage.type);
+    if (kind !== SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE) {
+      return {
+        ...safeMessage,
+        kind: SOCIAL_CHAT_KIND_MESSAGE,
+        studyRoomInvite: null,
+        inviteResponseStatus: "",
+        inviteResponseUpdatedAt: 0
+      };
+    }
+
+    const normalizedInvitePayload = normalizeSocialChatStudyRoomInvitePayload(safeMessage.studyRoomInvite, {
+      roomId: safeMessage.roomId,
+      roomTitle: safeMessage.roomTitle,
+      invitedByUid: safeMessage.invitedByUid || safeMessage.fromUid,
+      invitedByName: safeMessage.invitedByName
+    });
+    const isIncomingInvite = (
+      String(safeMessage.fromUid || "").trim() === safeFriendUid &&
+      String(safeMessage.toUid || "").trim() === ownUid
+    );
+
+    const responseEntry = isIncomingInvite
+      ? inviteResponsesByMessageId.get(String(safeMessage.id || "").trim())
+      : null;
+    const inviteResponseStatus = isIncomingInvite
+      ? normalizeSocialChatStudyRoomInviteStatus(responseEntry?.status)
+      : "";
+    const inviteResponseUpdatedAt = isIncomingInvite
+      ? Math.max(0, Number(responseEntry?.updatedAt || responseEntry?.respondedAt) || 0)
+      : 0;
+
+    return {
+      ...safeMessage,
+      kind,
+      studyRoomInvite: normalizedInvitePayload,
+      inviteResponseStatus,
+      inviteResponseUpdatedAt
+    };
+  });
+}
+
+function refreshSocialActiveChatMessages(){
+  const activeFriendUid = String(socialState.chatActiveFriendUid || "").trim();
+  if (!activeFriendUid || !currentUser?.uid) {
+    socialState.chatMessages = [];
+    return;
+  }
+
+  socialState.chatMessages = buildSocialConversationMessages(activeFriendUid, {
+    ownData: socialState.chatOwnDocData || {},
+    friendData: socialState.chatFriendDocData || {}
+  });
+}
+
+function syncSocialOwnReadMapFromOwnDocData(){
+  const ownDocData =
+    socialState.chatOwnDocData && typeof socialState.chatOwnDocData === "object"
+      ? socialState.chatOwnDocData
+      : {};
+  const remoteReadMap = parseSocialChatReadsMap(ownDocData?.[SOCIAL_CHAT_READS_FIELD]);
+  socialState.chatRemoteReadByUid = remoteReadMap;
+
+  const currentReadMap = socialState.chatOwnReadByUid instanceof Map
+    ? socialState.chatOwnReadByUid
+    : new Map();
+  const mergedReadMap = new Map(remoteReadMap);
+
+  currentReadMap.forEach((value, peerUid) => {
+    const safePeerUid = String(peerUid || "").trim();
+    const timestamp = Math.max(0, Number(value) || 0);
+    if (!safePeerUid || !timestamp) return;
+    if (timestamp > Number(mergedReadMap.get(safePeerUid) || 0)) {
+      mergedReadMap.set(safePeerUid, timestamp);
+    }
+  });
+
+  socialState.chatOwnReadByUid = mergedReadMap;
+  writeSocialReadCache(mergedReadMap);
+}
+
+function syncSocialActiveChatUnreadCount(){
+  const safeFriendUid = String(socialState.chatActiveFriendUid || "").trim();
+  const safeOwnUid = String(currentUser?.uid || "").trim();
+  if (!safeFriendUid || !safeOwnUid) return;
+
+  if (!(socialState.chatUnreadByUid instanceof Map)) {
+    socialState.chatUnreadByUid = new Map();
+  }
+  if (!(socialState.chatOwnReadByUid instanceof Map)) {
+    socialState.chatOwnReadByUid = new Map();
+  }
+
+  const readAt = Math.max(
+    Number(socialState.chatOwnReadByUid.get(safeFriendUid) || 0),
+    getSocialReadTimestampFromDoc(socialState.chatOwnDocData || {}, safeFriendUid)
+  );
+  const unread = countUnreadSocialMessagesFromFriendDoc(
+    safeFriendUid,
+    socialState.chatFriendDocData || {},
+    safeOwnUid,
+    readAt
+  );
+
+  if (unread > 0) {
+    socialState.chatUnreadByUid.set(safeFriendUid, unread);
+  } else {
+    socialState.chatUnreadByUid.delete(safeFriendUid);
+  }
+}
+
+async function flushSocialReadReceiptsQueue(){
+  if (socialState.chatReadWorkerRunning) return;
+
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!ownUid) return;
+
+  socialState.chatReadWorkerRunning = true;
+
+  try {
+    while (socialState.chatReadPendingByUid.size > 0) {
+      const pendingEntries = Array.from(socialState.chatReadPendingByUid.entries());
+      const [friendUid, pendingReadAt] = pendingEntries[0] || ["", 0];
+      const safeFriendUid = String(friendUid || "").trim();
+      const safeReadAt = Math.max(0, Number(pendingReadAt) || 0);
+
+      socialState.chatReadPendingByUid.delete(safeFriendUid);
+      if (!safeFriendUid || !safeReadAt) continue;
+
+      const knownReadAt = Math.max(
+        Number(socialState.chatRemoteReadByUid.get(safeFriendUid) || 0),
+        getSocialReadTimestampFromDoc(socialState.chatOwnDocData || {}, safeFriendUid)
+      );
+      if (safeReadAt <= knownReadAt) continue;
+
+      try {
+        await setDoc(
+          doc(db, "leaderboard", ownUid),
+          {
+            [SOCIAL_CHAT_READS_FIELD]: {
+              [safeFriendUid]: {
+                lastReadAt: safeReadAt,
+                updatedAt: Date.now()
+              }
+            }
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        console.warn("No se pudo persistir recibo de lectura social.", err);
+      }
+
+      const currentOwnDocData =
+        socialState.chatOwnDocData && typeof socialState.chatOwnDocData === "object"
+          ? socialState.chatOwnDocData
+          : {};
+      const currentReadMap =
+        currentOwnDocData[SOCIAL_CHAT_READS_FIELD] &&
+        typeof currentOwnDocData[SOCIAL_CHAT_READS_FIELD] === "object"
+          ? currentOwnDocData[SOCIAL_CHAT_READS_FIELD]
+          : {};
+      const currentEntry = currentReadMap[safeFriendUid];
+      const currentEntryReadAt = typeof currentEntry === "number"
+        ? Math.max(0, Number(currentEntry) || 0)
+        : Math.max(0, Number(currentEntry?.lastReadAt) || 0);
+
+      if (safeReadAt > currentEntryReadAt) {
+        socialState.chatOwnDocData = {
+          ...currentOwnDocData,
+          [SOCIAL_CHAT_READS_FIELD]: {
+            ...currentReadMap,
+            [safeFriendUid]: {
+              ...(currentEntry && typeof currentEntry === "object" ? currentEntry : {}),
+              lastReadAt: safeReadAt,
+              updatedAt: Date.now()
+            }
+          }
+        };
+      }
+      socialState.chatRemoteReadByUid.set(safeFriendUid, safeReadAt);
+      socialState.chatOwnReadByUid.set(safeFriendUid, safeReadAt);
+      if (socialState.chatUnreadByUid instanceof Map) {
+        socialState.chatUnreadByUid.set(safeFriendUid, 0);
+      }
+      writeSocialReadCache(socialState.chatOwnReadByUid);
+    }
+  } finally {
+    socialState.chatReadWorkerRunning = false;
+    if (socialState.chatReadPendingByUid.size > 0) {
+      void flushSocialReadReceiptsQueue();
+    }
+  }
+}
+
+function queueSocialReadReceipt(friendUid, readAt){
+  const safeFriendUid = String(friendUid || "").trim();
+  const safeReadAt = Math.max(0, Number(readAt) || 0);
+  if (!safeFriendUid || !safeReadAt || !currentUser?.uid) return;
+
+  if (!(socialState.chatOwnReadByUid instanceof Map)) {
+    socialState.chatOwnReadByUid = new Map();
+  }
+  if (!(socialState.chatRemoteReadByUid instanceof Map)) {
+    socialState.chatRemoteReadByUid = new Map();
+  }
+
+  const alreadyKnownReadAt = Math.max(
+    Number(socialState.chatRemoteReadByUid.get(safeFriendUid) || 0),
+    getSocialReadTimestampFromDoc(socialState.chatOwnDocData || {}, safeFriendUid)
+  );
+  if (safeReadAt <= alreadyKnownReadAt) return;
+
+  const pendingReadAt = Math.max(
+    safeReadAt,
+    Number(socialState.chatReadPendingByUid.get(safeFriendUid) || 0)
+  );
+  socialState.chatReadPendingByUid.set(safeFriendUid, pendingReadAt);
+  socialState.chatOwnReadByUid.set(safeFriendUid, pendingReadAt);
+  if (socialState.chatUnreadByUid instanceof Map) {
+    socialState.chatUnreadByUid.set(safeFriendUid, 0);
+  }
+  writeSocialReadCache(socialState.chatOwnReadByUid);
+  void flushSocialReadReceiptsQueue();
+}
+
+function syncSocialActiveChatReadReceipt(){
+  const safeFriendUid = String(socialState.chatActiveFriendUid || "").trim();
+  if (!safeFriendUid || !currentUser?.uid || socialState.chatMinimized) return;
+
+  const messages = Array.isArray(socialState.chatMessages) ? socialState.chatMessages : [];
+  let latestIncomingAt = 0;
+
+  messages.forEach((message) => {
+    if (String(message.fromUid || "") !== safeFriendUid) return;
+    latestIncomingAt = Math.max(latestIncomingAt, Math.max(0, Number(message.createdAt) || 0));
+  });
+
+  if (!latestIncomingAt) return;
+  queueSocialReadReceipt(safeFriendUid, latestIncomingAt);
+}
+
+function getSocialChatDeletePromptForFriend(friendUid = ""){
+  const safeFriendUid = String(friendUid || "").trim();
+  if (!safeFriendUid) return null;
+
+  const prompt = socialState.chatDeletePrompt;
+  if (!prompt || typeof prompt !== "object") return null;
+
+  const promptFriendUid = String(prompt.friendUid || "").trim();
+  const promptMessageId = String(prompt.messageId || "").trim();
+  if (!promptFriendUid || !promptMessageId) return null;
+  if (promptFriendUid !== safeFriendUid) return null;
+
+  return {
+    friendUid: promptFriendUid,
+    messageId: promptMessageId
+  };
+}
+
+function closeSocialChatDeletePrompt({ patch = true } = {}){
+  if (!socialState.chatDeletePrompt) return;
+  socialState.chatDeletePrompt = null;
+  if (patch) {
+    patchSocialFriendsUI();
+  }
+}
+
+function openSocialChatDeletePrompt(friendUid, messageId){
+  const safeFriendUid = String(friendUid || "").trim();
+  const safeMessageId = String(messageId || "").trim();
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!safeFriendUid || !safeMessageId || !ownUid) return false;
+  if (safeFriendUid !== String(socialState.chatActiveFriendUid || "").trim()) return false;
+
+  const messages = Array.isArray(socialState.chatMessages) ? socialState.chatMessages : [];
+  const messageToDelete = messages.find((message) => {
+    return (
+      String(message?.id || "").trim() === safeMessageId &&
+      String(message?.fromUid || "").trim() === ownUid
+    );
+  });
+  if (!messageToDelete) return false;
+
+  socialState.chatDeletePrompt = {
+    friendUid: safeFriendUid,
+    messageId: safeMessageId
+  };
+  closeSocialChatPlusMenus(board);
+  patchSocialFriendsUI();
+  return true;
+}
+
+async function deleteSocialChatMessageForAll(friendUid, messageId){
+  const safeFriendUid = String(friendUid || "").trim();
+  const safeMessageId = String(messageId || "").trim();
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!safeFriendUid || !safeMessageId || !ownUid) {
+    showToast("No se pudo eliminar el mensaje.");
+    return false;
+  }
+
+  const messages = Array.isArray(socialState.chatMessages) ? socialState.chatMessages : [];
+  const ownMessage = messages.find((message) => {
+    if (String(message?.id || "").trim() !== safeMessageId) return false;
+    if (String(message?.fromUid || "").trim() !== ownUid) return false;
+    const messageToUid = String(message?.toUid || safeFriendUid).trim();
+    return messageToUid === safeFriendUid;
+  });
+  if (!ownMessage) {
+    showToast("Solo podés eliminar mensajes enviados por vos.");
+    return false;
+  }
+
+  try {
+    await updateDoc(doc(db, "leaderboard", ownUid), {
+      [`${SOCIAL_CHAT_OUTBOX_FIELD}.${safeFriendUid}.${safeMessageId}`]: deleteField()
+    });
+  } catch (err) {
+    if (isFirestorePermissionError(err)) {
+      showToast("No hay permisos suficientes para eliminar mensajes.");
+      return false;
+    }
+    console.error("No se pudo eliminar mensaje social para todos.", err);
+    showToast("No se pudo eliminar el mensaje.");
+    return false;
+  }
+
+  const ownDocData =
+    socialState.chatOwnDocData && typeof socialState.chatOwnDocData === "object"
+      ? socialState.chatOwnDocData
+      : {};
+  const currentOutbox =
+    ownDocData[SOCIAL_CHAT_OUTBOX_FIELD] &&
+    typeof ownDocData[SOCIAL_CHAT_OUTBOX_FIELD] === "object"
+      ? ownDocData[SOCIAL_CHAT_OUTBOX_FIELD]
+      : {};
+  const currentThread =
+    currentOutbox[safeFriendUid] &&
+    typeof currentOutbox[safeFriendUid] === "object"
+      ? currentOutbox[safeFriendUid]
+      : null;
+
+  if (currentThread && Object.prototype.hasOwnProperty.call(currentThread, safeMessageId)) {
+    const nextThread = { ...currentThread };
+    delete nextThread[safeMessageId];
+
+    const nextOutbox = { ...currentOutbox };
+    if (Object.keys(nextThread).length) {
+      nextOutbox[safeFriendUid] = nextThread;
+    } else {
+      delete nextOutbox[safeFriendUid];
+    }
+
+    socialState.chatOwnDocData = {
+      ...ownDocData,
+      [SOCIAL_CHAT_OUTBOX_FIELD]: nextOutbox
+    };
+  }
+
+  closeSocialChatDeletePrompt({ patch: false });
+  refreshSocialActiveChatMessages();
+  syncSocialActiveChatUnreadCount();
+  syncSocialActiveChatReadReceipt();
+  patchSocialFriendsUI();
+  showToast("Mensaje eliminado para todos.");
+  return true;
+}
+
+function closeSocialChatSession({ silent = false } = {}){
+  socialState.chatDeletePrompt = null;
+
+  if (typeof socialState.chatOwnUnsub === "function") {
+    try {
+      socialState.chatOwnUnsub();
+    } catch (_error) {}
+  }
+
+  if (typeof socialState.chatFriendUnsub === "function") {
+    try {
+      socialState.chatFriendUnsub();
+    } catch (_error) {}
+  }
+
+  socialState.chatOwnUnsub = null;
+  socialState.chatFriendUnsub = null;
+  socialState.chatActiveFriendUid = "";
+  socialState.chatMinimized = false;
+  socialState.chatMessages = [];
+  socialState.chatLoading = false;
+  socialState.chatError = "";
+  socialState.chatOwnDocData = null;
+  socialState.chatFriendDocData = null;
+  socialState.chatOwnReady = false;
+  socialState.chatFriendReady = false;
+
+  if (!silent) {
+    patchSocialFriendsUI();
+  }
+}
+
+function openSocialChatSession(friendUid){
+  const safeFriendUid = String(friendUid || "").trim();
+  if (!safeFriendUid || !currentUser?.uid) return;
+
+  const isSameChatOpen =
+    socialState.chatActiveFriendUid === safeFriendUid &&
+    (typeof socialState.chatOwnUnsub === "function" || typeof socialState.chatFriendUnsub === "function");
+
+  if (isSameChatOpen) {
+    socialState.chatDeletePrompt = null;
+    socialState.chatMinimized = !socialState.chatMinimized;
+    patchSocialFriendsUI();
+    return;
+  }
+
+  closeSocialChatSession({ silent: true });
+
+  socialState.chatActiveFriendUid = safeFriendUid;
+  socialState.chatMinimized = false;
+  socialState.chatMessages = [];
+  socialState.chatLoading = true;
+  socialState.chatError = "";
+  socialState.chatOwnDocData = null;
+  socialState.chatFriendDocData = null;
+  socialState.chatDeletePrompt = null;
+  socialState.chatOwnReady = false;
+  socialState.chatFriendReady = false;
+  if (socialState.chatUnreadByUid instanceof Map) {
+    socialState.chatUnreadByUid.set(safeFriendUid, 0);
+  }
+  patchSocialFriendsUI();
+
+  const ownRef = doc(db, "leaderboard", currentUser.uid);
+  const friendRef = doc(db, "leaderboard", safeFriendUid);
+
+  const syncLoadingState = () => {
+    socialState.chatLoading = !(socialState.chatOwnReady && socialState.chatFriendReady);
+  };
+
+  socialState.chatOwnUnsub = onSnapshot(
+    ownRef,
+    (snapshot) => {
+      if (socialState.chatActiveFriendUid !== safeFriendUid) return;
+      socialState.chatOwnDocData = snapshot.exists() ? (snapshot.data() || {}) : {};
+      socialState.chatOwnReady = true;
+      socialState.chatError = "";
+      syncSocialOwnReadMapFromOwnDocData();
+      syncLoadingState();
+      refreshSocialActiveChatMessages();
+      syncSocialActiveChatUnreadCount();
+      syncSocialActiveChatReadReceipt();
+      patchSocialFriendsUI();
+    },
+    (err) => {
+      if (socialState.chatActiveFriendUid !== safeFriendUid) return;
+      socialState.chatOwnDocData = {};
+      socialState.chatOwnReady = true;
+      socialState.chatError = isFirestorePermissionError(err)
+        ? "No hay permisos para leer tu historial de chat."
+        : "No se pudo cargar el chat.";
+      syncSocialOwnReadMapFromOwnDocData();
+      syncLoadingState();
+      refreshSocialActiveChatMessages();
+      syncSocialActiveChatUnreadCount();
+      syncSocialActiveChatReadReceipt();
+      patchSocialFriendsUI();
+    }
+  );
+
+  socialState.chatFriendUnsub = onSnapshot(
+    friendRef,
+    (snapshot) => {
+      if (socialState.chatActiveFriendUid !== safeFriendUid) return;
+      socialState.chatFriendDocData = snapshot.exists() ? (snapshot.data() || {}) : {};
+      socialState.chatFriendReady = true;
+      socialState.chatError = "";
+      syncLoadingState();
+      refreshSocialActiveChatMessages();
+      syncSocialActiveChatUnreadCount();
+      syncSocialActiveChatReadReceipt();
+      patchSocialFriendsUI();
+    },
+    (err) => {
+      if (socialState.chatActiveFriendUid !== safeFriendUid) return;
+      socialState.chatFriendDocData = {};
+      socialState.chatFriendReady = true;
+      socialState.chatError = isFirestorePermissionError(err)
+        ? "No hay permisos para leer mensajes de este amigo."
+        : "No se pudo actualizar el chat.";
+      syncLoadingState();
+      refreshSocialActiveChatMessages();
+      syncSocialActiveChatUnreadCount();
+      syncSocialActiveChatReadReceipt();
+      patchSocialFriendsUI();
+    }
+  );
+}
+
+async function sendSocialChatEntry(targetUid, entry = {}){
+  const safeTargetUid = String(targetUid || "").trim();
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!safeTargetUid || !ownUid) return null;
+
+  const text = String(entry?.text || "").trim().slice(0, SOCIAL_CHAT_MAX_LENGTH);
+  if (!text) return null;
+
+  const now = Math.max(0, Number(entry?.createdAt) || Date.now());
+  const messageId = String(entry?.id || `m_${now}_${Math.random().toString(36).slice(2, 8)}`).trim();
+  if (!messageId) return null;
+  const kind = normalizeSocialChatMessageKind(entry?.kind || entry?.type);
+  const payload = {
+    id: messageId,
+    fromUid: ownUid,
+    toUid: safeTargetUid,
+    text,
+    createdAt: now
+  };
+  if (kind !== SOCIAL_CHAT_KIND_MESSAGE) {
+    payload.kind = kind;
+  }
+  if (kind === SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE) {
+    const invitePayload = normalizeSocialChatStudyRoomInvitePayload(entry?.studyRoomInvite, {
+      roomId: entry?.roomId,
+      roomTitle: entry?.roomTitle,
+      invitedByUid: ownUid,
+      invitedByName: entry?.invitedByName || entry?.inviterName
+    });
+    payload.studyRoomInvite = invitePayload;
+  }
+
+  await setDoc(
+    doc(db, "leaderboard", ownUid),
+    {
+      [SOCIAL_CHAT_OUTBOX_FIELD]: {
+        [safeTargetUid]: {
+          [messageId]: payload
+        }
+      }
+    },
+    { merge: true }
+  );
+
+  const currentOwnDocData =
+    socialState.chatOwnDocData && typeof socialState.chatOwnDocData === "object"
+      ? socialState.chatOwnDocData
+      : {};
+  const currentOutbox =
+    currentOwnDocData[SOCIAL_CHAT_OUTBOX_FIELD] &&
+    typeof currentOwnDocData[SOCIAL_CHAT_OUTBOX_FIELD] === "object"
+      ? currentOwnDocData[SOCIAL_CHAT_OUTBOX_FIELD]
+      : {};
+  const currentThread =
+    currentOutbox[safeTargetUid] && typeof currentOutbox[safeTargetUid] === "object"
+      ? currentOutbox[safeTargetUid]
+      : {};
+
+  socialState.chatOwnDocData = {
+    ...currentOwnDocData,
+    [SOCIAL_CHAT_OUTBOX_FIELD]: {
+      ...currentOutbox,
+      [safeTargetUid]: {
+        ...currentThread,
+        [messageId]: payload
+      }
+    }
+  };
+
+  refreshSocialActiveChatMessages();
+  if (socialState.chatDraftByUid instanceof Map) {
+    socialState.chatDraftByUid.set(safeTargetUid, "");
+  }
+  patchSocialFriendsUI();
+  if (kind === SOCIAL_CHAT_KIND_MESSAGE) {
+    void registerCollaborativeProgress("totalMessagesSent", 1, {
+      silentAchievements: false
+    });
+  }
+  return payload;
+}
+
+async function sendSocialChatMessage(targetUid, rawMessage){
+  const sentPayload = await sendSocialChatEntry(targetUid, {
+    text: String(rawMessage || "")
+  });
+  return !!sentPayload;
+}
+
+async function sendSocialChatStudyRoomInviteMessage(
+  targetUid,
+  {
+    roomId = "",
+    roomTitle = "Sala de estudio",
+    inviterName = ""
+  } = {}
+){
+  const safeRoomId = String(roomId || "").trim();
+  const safeRoomTitle = String(roomTitle || "Sala de estudio").trim() || "Sala de estudio";
+  const safeInviterName = String(
+    inviterName ||
+    currentUser?.displayName ||
+    "Usuario"
+  ).trim() || "Usuario";
+
+  const sentPayload = await sendSocialChatEntry(targetUid, {
+    kind: SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE,
+    text: `Invitacion para sala ${safeRoomTitle} enviada`,
+    studyRoomInvite: {
+      roomId: safeRoomId,
+      roomTitle: safeRoomTitle,
+      invitedByUid: String(currentUser?.uid || "").trim(),
+      invitedByName: safeInviterName
+    }
+  });
+
+  return !!sentPayload;
+}
+
+function getIncomingSocialChatStudyRoomInviteMessage(friendUid, messageId){
+  const safeFriendUid = String(friendUid || "").trim();
+  const safeMessageId = String(messageId || "").trim();
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!safeFriendUid || !safeMessageId || !ownUid) return null;
+
+  const messages = Array.isArray(socialState.chatMessages) ? socialState.chatMessages : [];
+  const matched = messages.find((message) => {
+    if (!message || typeof message !== "object") return false;
+    if (String(message.id || "").trim() !== safeMessageId) return false;
+    if (String(message.fromUid || "").trim() !== safeFriendUid) return false;
+    if (String(message.toUid || "").trim() !== ownUid) return false;
+    return isSocialChatStudyRoomInviteMessage(message);
+  });
+
+  return matched && typeof matched === "object" ? matched : null;
+}
+
+async function persistSocialChatStudyRoomInviteResponse(friendUid, message = {}, status = ""){
+  const safeFriendUid = String(friendUid || "").trim();
+  const safeMessageId = String(message?.id || "").trim();
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!safeFriendUid || !safeMessageId || !ownUid) return false;
+
+  const invitePayload = normalizeSocialChatStudyRoomInvitePayload(message?.studyRoomInvite, {
+    roomId: message?.roomId,
+    roomTitle: message?.roomTitle,
+    invitedByUid: message?.fromUid || safeFriendUid,
+    invitedByName: message?.invitedByName
+  });
+  const normalizedStatus = normalizeSocialChatStudyRoomInviteStatus(status);
+  const now = Date.now();
+  const responsePayload = {
+    status: normalizedStatus,
+    roomId: String(invitePayload.roomId || "").trim(),
+    roomTitle: String(invitePayload.roomTitle || "Sala de estudio").trim() || "Sala de estudio",
+    invitedByUid: String(invitePayload.invitedByUid || safeFriendUid).trim(),
+    invitedByName: String(invitePayload.invitedByName || "").trim(),
+    updatedAt: now,
+    respondedAt: now
+  };
+
+  try {
+    await setDoc(
+      doc(db, "leaderboard", ownUid),
+      {
+        [SOCIAL_CHAT_STUDY_ROOM_INVITES_FIELD]: {
+          [safeFriendUid]: {
+            [safeMessageId]: responsePayload
+          }
+        }
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    if (isFirestorePermissionError(err)) {
+      showToast("No hay permisos para actualizar esta invitación.");
+      return false;
+    }
+    console.error("No se pudo guardar respuesta de invitación de sala en chat.", err);
+    showToast("No se pudo actualizar la invitación.");
+    return false;
+  }
+
+  const ownDocData =
+    socialState.chatOwnDocData && typeof socialState.chatOwnDocData === "object"
+      ? socialState.chatOwnDocData
+      : {};
+  const currentInviteStore =
+    ownDocData[SOCIAL_CHAT_STUDY_ROOM_INVITES_FIELD] &&
+    typeof ownDocData[SOCIAL_CHAT_STUDY_ROOM_INVITES_FIELD] === "object" &&
+    !Array.isArray(ownDocData[SOCIAL_CHAT_STUDY_ROOM_INVITES_FIELD])
+      ? ownDocData[SOCIAL_CHAT_STUDY_ROOM_INVITES_FIELD]
+      : {};
+  const currentFriendStore =
+    currentInviteStore[safeFriendUid] &&
+    typeof currentInviteStore[safeFriendUid] === "object" &&
+    !Array.isArray(currentInviteStore[safeFriendUid])
+      ? currentInviteStore[safeFriendUid]
+      : {};
+
+  socialState.chatOwnDocData = {
+    ...ownDocData,
+    [SOCIAL_CHAT_STUDY_ROOM_INVITES_FIELD]: {
+      ...currentInviteStore,
+      [safeFriendUid]: {
+        ...currentFriendStore,
+        [safeMessageId]: responsePayload
+      }
+    }
+  };
+
+  refreshSocialActiveChatMessages();
+  syncSocialActiveChatUnreadCount();
+  syncSocialActiveChatReadReceipt();
+  patchSocialFriendsUI();
+  return true;
+}
+
+async function resolveStudyRoomInvitationTargetRoom(roomId, inviterUid = ""){
+  const safeRoomId = String(roomId || "").trim();
+  const safeInviterUid = String(inviterUid || "").trim();
+  if (!safeRoomId) {
+    return { isActive: false, reason: "missing-room-id", roomData: null };
+  }
+
+  const activeRoom = studyRoomsState.activeRoomData;
+  if (
+    activeRoom &&
+    typeof activeRoom === "object" &&
+    String(activeRoom.id || "").trim() === safeRoomId
+  ) {
+    return {
+      isActive: activeRoom.isActive !== false,
+      reason: activeRoom.isActive === false ? "closed" : "active-room",
+      roomData: activeRoom
+    };
+  }
+
+  const roomFromList = studyRoomsState.rooms.find((entry) => {
+    return String(entry?.id || "").trim() === safeRoomId;
+  });
+  if (roomFromList) {
+    return {
+      isActive: roomFromList.isActive !== false,
+      reason: roomFromList.isActive === false ? "closed" : "rooms-list",
+      roomData: roomFromList
+    };
+  }
+
+  try {
+    const roomSnapshot = await getDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId));
+    if (!roomSnapshot.exists()) {
+      return { isActive: false, reason: "missing", roomData: null };
+    }
+    const normalizedRoom = normalizeStudyRoomData(roomSnapshot.data() || {}, roomSnapshot.id);
+    if (!normalizedRoom) {
+      return { isActive: false, reason: "invalid", roomData: null };
+    }
+    return {
+      isActive: normalizedRoom.isActive !== false,
+      reason: normalizedRoom.isActive === false ? "closed" : "primary",
+      roomData: normalizedRoom
+    };
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo verificar sala de invitación en studyRooms.", err);
+    }
+  }
+
+  if (safeInviterUid) {
+    try {
+      const inviterSnapshot = await getDoc(doc(db, "leaderboard", safeInviterUid));
+      if (inviterSnapshot.exists()) {
+        const normalizedPublicRoom = normalizePublicStudyRoomFromLeaderboard(
+          inviterSnapshot.data() || {},
+          safeInviterUid
+        );
+        if (normalizedPublicRoom && String(normalizedPublicRoom.id || "").trim() === safeRoomId) {
+          return { isActive: true, reason: "public-summary", roomData: normalizedPublicRoom };
+        }
+      }
+    } catch (err) {
+      if (!isFirestorePermissionError(err)) {
+        console.warn("No se pudo verificar sala de invitación en leaderboard.", err);
+      }
+    }
+  }
+
+  return { isActive: false, reason: "unavailable", roomData: null };
+}
+
+async function openStudyRoomSessionFromInvite(roomId, { roomTitle = "Sala de estudio" } = {}){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId || !currentUser?.uid) return false;
+
+  const activeRoom = studyRoomsState.activeRoomData;
+  const ownUid = String(currentUser?.uid || "").trim();
+  const isSwitchingRoom = !!(
+    activeRoom &&
+    typeof activeRoom === "object" &&
+    String(activeRoom.id || "").trim() &&
+    String(activeRoom.id || "").trim() !== safeRoomId
+  );
+  const isOwnerSwitchingFromOwnRoom = !!(
+    isSwitchingRoom &&
+    String(activeRoom.createdByUid || "").trim() === ownUid
+  );
+  if (isOwnerSwitchingFromOwnRoom) {
+    const confirmClose = await openStudyRoomActionConfirmDialog({
+      title: "Cerrar sala actual",
+      message: "Si entrás a otra sala, tu sala actual se va a cerrar para todos y se van a borrar tareas, chat, título e integrantes.",
+      confirmLabel: "Cerrar y entrar",
+      cancelLabel: "Cancelar"
+    });
+    if (!confirmClose) {
+      return false;
+    }
+  }
+
+  const opened = await openStudyRoomSession(safeRoomId);
+  if (!opened) return false;
+
+  await setViewMode(VIEW_MODE_STUDY_ROOMS);
+  showToast(`Entraste a la sala ${String(roomTitle || "Sala de estudio").trim() || "Sala de estudio"}.`);
+  return true;
+}
+
+async function respondToSocialChatStudyRoomInvite(friendUid, messageId, action = "accept"){
+  const safeFriendUid = String(friendUid || "").trim();
+  const safeMessageId = String(messageId || "").trim();
+  const safeAction = String(action || "").trim().toLowerCase();
+  if (!safeFriendUid || !safeMessageId) return false;
+  if (safeAction !== "accept" && safeAction !== "reject") return false;
+
+  const inviteMessage = getIncomingSocialChatStudyRoomInviteMessage(safeFriendUid, safeMessageId);
+  if (!inviteMessage) {
+    showToast("La invitación ya no está disponible.");
+    return false;
+  }
+
+  const currentStatus = normalizeSocialChatStudyRoomInviteStatus(inviteMessage.inviteResponseStatus);
+  if (currentStatus !== SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_PENDING) {
+    return true;
+  }
+
+  const invitePayload = normalizeSocialChatStudyRoomInvitePayload(inviteMessage.studyRoomInvite, {
+    roomId: inviteMessage.roomId,
+    roomTitle: inviteMessage.roomTitle,
+    invitedByUid: inviteMessage.fromUid || safeFriendUid,
+    invitedByName: inviteMessage.invitedByName
+  });
+  const roomId = String(invitePayload.roomId || "").trim();
+  const roomTitle = String(invitePayload.roomTitle || "Sala de estudio").trim() || "Sala de estudio";
+
+  if (safeAction === "reject") {
+    const rejected = await persistSocialChatStudyRoomInviteResponse(
+      safeFriendUid,
+      inviteMessage,
+      SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_REJECTED
+    );
+    if (rejected) {
+      showToast(`Invitación a ${roomTitle} rechazada.`);
+    }
+    return rejected;
+  }
+
+  const resolvedRoom = await resolveStudyRoomInvitationTargetRoom(roomId, invitePayload.invitedByUid || safeFriendUid);
+  if (!resolvedRoom.isActive) {
+    await persistSocialChatStudyRoomInviteResponse(
+      safeFriendUid,
+      inviteMessage,
+      SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_ROOM_CLOSED
+    );
+    showToast(`La sala ${roomTitle} ya fue cerrada.`);
+    return false;
+  }
+
+  const joined = await openStudyRoomSessionFromInvite(roomId, { roomTitle });
+  if (!joined) {
+    return false;
+  }
+
+  const accepted = await persistSocialChatStudyRoomInviteResponse(
+    safeFriendUid,
+    inviteMessage,
+    SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_ACCEPTED
+  );
+  if (!accepted) return false;
+  return true;
+}
+
+function combineSocialCollections(){
+  const mergedFriends = new Map();
+  const mergedIncoming = new Map();
+
+  socialState.localFriends.forEach((entry) => {
+    if (!entry?.uid) return;
+    mergedFriends.set(entry.uid, entry);
+  });
+
+  socialState.remoteFriends.forEach((entry) => {
+    if (!entry?.uid) return;
+    const previous = mergedFriends.get(entry.uid);
+    if (!previous || (Number(entry.addedAt) || 0) >= (Number(previous.addedAt) || 0)) {
+      mergedFriends.set(entry.uid, entry);
+    }
+  });
+
+  const pushIncoming = (entry) => {
+    if (!entry?.uid) return;
+    if (mergedFriends.has(entry.uid)) return;
+
+    const rejectedAt = socialState.rejectedByUid.get(entry.uid) || 0;
+    const requestedAt = Math.max(0, Number(entry.requestedAt) || 0);
+    if (rejectedAt && requestedAt && requestedAt <= rejectedAt) return;
+
+    const previous = mergedIncoming.get(entry.uid);
+    if (!previous || requestedAt >= (Number(previous.requestedAt) || 0)) {
+      mergedIncoming.set(entry.uid, entry);
+    }
+  };
+
+  socialState.localIncomingRequests.forEach(pushIncoming);
+  socialState.remoteIncomingRequests.forEach(pushIncoming);
+
+  const friends = Array.from(mergedFriends.values()).sort((a, b) => {
+    return String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" });
+  });
+
+  const incomingRequests = Array.from(mergedIncoming.values()).sort((a, b) => {
+    const byTime = (Number(b.requestedAt) || 0) - (Number(a.requestedAt) || 0);
+    if (byTime !== 0) return byTime;
+    return String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" });
+  });
+
+  socialState.friends = friends;
+  socialState.incomingRequests = incomingRequests;
+  socialState.friendsByUid = new Map(friends.map((friend) => [friend.uid, friend]));
+  socialState.incomingByUid = new Map(incomingRequests.map((request) => [request.uid, request]));
+
+  const outgoingPendingByUid = new Map();
+  socialState.localOutgoingRequests.forEach((entry) => {
+    const uid = String(entry?.uid || "").trim();
+    if (!uid) return;
+    if (String(entry.status || "pending") !== "pending") return;
+    if (socialState.friendsByUid.has(uid)) return;
+    if (socialState.incomingByUid.has(uid)) return;
+    outgoingPendingByUid.set(uid, entry);
+  });
+  socialState.outgoingPendingByUid = outgoingPendingByUid;
+  ensureSocialUnreadLiveListeners();
+}
+
+function getSocialUnreadTotalCount(){
+  if (!(socialState.chatUnreadByUid instanceof Map)) return 0;
+  let total = 0;
+  socialState.chatUnreadByUid.forEach((value) => {
+    const count = Math.max(0, Number(value) || 0);
+    if (!count) return;
+    total += count;
+  });
+  return total;
+}
+
+function syncSocialNavUnreadBadge(scope = board){
+  const root = scope instanceof HTMLElement ? scope : board;
+  if (!(root instanceof HTMLElement)) return;
+
+  const socialButtons = root.querySelectorAll(`.summary-nav-item[data-view="${VIEW_MODE_SOCIAL}"]`);
+  if (!socialButtons.length) return;
+
+  const totalUnread = getSocialUnreadTotalCount();
+  const badgeLabel = totalUnread > 99 ? "99+" : String(totalUnread);
+  const safeTotalLabel = totalUnread === 1 ? "1 mensaje sin leer" : `${totalUnread} mensajes sin leer`;
+
+  socialButtons.forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) return;
+
+    button.classList.toggle("has-unread", totalUnread > 0);
+    if (totalUnread > 0) {
+      button.dataset.unreadTotal = String(totalUnread);
+      button.setAttribute("aria-label", `Social (${safeTotalLabel})`);
+
+      let badge = button.querySelector(".summary-nav-unread-badge");
+      if (!(badge instanceof HTMLElement)) {
+        badge = document.createElement("span");
+        badge.className = "summary-nav-unread-badge";
+        badge.setAttribute("aria-hidden", "true");
+        button.appendChild(badge);
+      }
+      badge.textContent = badgeLabel;
+      return;
+    }
+
+    button.removeAttribute("data-unread-total");
+    button.setAttribute("aria-label", "Social");
+    const badge = button.querySelector(".summary-nav-unread-badge");
+    if (badge instanceof HTMLElement) {
+      badge.remove();
+    }
+  });
+}
+
+function stopSocialUnreadLiveListeners(){
+  if (typeof socialState.chatUnreadLiveOwnUnsub === "function") {
+    try {
+      socialState.chatUnreadLiveOwnUnsub();
+    } catch (_error) {}
+  }
+  socialState.chatUnreadLiveOwnUnsub = null;
+
+  if (!(socialState.chatUnreadLiveFriendUnsubByUid instanceof Map)) {
+    socialState.chatUnreadLiveFriendUnsubByUid = new Map();
+  }
+  socialState.chatUnreadLiveFriendUnsubByUid.forEach((unsub) => {
+    if (typeof unsub !== "function") return;
+    try {
+      unsub();
+    } catch (_error) {}
+  });
+  socialState.chatUnreadLiveFriendUnsubByUid.clear();
+
+  socialState.chatUnreadLiveFriendDocByUid = new Map();
+  socialState.chatUnreadLiveOwnReadByUid = new Map();
+}
+
+function syncSocialUnreadFromLiveSnapshots({ patch = true } = {}){
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!ownUid) return;
+
+  if (!(socialState.chatUnreadLiveFriendDocByUid instanceof Map)) {
+    socialState.chatUnreadLiveFriendDocByUid = new Map();
+  }
+  if (!(socialState.chatUnreadLiveOwnReadByUid instanceof Map)) {
+    socialState.chatUnreadLiveOwnReadByUid = new Map();
+  }
+  if (!(socialState.chatUnreadByUid instanceof Map)) {
+    socialState.chatUnreadByUid = new Map();
+  }
+
+  const friendUidSet = new Set(
+    (Array.isArray(socialState.friends) ? socialState.friends : [])
+      .map((friend) => String(friend?.uid || "").trim())
+      .filter(Boolean)
+  );
+  const nextUnreadMap = new Map();
+
+  friendUidSet.forEach((friendUid) => {
+    const friendDocData = socialState.chatUnreadLiveFriendDocByUid.get(friendUid);
+    if (!friendDocData || typeof friendDocData !== "object") {
+      const fallbackUnread = Math.max(0, Number(socialState.chatUnreadByUid.get(friendUid) || 0));
+      if (fallbackUnread > 0) {
+        nextUnreadMap.set(friendUid, fallbackUnread);
+      }
+      return;
+    }
+
+    const readAt = Math.max(
+      Number(socialState.chatUnreadLiveOwnReadByUid.get(friendUid) || 0),
+      Number(socialState.chatOwnReadByUid?.get(friendUid) || 0),
+      getSocialReadTimestampFromDoc(socialState.chatOwnDocData || {}, friendUid)
+    );
+    const unreadCount = countUnreadSocialMessagesFromFriendDoc(
+      friendUid,
+      friendDocData,
+      ownUid,
+      readAt
+    );
+    if (unreadCount > 0) {
+      nextUnreadMap.set(friendUid, unreadCount);
+    }
+  });
+
+  socialState.chatUnreadByUid = nextUnreadMap;
+  syncSocialActiveChatUnreadCount();
+
+  if (patch) {
+    patchSocialFriendsUI();
+  } else {
+    syncSocialNavUnreadBadge(board);
+  }
+}
+
+function ensureSocialUnreadLiveListeners(){
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!ownUid) {
+    stopSocialUnreadLiveListeners();
+    return;
+  }
+
+  if (!(socialState.chatUnreadLiveFriendUnsubByUid instanceof Map)) {
+    socialState.chatUnreadLiveFriendUnsubByUid = new Map();
+  }
+  if (!(socialState.chatUnreadLiveFriendDocByUid instanceof Map)) {
+    socialState.chatUnreadLiveFriendDocByUid = new Map();
+  }
+  if (!(socialState.chatUnreadLiveOwnReadByUid instanceof Map)) {
+    socialState.chatUnreadLiveOwnReadByUid = new Map();
+  }
+
+  if (typeof socialState.chatUnreadLiveOwnUnsub !== "function") {
+    socialState.chatUnreadLiveOwnUnsub = onSnapshot(
+      doc(db, "leaderboard", ownUid),
+      (snapshot) => {
+        const ownData = snapshot.exists() ? (snapshot.data() || {}) : {};
+        socialState.chatUnreadLiveOwnReadByUid = parseSocialChatReadsMap(
+          ownData?.[SOCIAL_CHAT_READS_FIELD]
+        );
+        syncSocialUnreadFromLiveSnapshots();
+      },
+      (err) => {
+        if (!isFirestorePermissionError(err)) {
+          console.warn("No se pudo suscribir lectura social propia para no leídos.", err);
+        }
+      }
+    );
+  }
+
+  const desiredFriendUids = new Set(
+    (Array.isArray(socialState.friends) ? socialState.friends : [])
+      .map((friend) => String(friend?.uid || "").trim())
+      .filter(Boolean)
+      .filter((uid) => uid !== ownUid)
+  );
+
+  socialState.chatUnreadLiveFriendUnsubByUid.forEach((unsub, friendUid) => {
+    if (desiredFriendUids.has(friendUid)) return;
+    if (typeof unsub === "function") {
+      try {
+        unsub();
+      } catch (_error) {}
+    }
+    socialState.chatUnreadLiveFriendUnsubByUid.delete(friendUid);
+    socialState.chatUnreadLiveFriendDocByUid.delete(friendUid);
+  });
+
+  desiredFriendUids.forEach((friendUid) => {
+    if (socialState.chatUnreadLiveFriendUnsubByUid.has(friendUid)) return;
+
+    const friendUnsub = onSnapshot(
+      doc(db, "leaderboard", friendUid),
+      (snapshot) => {
+        socialState.chatUnreadLiveFriendDocByUid.set(
+          friendUid,
+          snapshot.exists() ? (snapshot.data() || {}) : {}
+        );
+        syncSocialUnreadFromLiveSnapshots();
+      },
+      (err) => {
+        if (!isFirestorePermissionError(err)) {
+          console.warn("No se pudo suscribir chat de amigo para no leídos.", err);
+        }
+        socialState.chatUnreadLiveFriendDocByUid.delete(friendUid);
+        syncSocialUnreadFromLiveSnapshots();
+      }
+    );
+
+    socialState.chatUnreadLiveFriendUnsubByUid.set(friendUid, friendUnsub);
+  });
+
+  if (!desiredFriendUids.size) {
+    socialState.chatUnreadLiveFriendDocByUid.clear();
+    socialState.chatUnreadByUid = new Map();
+    syncSocialActiveChatUnreadCount();
+    syncSocialNavUnreadBadge(board);
+  }
+}
+
+function getCurrentUserSocialIdentity(){
+  if (!currentUser?.uid) return null;
+
+  return normalizeSocialUser({
+    uid: currentUser.uid,
+    name: currentUser.displayName || "Usuario",
+    email: currentUser.email || "",
+    photo: currentUser.photoURL || ""
+  });
+}
+
+async function maybeHandleStudyRoomClosureSummaryFromUserData(data = {}){
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!ownUid) return false;
+
+  const summary = normalizeStudyRoomClosureSummary(data?.[STUDY_ROOM_CLOSURE_SUMMARY_FIELD]);
+  if (!summary) return false;
+
+  const seenSummaryId = readStoredStudyRoomClosureSummarySeenId(ownUid);
+  const alreadyHandled =
+    summary.id === seenSummaryId ||
+    summary.id === lastHandledStudyRoomClosureSummaryId;
+
+  if (alreadyHandled) {
+    if (summary.id !== lastHandledStudyRoomClosureSummaryId) {
+      lastHandledStudyRoomClosureSummaryId = summary.id;
+      try {
+        await updateDoc(doc(db, "users", ownUid), {
+          [STUDY_ROOM_CLOSURE_SUMMARY_FIELD]: deleteField()
+        });
+      } catch (_error) {}
+    }
+    return false;
+  }
+
+  lastHandledStudyRoomClosureSummaryId = summary.id;
+  persistStudyRoomClosureSummarySeenId(summary.id, ownUid);
+  openStudyRoomClosureSummaryDialog(summary);
+
+  try {
+    await updateDoc(doc(db, "users", ownUid), {
+      [STUDY_ROOM_CLOSURE_SUMMARY_FIELD]: deleteField()
+    });
+  } catch (_error) {}
+
+  return true;
+}
+
+function applySocialStateFromUserData(data = {}, { allowToast = false } = {}){
+  const previousIncomingCount = socialState.incomingRequests.length;
+
+  socialState.localFriends = parseSocialUserMap(data?.[SOCIAL_FRIENDS_FIELD]);
+  socialState.localIncomingRequests = parseSocialUserMap(data?.[SOCIAL_INCOMING_REQUESTS_FIELD]);
+  socialState.localOutgoingRequests = parseSocialOutgoingMap(data?.[SOCIAL_OUTGOING_REQUESTS_FIELD]);
+  socialState.rejectedByUid = parseSocialTimestampMap(data?.[SOCIAL_REJECTED_REQUESTS_FIELD]);
+  combineSocialCollections();
+
+  if (allowToast && socialState.hydrated && socialState.incomingRequests.length > previousIncomingCount) {
+    const newCount = socialState.incomingRequests.length - previousIncomingCount;
+    showToast(
+      newCount === 1
+        ? "Tenés una nueva solicitud de amistad."
+        : `Tenés ${newCount} nuevas solicitudes de amistad.`
+    );
+  }
+
+  socialState.hydrated = true;
+  void refreshSocialRemoteState();
+  if (isPlayerReadyForAchievementChecks()) {
+    checkAchievements({ silent: false });
+  }
+}
+
+async function refreshSocialRemoteState({ force = false } = {}){
+  if (!currentUser?.uid) return;
+
+  const now = Date.now();
+  const hasFreshRemoteCache =
+    !force &&
+    socialState.remoteFetchedAt > 0 &&
+    (now - socialState.remoteFetchedAt) < SOCIAL_REMOTE_CACHE_TTL_MS;
+
+  if (hasFreshRemoteCache) return;
+
+  const runId = ++socialState.remoteFetchToken;
+  const incomingPath = `${SOCIAL_OUTGOING_REQUESTS_FIELD}.${currentUser.uid}.status`;
+  const acceptedPath = `${SOCIAL_ACCEPTED_FLAGS_FIELD}.${currentUser.uid}`;
+
+  let incomingSnapshot;
+  let acceptedSnapshot;
+  let ownLeaderboardSnapshot;
+
+  try {
+    [incomingSnapshot, acceptedSnapshot, ownLeaderboardSnapshot] = await Promise.all([
+      getDocs(
+        query(
+          collection(db, "leaderboard"),
+          where(incomingPath, "==", "pending"),
+          limit(120)
+        )
+      ),
+      getDocs(
+        query(
+          collection(db, "leaderboard"),
+          where(acceptedPath, "==", true),
+          limit(120)
+        )
+      ),
+      getDoc(doc(db, "leaderboard", currentUser.uid))
+    ]);
+  } catch (err) {
+    if (runId !== socialState.remoteFetchToken) return;
+    if (isFirestorePermissionError(err)) {
+      socialState.remoteIncomingRequests = [];
+      socialState.remoteFriends = [];
+      socialState.chatUnreadByUid = new Map();
+      socialState.chatRemoteReadByUid = new Map();
+      socialState.chatOwnReadByUid = readSocialReadCache(currentUser.uid);
+    } else {
+      console.warn("No se pudo actualizar estado social remoto.", err);
+    }
+    socialState.remoteFetchedAt = Date.now();
+    combineSocialCollections();
+    patchSocialRequestsUI();
+    patchSocialSearchResultsUI();
+    patchSocialFriendsUI();
+    return;
+  }
+
+  if (runId !== socialState.remoteFetchToken) return;
+
+  const remoteIncoming = [];
+  const remoteFriends = [];
+  const ownLeaderboardData = ownLeaderboardSnapshot?.exists() ? (ownLeaderboardSnapshot.data() || {}) : {};
+  const remoteReadByUid = parseSocialChatReadsMap(ownLeaderboardData?.[SOCIAL_CHAT_READS_FIELD]);
+  const localReadByUid = readSocialReadCache(currentUser.uid);
+  const ownReadByUid = new Map(remoteReadByUid);
+  localReadByUid.forEach((value, peerUid) => {
+    const safePeerUid = String(peerUid || "").trim();
+    const timestamp = Math.max(0, Number(value) || 0);
+    if (!safePeerUid || !timestamp) return;
+    if (timestamp > Number(ownReadByUid.get(safePeerUid) || 0)) {
+      ownReadByUid.set(safePeerUid, timestamp);
+    }
+  });
+  const remoteUnreadByUid = new Map();
+  const friendLeaderboardDataByUid = new Map();
+
+  incomingSnapshot?.forEach((docSnap) => {
+    if (!docSnap.exists()) return;
+    if (docSnap.id === currentUser.uid) return;
+
+    const data = docSnap.data() || {};
+    const outgoingMap = data?.[SOCIAL_OUTGOING_REQUESTS_FIELD];
+    if (!outgoingMap || typeof outgoingMap !== "object") return;
+
+    const requestData = outgoingMap[currentUser.uid];
+    if (!requestData || typeof requestData !== "object") return;
+
+    const status = String(requestData.status || "pending").trim().toLowerCase();
+    if (status !== "pending") return;
+
+    const senderName = String(
+      data.name ||
+      requestData.fromName ||
+      (String(requestData.fromUid || "").trim() === docSnap.id ? requestData.name : "") ||
+      "Usuario"
+    ).trim() || "Usuario";
+    const senderPhoto = String(
+      data.photo ||
+      requestData.fromPhoto ||
+      (String(requestData.fromUid || "").trim() === docSnap.id ? requestData.photo : "") ||
+      ""
+    ).trim();
+    const senderEmail = String(data.email || requestData.fromEmail || "").trim();
+
+    const normalized = normalizeSocialUser(
+      {
+        uid: docSnap.id,
+        name: senderName,
+        email: senderEmail,
+        photo: senderPhoto,
+        requestedAt: requestData.requestedAt
+      },
+      docSnap.id
+    );
+
+    if (normalized) {
+      remoteIncoming.push(normalized);
+    }
+  });
+
+  acceptedSnapshot?.forEach((docSnap) => {
+    if (!docSnap.exists()) return;
+    if (docSnap.id === currentUser.uid) return;
+
+    const data = docSnap.data() || {};
+    friendLeaderboardDataByUid.set(docSnap.id, data);
+    const acceptedMap = data?.[SOCIAL_ACCEPTED_FROM_FIELD];
+    if (!acceptedMap || typeof acceptedMap !== "object") return;
+
+    const acceptedData = acceptedMap[currentUser.uid];
+    if (!acceptedData || typeof acceptedData !== "object") return;
+
+    const acceptedAt = Math.max(0, Number(acceptedData.acceptedAt) || 0);
+    const normalized = normalizeSocialUser(
+      {
+        uid: docSnap.id,
+        name: data.name || acceptedData.name || "Usuario",
+        photo: data.photo || acceptedData.photo || "",
+        addedAt: acceptedAt
+      },
+      docSnap.id
+    );
+
+    if (normalized) {
+      remoteFriends.push(normalized);
+    }
+  });
+
+  const friendUidSet = new Set();
+  socialState.localFriends.forEach((entry) => {
+    const safeUid = String(entry?.uid || "").trim();
+    if (!safeUid || safeUid === currentUser.uid) return;
+    friendUidSet.add(safeUid);
+  });
+  remoteFriends.forEach((entry) => {
+    const safeUid = String(entry?.uid || "").trim();
+    if (!safeUid || safeUid === currentUser.uid) return;
+    friendUidSet.add(safeUid);
+  });
+
+  const missingFriendUids = Array.from(friendUidSet).filter((uid) => !friendLeaderboardDataByUid.has(uid));
+  if (missingFriendUids.length) {
+    const uidChunks = [];
+    for (let index = 0; index < missingFriendUids.length; index += 10) {
+      uidChunks.push(missingFriendUids.slice(index, index + 10));
+    }
+
+    try {
+      const friendSnapshots = await Promise.all(
+        uidChunks.map((uids) => {
+          return getDocs(
+            query(
+              collection(db, "leaderboard"),
+              where(documentId(), "in", uids)
+            )
+          );
+        })
+      );
+
+      if (runId !== socialState.remoteFetchToken) return;
+
+      friendSnapshots.forEach((snapshot) => {
+        snapshot.forEach((docSnap) => {
+          if (!docSnap.exists()) return;
+          if (docSnap.id === currentUser.uid) return;
+          if (friendLeaderboardDataByUid.has(docSnap.id)) return;
+          friendLeaderboardDataByUid.set(docSnap.id, docSnap.data() || {});
+        });
+      });
+    } catch (err) {
+      if (!isFirestorePermissionError(err)) {
+        console.warn("No se pudieron leer chats de algunos amigos para contar no leídos.", err);
+      }
+    }
+  }
+
+  friendUidSet.forEach((friendUid) => {
+    const friendData = friendLeaderboardDataByUid.get(friendUid);
+    if (!friendData || typeof friendData !== "object") return;
+    const readAt = Number(ownReadByUid.get(friendUid) || 0);
+    const unreadCount = countUnreadSocialMessagesFromFriendDoc(
+      friendUid,
+      friendData,
+      currentUser.uid,
+      readAt
+    );
+    if (unreadCount > 0) {
+      remoteUnreadByUid.set(friendUid, unreadCount);
+    }
+  });
+
+  if (runId !== socialState.remoteFetchToken) return;
+
+  socialState.remoteIncomingRequests = remoteIncoming;
+  socialState.remoteFriends = remoteFriends;
+  socialState.chatRemoteReadByUid = remoteReadByUid;
+  socialState.chatOwnReadByUid = ownReadByUid;
+  socialState.chatUnreadByUid = remoteUnreadByUid;
+  writeSocialReadCache(ownReadByUid, currentUser.uid);
+  ownReadByUid.forEach((value, peerUid) => {
+    const safePeerUid = String(peerUid || "").trim();
+    const timestamp = Math.max(0, Number(value) || 0);
+    if (!safePeerUid || !timestamp) return;
+    if (timestamp <= Number(remoteReadByUid.get(safePeerUid) || 0)) return;
+    queueSocialReadReceipt(safePeerUid, timestamp);
+  });
+  syncSocialActiveChatUnreadCount();
+  socialState.remoteFetchedAt = Date.now();
+  combineSocialCollections();
+  patchSocialRequestsUI();
+  patchSocialSearchResultsUI();
+  patchSocialFriendsUI();
+  if (isPlayerReadyForAchievementChecks()) {
+    checkAchievements({ silent: false });
+  }
+}
+
+function formatSocialTimestamp(value){
+  const timestamp = Math.max(0, Number(value) || 0);
+  if (!timestamp) return "Reciente";
+
+  try {
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return "Reciente";
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${day}/${month}, ${hours}:${minutes}`;
+  } catch (_error) {
+    return "Reciente";
+  }
+}
+
+function getSocialSearchResults(rawQuery = "", users = []){
+  const queryText = normalizeTextForSearch(rawQuery);
+  if (!queryText) return [];
+  if (!Array.isArray(users) || !users.length) return [];
+
+  const results = users.filter((user) => {
+    if (!user?.uid || user.uid === currentUser?.uid) return false;
+    const userNameSearch = String(user.nameSearch || normalizeTextForSearch(user.name || ""));
+    return userNameSearch.includes(queryText);
+  });
+
+  results.sort((a, b) => {
+    const aNameStarts = String(a.nameSearch || normalizeTextForSearch(a.name || "")).startsWith(queryText);
+    const bNameStarts = String(b.nameSearch || normalizeTextForSearch(b.name || "")).startsWith(queryText);
+    if (aNameStarts !== bNameStarts) return aNameStarts ? -1 : 1;
+
+    return String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" });
+  });
+
+  return results.slice(0, SOCIAL_SEARCH_MAX_RESULTS);
+}
+
+async function loadSocialDirectoryFromUsersCollection(){
+  const users = [];
+  const snapshot = await getDocs(collection(db, "users"));
+
+  snapshot.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const normalized = normalizeSocialUser(
+      {
+        uid: docSnap.id,
+        name: data.name || data.displayName || "Usuario",
+        email: data.email || "",
+        photo: data.photo || data.photoURL || ""
+      },
+      docSnap.id
+    );
+
+    if (normalized) {
+      users.push(normalized);
+    }
+  });
+
+  return users;
+}
+
+async function loadSocialDirectoryFromLeaderboard(){
+  const users = [];
+  const leaderboardQuery = query(
+    collection(db, "leaderboard"),
+    orderBy("name", "asc"),
+    limit(300)
+  );
+  const snapshot = await getDocs(leaderboardQuery);
+
+  snapshot.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const normalized = normalizeSocialUser(
+      {
+        uid: docSnap.id,
+        name: data.name || "Usuario",
+        email: data.email || "",
+        photo: data.photo || ""
+      },
+      docSnap.id
+    );
+
+    if (normalized) {
+      users.push(normalized);
+    }
+  });
+
+  return users;
+}
+
+async function loadSocialDirectoryUsers({ force = false } = {}){
+  const now = Date.now();
+  const cacheIsFresh =
+    !force &&
+    socialState.directoryFetchedAt > 0 &&
+    (now - socialState.directoryFetchedAt) < SOCIAL_DIRECTORY_CACHE_TTL_MS &&
+    socialState.directoryUsers.length > 0;
+
+  if (cacheIsFresh) {
+    return socialState.directoryUsers;
+  }
+
+  let users = [];
+  socialState.searchError = "";
+
+  try {
+    users = await loadSocialDirectoryFromUsersCollection();
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      throw err;
+    }
+
+    users = await loadSocialDirectoryFromLeaderboard();
+  }
+
+  const uniqueUsers = [];
+  const seen = new Set();
+
+  users.forEach((entry) => {
+    const uid = String(entry?.uid || "").trim();
+    if (!uid || seen.has(uid)) return;
+    seen.add(uid);
+    uniqueUsers.push(entry);
+  });
+
+  socialState.directoryUsers = uniqueUsers;
+  socialState.directoryFetchedAt = Date.now();
+  return uniqueUsers;
+}
+
+async function runSocialSearch(queryText){
+  const normalizedQuery = String(queryText || "").trim();
+  socialState.searchQuery = normalizedQuery;
+  const runId = ++socialState.searchToken;
+
+  if (!normalizedQuery) {
+    socialState.searchLoading = false;
+    socialState.searchError = "";
+    socialState.searchResults = [];
+    if (currentViewMode === VIEW_MODE_SOCIAL) {
+      patchSocialSearchResultsUI();
+    }
+    return;
+  }
+
+  if (normalizedQuery.includes("@")) {
+    socialState.searchLoading = false;
+    socialState.searchError = "La búsqueda social solo está disponible por nombre de usuario.";
+    socialState.searchResults = [];
+    if (currentViewMode === VIEW_MODE_SOCIAL) {
+      patchSocialSearchResultsUI();
+    }
+    return;
+  }
+
+  socialState.searchLoading = true;
+  socialState.searchResults = [];
+  if (currentViewMode === VIEW_MODE_SOCIAL) {
+    patchSocialSearchResultsUI();
+  }
+
+  try {
+    const users = await loadSocialDirectoryUsers();
+    if (runId !== socialState.searchToken) return;
+    socialState.searchResults = getSocialSearchResults(normalizedQuery, users);
+  } catch (err) {
+    if (runId !== socialState.searchToken) return;
+    socialState.searchError = "No se pudo completar la búsqueda en este momento.";
+    socialState.searchResults = [];
+    console.error("No se pudo cargar directorio social.", err);
+  } finally {
+    if (runId !== socialState.searchToken) return;
+    socialState.searchLoading = false;
+    if (currentViewMode === VIEW_MODE_SOCIAL) {
+      patchSocialSearchResultsUI();
+    }
+  }
+}
+
+async function sendSocialFriendRequest(targetUser = {}){
+  const target = normalizeSocialUser(targetUser, targetUser?.uid);
+  const requester = getCurrentUserSocialIdentity();
+
+  if (!target?.uid) {
+    showToast("No se pudo identificar al usuario.");
+    return false;
+  }
+
+  if (!requester?.uid) {
+    showToast("Iniciá sesión para enviar solicitudes.");
+    return false;
+  }
+
+  if (target.uid === requester.uid) {
+    showToast("No podés enviarte una solicitud a vos.");
+    return false;
+  }
+
+  if (socialState.friendsByUid.has(target.uid)) {
+    showToast(`Ya sos amigo de ${target.name}.`);
+    return false;
+  }
+
+  const now = Date.now();
+  const requestPayload = {
+    uid: requester.uid,
+    name: requester.name,
+    email: requester.email,
+    photo: requester.photo,
+    requestedAt: now,
+    status: "pending"
+  };
+  const outgoingPayload = {
+    uid: target.uid,
+    name: target.name,
+    photo: target.photo,
+    fromUid: requester.uid,
+    fromName: requester.name,
+    fromEmail: requester.email,
+    fromPhoto: requester.photo,
+    requestedAt: now,
+    status: "pending"
+  };
+
+  try {
+    await setDoc(
+      doc(db, "users", target.uid),
+      {
+        [SOCIAL_INCOMING_REQUESTS_FIELD]: {
+          [requester.uid]: requestPayload
+        }
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      throw err;
+    }
+
+    await setDoc(
+      doc(db, "leaderboard", requester.uid),
+      {
+        [SOCIAL_OUTGOING_REQUESTS_FIELD]: {
+          [target.uid]: outgoingPayload
+        }
+      },
+      { merge: true }
+    );
+  }
+
+  try {
+    await setDoc(
+      doc(db, "users", requester.uid),
+      {
+        [SOCIAL_OUTGOING_REQUESTS_FIELD]: {
+          [target.uid]: outgoingPayload
+        }
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo persistir estado local de solicitud social.", err);
+    }
+  }
+
+  const withoutTarget = socialState.localOutgoingRequests.filter((entry) => entry.uid !== target.uid);
+  const normalizedOutgoing = normalizeSocialUser(
+    {
+      uid: target.uid,
+      name: target.name,
+      photo: target.photo,
+      requestedAt: now
+    },
+    target.uid
+  );
+  if (normalizedOutgoing) {
+    withoutTarget.push({
+      ...normalizedOutgoing,
+      status: "pending"
+    });
+  }
+  socialState.localOutgoingRequests = withoutTarget;
+  combineSocialCollections();
+
+  socialState.remoteFetchedAt = 0;
+  void refreshSocialRemoteState({ force: true });
+  patchSocialRequestsUI();
+  patchSocialSearchResultsUI();
+  showToast(`Solicitud enviada a ${target.name}.`);
+  return true;
+}
+
+async function rejectSocialFriendRequest(fromUid){
+  const safeUid = String(fromUid || "").trim();
+  if (!safeUid || !currentUser?.uid) {
+    showToast("No se pudo rechazar la solicitud.");
+    return false;
+  }
+
+  const rejectedAt = Date.now();
+  await updateDoc(doc(db, "users", currentUser.uid), {
+    [`${SOCIAL_INCOMING_REQUESTS_FIELD}.${safeUid}`]: deleteField(),
+    [`${SOCIAL_REJECTED_REQUESTS_FIELD}.${safeUid}`]: rejectedAt
+  });
+
+  socialState.localIncomingRequests = socialState.localIncomingRequests.filter((entry) => entry.uid !== safeUid);
+  socialState.rejectedByUid.set(safeUid, rejectedAt);
+  combineSocialCollections();
+  patchSocialRequestsUI();
+  patchSocialSearchResultsUI();
+
+  socialState.remoteFetchedAt = 0;
+  void refreshSocialRemoteState({ force: true });
+  return true;
+}
+
+async function acceptSocialFriendRequest(fromUid){
+  const safeUid = String(fromUid || "").trim();
+  if (!safeUid || !currentUser?.uid) {
+    showToast("No se pudo aceptar la solicitud.");
+    return false;
+  }
+
+  const incomingUser = socialState.incomingByUid.get(safeUid);
+  if (!incomingUser) {
+    showToast("La solicitud ya no está disponible.");
+    return false;
+  }
+
+  const currentIdentity = getCurrentUserSocialIdentity();
+  if (!currentIdentity) {
+    showToast("Iniciá sesión para aceptar solicitudes.");
+    return false;
+  }
+
+  const now = Date.now();
+  const friendForCurrentUser = {
+    uid: incomingUser.uid,
+    name: incomingUser.name,
+    email: incomingUser.email,
+    photo: incomingUser.photo,
+    addedAt: now
+  };
+  const friendForSender = {
+    uid: currentIdentity.uid,
+    name: currentIdentity.name,
+    email: currentIdentity.email,
+    photo: currentIdentity.photo,
+    addedAt: now
+  };
+
+  try {
+    const batch = writeBatch(db);
+    const currentUserRef = doc(db, "users", currentIdentity.uid);
+    const senderRef = doc(db, "users", incomingUser.uid);
+
+    batch.update(currentUserRef, {
+      [`${SOCIAL_INCOMING_REQUESTS_FIELD}.${incomingUser.uid}`]: deleteField(),
+      [`${SOCIAL_REJECTED_REQUESTS_FIELD}.${incomingUser.uid}`]: deleteField(),
+      [`${SOCIAL_FRIENDS_FIELD}.${incomingUser.uid}`]: friendForCurrentUser
+    });
+
+    batch.update(senderRef, {
+      [`${SOCIAL_INCOMING_REQUESTS_FIELD}.${currentIdentity.uid}`]: deleteField(),
+      [`${SOCIAL_FRIENDS_FIELD}.${currentIdentity.uid}`]: friendForSender
+    });
+
+    await batch.commit();
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      throw err;
+    }
+
+    await updateDoc(doc(db, "users", currentIdentity.uid), {
+      [`${SOCIAL_INCOMING_REQUESTS_FIELD}.${incomingUser.uid}`]: deleteField(),
+      [`${SOCIAL_REJECTED_REQUESTS_FIELD}.${incomingUser.uid}`]: deleteField(),
+      [`${SOCIAL_FRIENDS_FIELD}.${incomingUser.uid}`]: friendForCurrentUser
+    });
+
+    await setDoc(
+      doc(db, "leaderboard", currentIdentity.uid),
+      {
+        [SOCIAL_ACCEPTED_FROM_FIELD]: {
+          [incomingUser.uid]: {
+            uid: incomingUser.uid,
+            name: incomingUser.name,
+            photo: incomingUser.photo,
+            acceptedAt: now
+          }
+        },
+        [SOCIAL_ACCEPTED_FLAGS_FIELD]: {
+          [incomingUser.uid]: true
+        }
+      },
+      { merge: true }
+    );
+  }
+
+  socialState.remoteFetchedAt = 0;
+  socialState.localIncomingRequests = socialState.localIncomingRequests.filter((entry) => entry.uid !== incomingUser.uid);
+  socialState.localOutgoingRequests = socialState.localOutgoingRequests.filter((entry) => entry.uid !== incomingUser.uid);
+  socialState.rejectedByUid.delete(incomingUser.uid);
+  if (!socialState.localFriends.some((entry) => entry.uid === incomingUser.uid)) {
+    const normalizedFriend = normalizeSocialUser(
+      {
+        uid: incomingUser.uid,
+        name: incomingUser.name,
+        photo: incomingUser.photo,
+        addedAt: now
+      },
+      incomingUser.uid
+    );
+    if (normalizedFriend) {
+      socialState.localFriends.push(normalizedFriend);
+    }
+  }
+  combineSocialCollections();
+  patchSocialRequestsUI();
+  patchSocialSearchResultsUI();
+  patchSocialFriendsUI();
+  void refreshSocialRemoteState({ force: true });
+  showToast(`Ahora ${incomingUser.name} y vos son amigos.`);
+  return true;
 }
 
 function formatLeaderboardDate(value){
@@ -4988,6 +9639,87 @@ function getLeaderboardDetailedSummary(playerData = {}, baseUser = {}){
   };
 }
 
+function renderLeaderboardAddFriendButton(summary = {}, { loading = false } = {}){
+  const safeSummary = getLeaderboardPublicSummary(summary);
+  const safeUid = String(safeSummary.uid || "");
+  const safeName = String(safeSummary.name || "Usuario");
+  const isSelfProfile = !!currentUser?.uid && safeUid === currentUser.uid;
+  if (isSelfProfile || !safeUid) {
+    return "";
+  }
+
+  const isOutgoingPending =
+    !loading &&
+    socialState.outgoingPendingByUid instanceof Map &&
+    socialState.outgoingPendingByUid.has(safeUid);
+  const isAlreadyFriend =
+    !loading &&
+    socialState.friendsByUid instanceof Map &&
+    socialState.friendsByUid.has(safeUid);
+
+  if (isAlreadyFriend) {
+    return `
+      <div class="leaderboard-profile-add-friend-wrap">
+        <button
+          class="leaderboard-profile-add-friend-btn sent"
+          type="button"
+          aria-label="Ya son amigos"
+          disabled
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M5.5 12.5 10 17l8.5-8.5" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+          <span>Amigos</span>
+        </button>
+      </div>
+    `;
+  }
+
+  if (isOutgoingPending) {
+    return `
+      <div class="leaderboard-profile-add-friend-wrap">
+        <button
+          class="leaderboard-profile-add-friend-btn sent"
+          type="button"
+          aria-label="Solicitud enviada a ${escapeHtml(safeName)}"
+          disabled
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M5.5 12.5 10 17l8.5-8.5" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+          <span>Solicitud enviada</span>
+        </button>
+      </div>
+    `;
+  }
+
+  const shouldDisable = loading;
+  const buttonLabel = loading ? "Preparando..." : "Agregar amigo";
+  const buttonAriaLabel = `Agregar a ${safeName} como amigo`;
+
+  return `
+    <div class="leaderboard-profile-add-friend-wrap">
+      <button
+        class="leaderboard-profile-add-friend-btn"
+        type="button"
+        data-leaderboard-add-friend-btn
+        data-leaderboard-user-uid="${escapeHtml(safeUid)}"
+        data-leaderboard-user-name="${escapeHtml(safeName)}"
+        aria-label="${escapeHtml(buttonAriaLabel)}"
+        ${shouldDisable ? "disabled" : ""}
+      >
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="8.8" cy="8" r="3.2" stroke="currentColor" stroke-width="2"></circle>
+          <path d="M3.8 18.3a5.9 5.9 0 0 1 10 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+          <path d="M18 10v6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path>
+          <path d="M15 13h6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path>
+        </svg>
+        <span>${escapeHtml(buttonLabel)}</span>
+      </button>
+    </div>
+  `;
+}
+
 function renderLeaderboardProfileMenu(summary = {}, { loading = false } = {}){
   const safeSummary = getLeaderboardPublicSummary(summary);
   const safeName = String(safeSummary.name || "Usuario");
@@ -5013,6 +9745,7 @@ function renderLeaderboardProfileMenu(summary = {}, { loading = false } = {}){
         </div>
       </div>
       <div class="leaderboard-profile-loading">Cargando perfil...</div>
+      ${renderLeaderboardAddFriendButton(safeSummary, { loading: true })}
     `;
   }
 
@@ -5053,6 +9786,7 @@ function renderLeaderboardProfileMenu(summary = {}, { loading = false } = {}){
       </div>
     </div>
     <div class="leaderboard-profile-stats">${statsHtml}</div>
+    ${renderLeaderboardAddFriendButton(safeSummary)}
   `;
 }
 
@@ -5079,8 +9813,46 @@ async function fetchLeaderboardProfileSummary(user){
     return localSummary;
   }
 
-  // Para evitar errores de permisos entre usuarios, el perfil público se resuelve
-  // únicamente con la colección leaderboard.
+  try {
+    const remoteProfileSnap = await getDoc(doc(db, "leaderboard", publicSummary.uid));
+    if (remoteProfileSnap.exists()) {
+      const remoteData = remoteProfileSnap.data() || {};
+      const remotePlayer =
+        remoteData?.player && typeof remoteData.player === "object" ? remoteData.player : null;
+
+      const remoteSummary = getLeaderboardPublicSummary({
+        uid: publicSummary.uid,
+        name: String(remoteData.name || publicSummary.name || "Usuario"),
+        photo: String(remoteData.photo || publicSummary.photo || ""),
+        level: remoteData.level,
+        exp: remoteData.exp,
+        completedTasks: remoteData.completedTasks,
+        activeStreak: remoteData.activeStreak,
+        longestStreak: remoteData.longestStreak,
+        allTasksStreak: remoteData.allTasksStreak,
+        totalFocusMinutes: remoteData.totalFocusMinutes,
+        todayExpTasks: remoteData.todayExpTasks,
+        achievementsUnlocked: remoteData.achievementsUnlocked,
+        lastActiveDate: remoteData.lastActiveDate,
+        lastAllTasksDate: remoteData.lastAllTasksDate,
+        lastExpDate: remoteData.lastExpDate,
+        updatedAt: remoteData.updatedAt,
+        playerData: remotePlayer
+      });
+
+      const summaryFromRemote = remotePlayer
+        ? getLeaderboardDetailedSummary(remotePlayer, remoteSummary)
+        : remoteSummary;
+
+      leaderboardProfileCache.set(publicSummary.uid, summaryFromRemote);
+      return summaryFromRemote;
+    }
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo cargar el perfil remoto del leaderboard.", err);
+    }
+  }
+
   leaderboardProfileCache.set(publicSummary.uid, publicSummary);
   return publicSummary;
 }
@@ -5262,6 +10034,47 @@ function showLeaderboardModal(users){
     });
   });
 
+  leaderboardProfileContent?.addEventListener("click", async (event) => {
+    if (!(event.target instanceof Element)) return;
+    const addFriendBtn = event.target.closest("[data-leaderboard-add-friend-btn]");
+    if (!addFriendBtn) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const targetUid = String(addFriendBtn.dataset.leaderboardUserUid || "").trim();
+    const targetName = String(addFriendBtn.dataset.leaderboardUserName || "Usuario").trim() || "Usuario";
+
+    try {
+      const requestSent = await sendSocialFriendRequest({
+        uid: targetUid,
+        name: targetName
+      });
+
+      if (requestSent && addFriendBtn instanceof HTMLButtonElement) {
+        addFriendBtn.classList.add("sent");
+        addFriendBtn.disabled = true;
+        addFriendBtn.removeAttribute("data-leaderboard-add-friend-btn");
+        addFriendBtn.removeAttribute("data-leaderboard-user-uid");
+        addFriendBtn.removeAttribute("data-leaderboard-user-name");
+        addFriendBtn.setAttribute("aria-label", `Solicitud enviada a ${targetName}`);
+        addFriendBtn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M5.5 12.5 10 17l8.5-8.5" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+          <span>Solicitud enviada</span>
+        `;
+      }
+    } catch (err) {
+      console.error("No se pudo enviar solicitud desde leaderboard.", err);
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos suficientes para enviar solicitudes.");
+      } else {
+        showToast("No se pudo enviar la solicitud de amistad.");
+      }
+    }
+  });
+
   document
     .getElementById("closeLeaderboard")
     .onclick = ()=>{
@@ -5293,6 +10106,27 @@ const cornerContainer = document.getElementById("cornerContainer");
 
 cornerContainer?.classList.add("collapsed");
 
+function stopDashboardProfileTriggerResizeObserver(){
+  if (!dashboardProfileTriggerResizeObserver) return;
+  dashboardProfileTriggerResizeObserver.disconnect();
+  dashboardProfileTriggerResizeObserver = null;
+}
+
+function watchDashboardProfileTriggerSize(trigger){
+  stopDashboardProfileTriggerResizeObserver();
+  if (typeof ResizeObserver !== "function" || !trigger) return;
+
+  dashboardProfileTriggerResizeObserver = new ResizeObserver(() => {
+    const isDashboardMenuOpen =
+      profileMenuOpen &&
+      cornerContainer?.classList.contains("dashboard-pill-mode") &&
+      activeDashboardProfileTrigger === trigger;
+    if (!isDashboardMenuOpen) return;
+    positionCornerMenuFromDashboardPill(trigger);
+  });
+  dashboardProfileTriggerResizeObserver.observe(trigger);
+}
+
 function closeCornerMenu() {
   if(!cornerContainer) return;
 
@@ -5303,6 +10137,7 @@ function closeCornerMenu() {
   cornerContainer.style.removeProperty("right");
   cornerContainer.style.removeProperty("left");
   cornerContainer.style.removeProperty("width");
+  stopDashboardProfileTriggerResizeObserver();
   document.body.classList.remove("dashboard-profile-menu-open");
   if (activeDashboardProfileTrigger) {
     activeDashboardProfileTrigger.classList.remove("menu-open");
@@ -5327,45 +10162,22 @@ function openCornerMenu() {
 function positionCornerMenuFromDashboardPill(trigger){
   if(!trigger || !cornerContainer) return;
   const rect = trigger.getBoundingClientRect();
-  const isMobile = window.innerWidth <= 900;
-  const viewportPadding = 10;
-
-  if (isMobile) {
-    const triggerWidth = Math.round(rect.width);
-    const maxViewportWidth = Math.max(0, Math.round(window.innerWidth - (viewportPadding * 2)));
-    const preferredWidth = Math.min(triggerWidth, maxViewportWidth);
-    const leftMin = viewportPadding;
-    const leftMax = Math.max(
-      leftMin,
-      Math.round(window.innerWidth - preferredWidth - viewportPadding)
-    );
-    const preferredLeft = Math.round(rect.left);
-    const left = Math.min(Math.max(preferredLeft, leftMin), leftMax);
-    const top = Math.max(6, Math.round(rect.bottom - 1));
-
-    cornerContainer.style.top = `${top}px`;
-    cornerContainer.style.left = `${left}px`;
-    cornerContainer.style.right = "auto";
-    cornerContainer.style.width = `${preferredWidth}px`;
-    return;
-  }
-
-  const maxViewportWidth = Math.max(220, Math.round(window.innerWidth - (viewportPadding * 2)));
-  const preferredWidth = Math.min(
-    maxViewportWidth,
-    Math.max(248, Math.round(rect.width))
-  );
-  const top = Math.max(6, Math.round(rect.bottom - 1));
-  let right = Math.max(viewportPadding, Math.round(window.innerWidth - rect.right));
-  const maxRight = Math.max(
-    viewportPadding,
+  const viewportPadding = window.innerWidth <= MOBILE_BREAKPOINT ? 10 : 12;
+  const maxViewportWidth = Math.max(0, Math.round(window.innerWidth - (viewportPadding * 2)));
+  const triggerWidth = Math.max(1, Math.round(rect.width));
+  const preferredWidth = Math.min(triggerWidth, maxViewportWidth);
+  const preferredLeft = Math.round(rect.left);
+  const leftMin = viewportPadding;
+  const leftMax = Math.max(
+    leftMin,
     Math.round(window.innerWidth - preferredWidth - viewportPadding)
   );
-  if (right > maxRight) right = maxRight;
+  const left = Math.min(Math.max(preferredLeft, leftMin), leftMax);
+  const top = Math.max(6, Math.round(rect.bottom - 1));
 
   cornerContainer.style.top = `${top}px`;
-  cornerContainer.style.right = `${right}px`;
-  cornerContainer.style.left = "auto";
+  cornerContainer.style.left = `${left}px`;
+  cornerContainer.style.right = "auto";
   cornerContainer.style.width = `${preferredWidth}px`;
 }
 
@@ -5401,6 +10213,7 @@ function toggleDashboardProfileMenuFromPill(trigger){
   activeDashboardProfileTrigger = trigger;
   activeDashboardProfileTrigger.classList.add("menu-open");
   activeDashboardProfileTrigger.setAttribute("aria-expanded", "true");
+  watchDashboardProfileTriggerSize(activeDashboardProfileTrigger);
   cornerContainer.classList.add("dashboard-pill-mode");
   document.body.classList.add("dashboard-profile-menu-open");
   positionCornerMenuFromDashboardPill(trigger);
@@ -5487,6 +10300,7 @@ const settingsAccountFocusMinutes = document.getElementById("settingsAccountFocu
 const settingsAccountLogoutBtn = document.getElementById("settingsAccountLogoutBtn");
 const reportErrorBtn = document.getElementById("reportErrorBtn");
 const suggestFeatureBtn = document.getElementById("suggestFeatureBtn");
+const startTutorialBtn = document.getElementById("startTutorialBtn");
 const settingsNavItems = Array.from(document.querySelectorAll(".settings-nav-item"));
 const settingsPanels = {
   account: document.getElementById("settingsPanelAccount"),
@@ -6106,6 +10920,15 @@ suggestFeatureBtn?.addEventListener("click", () => {
   openFeedbackModal("suggestion", suggestFeatureBtn);
 });
 
+startTutorialBtn?.addEventListener("click", async () => {
+  try{
+    await startGuidedTutorial();
+  }catch(err){
+    console.error(err);
+    showToast("No se pudo iniciar el tutorial.");
+  }
+});
+
 settingsAccountLogoutBtn?.addEventListener("click", async (e) => {
   e.stopPropagation();
   closeSettingsOverlay();
@@ -6208,6 +11031,9 @@ document.addEventListener("visibilitychange", ()=>{
 window.addEventListener("resize", () => {
   updateGreeting(currentUser);
   fitAllTodayLongDayTitles();
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    syncStudyRoomChatHeightWithMusicPlayer();
+  }
   if(!isMobileSettingsViewport()){
     closeMobileSettingsNav();
     return;
@@ -6224,19 +11050,37 @@ bindAutoNotificationPermissionFallback();
 
 
 async function setViewMode(nextMode){
+  const previousMode = currentViewMode;
   const normalizedMode = normalizeViewMode(nextMode);
   const modeChanged = currentViewMode !== normalizedMode;
+
+  if (!modeChanged) {
+    updateViewButtons();
+    return;
+  }
 
   if (typeof summarySearchCleanup === "function") {
     summarySearchCleanup();
     summarySearchCleanup = null;
   }
 
+  if (socialState.searchDebounceTimer) {
+    clearTimeout(socialState.searchDebounceTimer);
+    socialState.searchDebounceTimer = null;
+  }
+
+  if (modeChanged && socialState.chatActiveFriendUid) {
+    socialState.chatDeletePrompt = null;
+    socialState.chatMinimized = true;
+  }
+
+  if (previousMode === VIEW_MODE_STUDY_ROOMS && normalizedMode !== VIEW_MODE_STUDY_ROOMS) {
+    stopStudyRoomsListListener();
+  }
+
   currentViewMode = normalizedMode;
   localStorage.setItem("mt_view_mode", currentViewMode);
 
-  // Primero actualizamos la UI para mantener la interacción fluida (especialmente en mobile).
-  updateViewButtons();
   init();
 
   if(modeChanged && currentUser){
@@ -6287,7 +11131,8 @@ async function save({ includePlayer = false } = {}){
       tasks,
       projects,
       labels: taskLabels,
-      projectOrder
+      projectOrder,
+      dailyHistory: dailyCompletionHistory
     }));
 
     setStatusPending();
@@ -6308,6 +11153,7 @@ async function save({ includePlayer = false } = {}){
           projects: projects,
           labels: taskLabels,
           projectOrder,
+          dailyHistory: dailyCompletionHistory,
           viewMode: currentViewMode,
           ...(includePlayer ? { player } : {})
         }
@@ -6328,7 +11174,8 @@ async function save({ includePlayer = false } = {}){
         tasks,
         projects,
         labels: taskLabels,
-        projectOrder
+        projectOrder,
+        dailyHistory: dailyCompletionHistory
       }));
 
       setStatusPending();
@@ -6481,9 +11328,10 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
   const isTodayColumn = !isProject && iso === todayIso;
   const todayLongDayTitleClass = isTodayColumn && isLongDayName ? "col-title-long-today" : "";
   let dayTasks;
+  let scopedProject = null;
 
   if (isProject) {
-    const scopedProject = projects[projectId];
+    scopedProject = projects[projectId];
     if (!scopedProject || typeof scopedProject !== "object") {
       return document.createElement("div");
     }
@@ -6761,7 +11609,64 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       }
     });
     sortTaskList(dayTasks);
+    const completionStateKey = isProject
+      ? ""
+      : buildTaskCompletionStateKeyForColumn({ iso });
+    const hasPendingTasks = dayTasks.some((task) => !task?.done);
+    const hasCompletedTasks = dayTasks.some((task) => !!task?.done);
+    const canToggleCompletedTasks = hasPendingTasks && hasCompletedTasks;
+    const projectCompletedTasksCollapsed = isProject
+      ? scopedProject?.completedTasksCollapsed === true
+      : false;
+    const completedTasksCollapsed = canToggleCompletedTasks
+      ? (isProject
+          ? projectCompletedTasksCollapsed
+          : isTaskCompletionSectionCollapsed(completionStateKey))
+      : false;
+    let completionDividerInserted = false;
+    let hasPendingTaskRendered = false;
     dayTasks.forEach((t, i) => {
+      if (t.done && hasPendingTaskRendered && !completionDividerInserted) {
+        const completionDividerRow = document.createElement("div");
+        completionDividerRow.className = "task-completion-divider-row";
+
+        const completionDivider = document.createElement("div");
+        completionDivider.className = "task-completion-divider";
+        completionDivider.setAttribute("aria-hidden", "true");
+
+        const completionToggleButton = document.createElement("button");
+        completionToggleButton.type = "button";
+        completionToggleButton.className = "task-completion-toggle";
+        completionToggleButton.dataset.completedToggleScope = "tasks-column";
+        completionToggleButton.setAttribute("aria-expanded", completedTasksCollapsed ? "false" : "true");
+        completionToggleButton.setAttribute("aria-label", getTaskCompletionToggleAriaLabel(completedTasksCollapsed));
+        completionToggleButton.innerHTML = getTaskCompletionToggleIconMarkup(completedTasksCollapsed);
+        completionToggleButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (isProject && scopedProject) {
+            const nextCollapsed = !(scopedProject.completedTasksCollapsed === true);
+            scopedProject.completedTasksCollapsed = nextCollapsed;
+            render();
+            void save();
+            return;
+          }
+          const nextCollapsed = !isTaskCompletionSectionCollapsed(completionStateKey);
+          setTaskCompletionSectionCollapsed(completionStateKey, nextCollapsed);
+          render();
+        });
+
+        completionDividerRow.appendChild(completionDivider);
+        completionDividerRow.appendChild(completionToggleButton);
+        list.appendChild(completionDividerRow);
+        completionDividerInserted = true;
+      }
+      if (!t.done) {
+        hasPendingTaskRendered = true;
+      }
+      if (t.done && completedTasksCollapsed) {
+        return;
+      }
       if (t.expGiven === undefined) t.expGiven = false;
       const el = document.createElement("div");
       el.className = "task" + (t.done ? " done" : "");
@@ -8344,7 +13249,6 @@ function renderProjectsView(){
 
   closeProjectCardMenu();
   clearProjectDragState();
-  board.innerHTML = "";
 
   projectOrder = reconcileProjectOrder(projectOrder, projects);
 
@@ -8382,12 +13286,38 @@ function renderProjectsView(){
             <span class="summary-brand-version" data-app-version></span>
           </span>
         </div>
+        <button
+          class="summary-top-focus-mobile-btn"
+          type="button"
+          data-open-focus-mode="1"
+          aria-label="Abrir sesión de enfoque"
+        >
+          <span class="summary-top-focus-mobile-icon" aria-hidden="true"></span>
+        </button>
+        <button
+          class="summary-top-study-mobile-btn"
+          type="button"
+          data-open-study-rooms="1"
+          aria-label="Abrir salas de estudio"
+        >
+          <span class="summary-top-study-mobile-icon" aria-hidden="true"></span>
+        </button>
         <div class="summary-nav-row">
           <nav class="summary-nav" aria-label="Secciones del dashboard">
             <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_SUMMARY}">Resumen</button>
             <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_TASKS}">Tareas diarias</button>
             <button class="summary-nav-item active" type="button" data-view="${VIEW_MODE_PROJECTS}">Proyectos</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_SOCIAL}">Social</button>
           </nav>
+          <button
+            class="summary-top-study-btn"
+            type="button"
+            data-open-study-rooms="1"
+            aria-label="Abrir salas de estudio"
+          >
+            <span class="summary-top-study-icon" aria-hidden="true"></span>
+            <span class="summary-top-study-label">Salas</span>
+          </button>
           <button
             class="summary-mobile-plus-btn"
             type="button"
@@ -8470,6 +13400,9 @@ function renderProjectsView(){
       </div>
 
       <div class="projects-container projects-dashboard-grid" id="projectsDashboardGrid"></div>
+      <div class="social-messenger-host" id="socialMessengerHost">
+        ${renderSocialMessengerWidget()}
+      </div>
     </section>
   `;
 
@@ -8504,6 +13437,7 @@ function renderProjectsView(){
       title,
       tasks: [],
       createdAt: Date.now(),
+      completedTasksCollapsed: false,
       bannerEnabled: true,
       bannerColor: PROJECT_DEFAULT_BANNER_COLOR,
       bannerImage: pickRandomProjectBannerAsset()
@@ -8712,8 +13646,10 @@ function renderProjectsView(){
   syncAppVersionLabels();
   bindSummaryNavEvents();
   bindSummaryUserPillMenu();
+  bindSummaryTopStudyRoomsButton();
   bindSummaryTopFocusButton();
   bindSummaryMobilePlusButton();
+  bindSocialChatEvents();
   syncSummaryStatusText();
 
 }
@@ -8723,6 +13659,8 @@ function bindSummaryNavEvents(scope = board){
   if(!summaryNavItems.length){
     return;
   }
+
+  syncSocialNavUnreadBadge(scope);
 
   summaryNavItems.forEach((button) => {
     button.addEventListener("click", async () => {
@@ -8788,6 +13726,21 @@ function bindSummaryTopFocusButton(scope = board){
       event.preventDefault();
       event.stopPropagation();
       openPomodoroMode();
+    });
+  });
+}
+
+function bindSummaryTopStudyRoomsButton(scope = board){
+  const studyRoomButtons = scope.querySelectorAll("[data-open-study-rooms]");
+  if (!studyRoomButtons.length) return;
+
+  studyRoomButtons.forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) return;
+      closeCornerMenu();
+      await setViewMode(VIEW_MODE_STUDY_ROOMS);
     });
   });
 }
@@ -9167,6 +14120,7 @@ function addTaskToNewProject(projectTitle, taskText){
     title: safeProjectTitle,
     tasks: [],
     createdAt: Date.now(),
+    completedTasksCollapsed: false,
     bannerEnabled: true,
     bannerColor: PROJECT_DEFAULT_BANNER_COLOR,
     bannerImage: pickRandomProjectBannerAsset()
@@ -9826,53 +14780,51 @@ function getSummaryDashboardData(){
 
   const today = new Date();
   const todayIso = formatLocalDate(today);
-  const todayList = Array.isArray(tasks?.[todayIso]) ? tasks[todayIso] : [];
-  const todayCompleted = todayList.filter((task) => !!task?.done).length;
+  const todayMetrics = getDailyCompletionMetricsForDate(todayIso, todayIso);
+  const todayCompleted = todayMetrics.completed;
 
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayIso = formatLocalDate(yesterday);
-  const yesterdayList = Array.isArray(tasks?.[yesterdayIso]) ? tasks[yesterdayIso] : [];
-  const yesterdayCompleted = yesterdayList.filter((task) => !!task?.done).length;
+  const yesterdayMetrics = getDailyCompletionMetricsForDate(yesterdayIso, todayIso);
+  const yesterdayCompleted = yesterdayMetrics.completed;
   const todayDelta = yesterdayCompleted > 0
     ? ((todayCompleted - yesterdayCompleted) / yesterdayCompleted) * 100
     : (todayCompleted > 0 ? 100 : 0);
 
-  const trend14 = [];
-  for(let daysAgo = 13; daysAgo >= 0; daysAgo--){
+  const trendComparisonWindow = SUMMARY_WEEK_DELTA_WINDOW_DAYS * 2;
+  const trendRange = [];
+  for(let daysAgo = trendComparisonWindow - 1; daysAgo >= 0; daysAgo--){
     const date = new Date(today);
     date.setDate(today.getDate() - daysAgo);
     const iso = formatLocalDate(date);
-    const list = Array.isArray(tasks?.[iso]) ? tasks[iso] : [];
-    const total = list.length;
-    const completed = list.filter((task) => !!task?.done).length;
+    const { total, completed } = getDailyCompletionMetricsForDate(iso, todayIso);
     const label = date.toLocaleDateString("es-AR", { day: "numeric", month: "short" }).replace(/\./g, "");
 
-    trend14.push({ iso, label, total, completed });
+    trendRange.push({ iso, label, total, completed });
   }
 
-  const previousWeekCompleted = trend14
-    .slice(0, 7)
+  const previousWeekSlice = trendRange.slice(0, SUMMARY_WEEK_DELTA_WINDOW_DAYS);
+  const currentWeekSlice = trendRange.slice(SUMMARY_WEEK_DELTA_WINDOW_DAYS);
+  const previousWeekCompleted = previousWeekSlice
     .reduce((sum, day) => sum + day.completed, 0);
-  const currentWeekCompleted = trend14
-    .slice(7)
+  const currentWeekCompleted = currentWeekSlice
     .reduce((sum, day) => sum + day.completed, 0);
-  const currentWeekTotal = trend14
-    .slice(7)
+  const currentWeekTotal = currentWeekSlice
     .reduce((sum, day) => sum + day.total, 0);
   const weekDelta = previousWeekCompleted > 0
     ? ((currentWeekCompleted - previousWeekCompleted) / previousWeekCompleted) * 100
     : (currentWeekCompleted > 0 ? 100 : 0);
 
-  const trend12 = trend14.slice(-12);
-  const trendMaxTotal = Math.max(1, ...trend12.map((day) => day.total));
-  const trendAverageTotal = trend12.length
-    ? trend12.reduce((sum, day) => sum + day.total, 0) / trend12.length
+  const trend7 = trendRange.slice(-SUMMARY_DAILY_TREND_DAYS);
+  const trendMaxTotal = Math.max(1, ...trend7.map((day) => day.total));
+  const trendAverageTotal = trend7.length
+    ? trend7.reduce((sum, day) => sum + day.total, 0) / trend7.length
     : 0;
-  const trendHighlightIndex = trend12.reduce((bestIndex, day, index, list) => (
+  const trendHighlightIndex = trend7.reduce((bestIndex, day, index, list) => (
     day.total > list[bestIndex].total ? index : bestIndex
   ), 0);
-  const trendBestDay = trend12[trendHighlightIndex] || null;
+  const trendBestDay = trend7[trendHighlightIndex] || null;
 
   const totalExp = Math.max(0, Number(player?.exp) || 0);
   const levelState = getLevelProgressState();
@@ -9883,11 +14835,12 @@ function getSummaryDashboardData(){
   const activeStreak = Math.max(0, Number(player?.activeStreak) || 0);
   const longestStreak = Math.max(0, Number(player?.longestStreak) || 0);
   const unlockedAchievements = Math.max(0, Number(Object.keys(player?.achievements || {}).length) || 0);
+  const totalAchievements = Math.max(0, Number(ACHIEVEMENTS.length) || 0);
 
   const ringSegments = [
-    { label: "Completadas", value: completedTasks, color: "var(--dashboard-accent-primary)" },
-    { label: "Pendientes diarias", value: pendingDaily, color: "color-mix(in srgb, var(--dashboard-accent-secondary) 72%, #5f73ff 28%)" },
-    { label: "Pendientes en proyectos", value: pendingProject, color: "color-mix(in srgb, var(--gradient-from) 28%, #ff7564 72%)" }
+    { label: "Completadas", value: completedTasks, color: "var(--summary-ring-segment-completed)" },
+    { label: "Pendientes diarias", value: pendingDaily, color: "var(--summary-ring-segment-daily)" },
+    { label: "Pendientes en proyectos", value: pendingProject, color: "var(--summary-ring-segment-project)" }
   ];
   const ringTotal = ringSegments.reduce((sum, segment) => (
     sum + Math.max(0, Number(segment.value) || 0)
@@ -9914,7 +14867,7 @@ function getSummaryDashboardData(){
     scheduledTasks,
     projectsCount,
     todayCompleted,
-    todayTotal: todayList.length,
+    todayTotal: todayMetrics.total,
     todayDelta,
     weekDelta,
     currentWeekCompleted,
@@ -9927,10 +14880,11 @@ function getSummaryDashboardData(){
     activeStreak,
     longestStreak,
     unlockedAchievements,
+    totalAchievements,
     ringSegments: ringSegmentsWithPercent,
     ringGradient: buildSummaryRingGradient(ringSegments),
     ringTotal,
-    trend12,
+    trend7,
     trendMaxTotal,
     trendAverageTotal,
     trendBestDay,
@@ -9952,19 +14906,20 @@ function renderSummaryView(){
   const safeRingGradient = escapeHtml(summary.ringGradient);
   const highlightIso = summary.trendBestDay?.iso || "";
 
-  const trendBarsHtml = summary.trend12.map((day) => {
-    const ratio = day.total > 0 ? (day.total / summary.trendMaxTotal) * 100 : 0;
-    const barHeight = Math.max(8, Math.round(ratio));
+  const trendBarsHtml = summary.trend7.map((day) => {
     const isHighlight = day.iso === highlightIso;
     const completionForDay = day.total > 0 ? (day.completed / day.total) * 100 : 0;
+    const pointLevel = Math.max(0, Math.min(100, Math.round(completionForDay)));
     const label = escapeHtml(day.label);
     const title = escapeHtml(`${day.label}: ${day.completed}/${day.total} completadas`);
     const completionText = formatSummaryPercent(completionForDay);
 
     return `
-      <div class="summary-trend-col" title="${title}">
-        <span class="summary-trend-completion">${completionText}</span>
-        <span class="summary-trend-bar${isHighlight ? " is-highlight" : ""}" style="--bar-height:${barHeight}%"></span>
+      <div class="summary-trend-col" title="${title}" style="--point-level:${pointLevel}%">
+        <div class="summary-trend-plot">
+          <span class="summary-trend-completion">${completionText}</span>
+          <span class="summary-trend-bar${isHighlight ? " is-highlight" : ""}"></span>
+        </div>
         <span class="summary-trend-label">${label}</span>
       </div>
     `;
@@ -9978,9 +14933,13 @@ function renderSummaryView(){
     </li>
   `).join("");
 
-  const averageLine = summary.trendMaxTotal > 0
-    ? Math.max(6, Math.round((summary.trendAverageTotal / summary.trendMaxTotal) * 100))
-    : 6;
+  const averageCompletionLine = summary.trend7.length
+    ? summary.trend7.reduce((sum, day) => {
+      const completion = day.total > 0 ? (day.completed / day.total) * 100 : 0;
+      return sum + completion;
+    }, 0) / summary.trend7.length
+    : 0;
+  const averageLine = Math.max(0, Math.min(100, Math.round(averageCompletionLine)));
   const pendingShare = summary.totalTasks > 0
     ? (summary.pendingTasks / summary.totalTasks) * 100
     : 0;
@@ -10030,12 +14989,38 @@ function renderSummaryView(){
             <span class="summary-brand-version" data-app-version></span>
           </span>
         </div>
+        <button
+          class="summary-top-focus-mobile-btn"
+          type="button"
+          data-open-focus-mode="1"
+          aria-label="Abrir sesión de enfoque"
+        >
+          <span class="summary-top-focus-mobile-icon" aria-hidden="true"></span>
+        </button>
+        <button
+          class="summary-top-study-mobile-btn"
+          type="button"
+          data-open-study-rooms="1"
+          aria-label="Abrir salas de estudio"
+        >
+          <span class="summary-top-study-mobile-icon" aria-hidden="true"></span>
+        </button>
         <div class="summary-nav-row">
           <nav class="summary-nav" aria-label="Secciones del dashboard">
             <button class="summary-nav-item active" type="button" data-view="${VIEW_MODE_SUMMARY}">Resumen</button>
             <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_TASKS}">Tareas diarias</button>
             <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_PROJECTS}">Proyectos</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_SOCIAL}">Social</button>
           </nav>
+          <button
+            class="summary-top-study-btn"
+            type="button"
+            data-open-study-rooms="1"
+            aria-label="Abrir salas de estudio"
+          >
+            <span class="summary-top-study-icon" aria-hidden="true"></span>
+            <span class="summary-top-study-label">Salas</span>
+          </button>
           <button
             class="summary-mobile-plus-btn"
             type="button"
@@ -10136,7 +15121,7 @@ function renderSummaryView(){
         <article class="summary-card summary-card-plan">
           <div class="summary-card-head">
             <h3>Nivel actual</h3>
-            <span class="summary-inline-link">Objetivo nivel ${formatSettingsStat(levelProgress.level + 1)}</span>
+            <span class="summary-inline-link">${formatSettingsStat(levelProgress.level)}</span>
           </div>
           <div class="summary-plan-values">
             <div>
@@ -10180,13 +15165,13 @@ function renderSummaryView(){
             </div>
             <p>Minutos en sesiones de enfoque</p>
           </div>
-          <div class="summary-foot-item">
-            <div class="summary-foot-top">
-              <strong>${formatSettingsStat(summary.unlockedAchievements)}</strong>
-            </div>
-            <p>Logros desbloqueados</p>
-          </div>
-        </article>
+	          <div class="summary-foot-item">
+	            <div class="summary-foot-top">
+	              <strong>${formatSettingsStat(summary.unlockedAchievements)}/${formatSettingsStat(summary.totalAchievements)}</strong>
+	            </div>
+	            <p>Logros desbloqueados</p>
+	          </div>
+	        </article>
 
         <article class="summary-card summary-card-upcoming">
           <div class="summary-card-head">
@@ -10214,14 +15199,19 @@ function renderSummaryView(){
           </div>
         </article>
       </div>
+      <div class="social-messenger-host" id="socialMessengerHost">
+        ${renderSocialMessengerWidget()}
+      </div>
     </section>
   `;
 
   syncAppVersionLabels();
   bindSummaryNavEvents();
   bindSummaryUserPillMenu();
+  bindSummaryTopStudyRoomsButton();
   bindSummaryTopFocusButton();
   bindSummaryMobilePlusButton();
+  bindSocialChatEvents();
   renderSummaryDashboardCalendar();
   bindSummarySearch();
   syncSummaryStatusText();
@@ -10399,12 +15389,38 @@ function renderTasksView(){
             <span class="summary-brand-version" data-app-version></span>
           </span>
         </div>
+        <button
+          class="summary-top-focus-mobile-btn"
+          type="button"
+          data-open-focus-mode="1"
+          aria-label="Abrir sesión de enfoque"
+        >
+          <span class="summary-top-focus-mobile-icon" aria-hidden="true"></span>
+        </button>
+        <button
+          class="summary-top-study-mobile-btn"
+          type="button"
+          data-open-study-rooms="1"
+          aria-label="Abrir salas de estudio"
+        >
+          <span class="summary-top-study-mobile-icon" aria-hidden="true"></span>
+        </button>
         <div class="summary-nav-row">
           <nav class="summary-nav" aria-label="Secciones del dashboard">
             <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_SUMMARY}">Resumen</button>
             <button class="summary-nav-item active" type="button" data-view="${VIEW_MODE_TASKS}">Tareas diarias</button>
             <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_PROJECTS}">Proyectos</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_SOCIAL}">Social</button>
           </nav>
+          <button
+            class="summary-top-study-btn"
+            type="button"
+            data-open-study-rooms="1"
+            aria-label="Abrir salas de estudio"
+          >
+            <span class="summary-top-study-icon" aria-hidden="true"></span>
+            <span class="summary-top-study-label">Salas</span>
+          </button>
           <button
             class="summary-mobile-plus-btn"
             type="button"
@@ -10481,6 +15497,9 @@ function renderTasksView(){
       </div>
 
       <div class="tasks-daily-board" id="tasksDailyBoard"></div>
+      <div class="social-messenger-host" id="socialMessengerHost">
+        ${renderSocialMessengerWidget()}
+      </div>
     </section>
   `;
 
@@ -10497,9 +15516,8001 @@ function renderTasksView(){
   syncAppVersionLabels();
   bindSummaryNavEvents();
   bindSummaryUserPillMenu();
+  bindSummaryTopStudyRoomsButton();
   bindSummaryTopFocusButton();
   bindSummaryMobilePlusButton();
+  bindSocialChatEvents();
   syncSummaryStatusText();
+}
+
+function renderSocialSearchResultsList(){
+  const hasQuery = String(socialState.searchQuery || "").trim().length > 0;
+
+  if (!hasQuery) {
+    return "";
+  }
+
+  if (socialState.searchLoading) {
+    return `<div class="social-empty">Buscando personas...</div>`;
+  }
+
+  if (socialState.searchError && !socialState.searchResults.length) {
+    return `<div class="social-empty">${escapeHtml(socialState.searchError)}</div>`;
+  }
+
+  if (!socialState.searchResults.length) {
+    return `<div class="social-empty">No encontramos resultados para “${escapeHtml(socialState.searchQuery)}”.</div>`;
+  }
+
+  return socialState.searchResults.map((entry) => {
+    const safeName = escapeHtml(entry.name || "Usuario");
+    const avatarSrc = escapeHtml(entry.photo || getLeaderboardFallbackPhoto(entry.name || "Usuario"));
+    const avatarFallback = escapeHtml(getLeaderboardFallbackPhoto(entry.name || "Usuario"));
+
+    let actionsHtml = `
+      <button
+        class="social-btn primary"
+        type="button"
+        data-social-action="send-request"
+        data-social-uid="${escapeHtml(entry.uid)}"
+        data-social-name="${safeName}"
+        data-social-photo="${escapeHtml(entry.photo || "")}"
+      >
+        Enviar solicitud
+      </button>
+    `;
+
+    if (socialState.friendsByUid.has(entry.uid)) {
+      actionsHtml = `<span class="social-chip">Amigos</span>`;
+    } else if (socialState.incomingByUid.has(entry.uid)) {
+      actionsHtml = `
+        <button
+          class="social-btn primary"
+          type="button"
+          data-social-action="accept-request"
+          data-social-uid="${escapeHtml(entry.uid)}"
+        >
+          Aceptar
+        </button>
+        <button
+          class="social-btn ghost"
+          type="button"
+          data-social-action="reject-request"
+          data-social-uid="${escapeHtml(entry.uid)}"
+        >
+          Rechazar
+        </button>
+      `;
+    } else if (socialState.outgoingPendingByUid.has(entry.uid)) {
+      actionsHtml = `
+        <button
+          class="social-btn sent"
+          type="button"
+          disabled
+          aria-label="Solicitud enviada"
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M5.5 12.5 10 17l8.5-8.5" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+          Solicitud enviada
+        </button>
+      `;
+    }
+
+    return `
+      <div class="social-user-row">
+        <img
+          class="social-user-avatar"
+          src="${avatarSrc}"
+          alt="Foto de ${safeName}"
+          onerror="this.src='${avatarFallback}'"
+        >
+        <div class="social-user-meta">
+          <strong>${safeName}</strong>
+        </div>
+        <div class="social-user-actions">
+          ${actionsHtml}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function patchSocialSearchResultsUI(scope = board){
+  if (currentViewMode !== VIEW_MODE_SOCIAL) return;
+
+  const resultsList = scope.querySelector("#socialResultsList");
+  const resultsCount = scope.querySelector("#socialResultsCount");
+
+  if (resultsList instanceof HTMLElement) {
+    resultsList.innerHTML = renderSocialSearchResultsList();
+  }
+
+  if (resultsCount instanceof HTMLElement) {
+    resultsCount.textContent = formatSettingsStat(socialState.searchResults.length);
+  }
+}
+
+function renderSocialIncomingRequestsList(){
+  if (!socialState.incomingRequests.length) {
+    return `<div class="social-empty">No tenés solicitudes recibidas.</div>`;
+  }
+
+  return socialState.incomingRequests.map((entry) => {
+    const safeName = escapeHtml(entry.name || "Usuario");
+    const avatarSrc = escapeHtml(entry.photo || getLeaderboardFallbackPhoto(entry.name || "Usuario"));
+    const avatarFallback = escapeHtml(getLeaderboardFallbackPhoto(entry.name || "Usuario"));
+    const safeRequestedAt = escapeHtml(formatSocialTimestamp(entry.requestedAt));
+
+    return `
+      <div class="social-user-row">
+        <img
+          class="social-user-avatar"
+          src="${avatarSrc}"
+          alt="Foto de ${safeName}"
+          onerror="this.src='${avatarFallback}'"
+        >
+        <div class="social-user-meta">
+          <strong>${safeName}</strong>
+          <small>${safeRequestedAt}</small>
+        </div>
+        <div class="social-user-actions">
+          <button
+            class="social-btn primary"
+            type="button"
+            data-social-action="accept-request"
+            data-social-uid="${escapeHtml(entry.uid)}"
+          >
+            Aceptar
+          </button>
+          <button
+            class="social-btn ghost"
+            type="button"
+            data-social-action="reject-request"
+            data-social-uid="${escapeHtml(entry.uid)}"
+          >
+            Rechazar
+          </button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderSocialOutgoingRequestsList(){
+  const outgoingPending = Array.from(
+    socialState.outgoingPendingByUid instanceof Map
+      ? socialState.outgoingPendingByUid.values()
+      : []
+  ).sort((a, b) => {
+    const byTime = (Number(b.requestedAt) || 0) - (Number(a.requestedAt) || 0);
+    if (byTime !== 0) return byTime;
+    return String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" });
+  });
+
+  if (!outgoingPending.length) {
+    return `<div class="social-empty">No tenés solicitudes enviadas pendientes.</div>`;
+  }
+
+  return outgoingPending.map((entry) => {
+    const safeName = escapeHtml(entry.name || "Usuario");
+    const avatarSrc = escapeHtml(entry.photo || getLeaderboardFallbackPhoto(entry.name || "Usuario"));
+    const avatarFallback = escapeHtml(getLeaderboardFallbackPhoto(entry.name || "Usuario"));
+    const safeRequestedAt = escapeHtml(formatSocialTimestamp(entry.requestedAt));
+
+    return `
+      <div class="social-user-row">
+        <img
+          class="social-user-avatar"
+          src="${avatarSrc}"
+          alt="Foto de ${safeName}"
+          onerror="this.src='${avatarFallback}'"
+        >
+        <div class="social-user-meta">
+          <strong>${safeName}</strong>
+          <small>${safeRequestedAt}</small>
+        </div>
+        <div class="social-user-actions">
+          <button
+            class="social-btn sent"
+            type="button"
+            disabled
+            aria-label="Solicitud enviada"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M5.5 12.5 10 17l8.5-8.5" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+            Solicitud enviada
+          </button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function patchSocialRequestsUI(scope = board){
+  if (currentViewMode !== VIEW_MODE_SOCIAL) return;
+
+  const incomingCount = socialState.incomingRequests.length;
+  const totalCount = incomingCount;
+
+  const totalCountElement = scope.querySelector("#socialRequestsCount");
+  const incomingList = scope.querySelector("#socialIncomingList");
+  const outgoingList = scope.querySelector("#socialOutgoingList");
+
+  if (totalCountElement instanceof HTMLElement) {
+    totalCountElement.textContent = formatSettingsStat(totalCount);
+  }
+
+  if (incomingList instanceof HTMLElement) {
+    incomingList.innerHTML = renderSocialIncomingRequestsList();
+  }
+
+  if (outgoingList instanceof HTMLElement) {
+    outgoingList.innerHTML = renderSocialOutgoingRequestsList();
+  }
+}
+
+function renderSocialChatStudyRoomInviteBubble(
+  message = {},
+  {
+    positionClass = "group-single",
+    isDeleteTarget = false,
+    activeFriendUid = ""
+  } = {}
+){
+  const ownUid = String(currentUser?.uid || "").trim();
+  const fromUid = String(message?.fromUid || "").trim();
+  const isOwnBubble = !!ownUid && fromUid === ownUid;
+
+  const invitePayload = normalizeSocialChatStudyRoomInvitePayload(message?.studyRoomInvite, {
+    roomId: message?.roomId,
+    roomTitle: message?.roomTitle,
+    invitedByUid: message?.fromUid,
+    invitedByName: message?.invitedByName
+  });
+  const roomTitleRaw = String(invitePayload.roomTitle || "Sala de estudio").trim() || "Sala de estudio";
+  const roomTitle = escapeHtml(roomTitleRaw);
+  const inviterNameRaw = String(
+    invitePayload.invitedByName ||
+    socialState.friendsByUid.get(fromUid)?.name ||
+    "Tu contacto"
+  ).trim() || "Tu contacto";
+  const inviterName = escapeHtml(inviterNameRaw);
+  const safeMessageId = escapeHtml(String(message?.id || "").trim());
+
+  const inviteStatus = normalizeSocialChatStudyRoomInviteStatus(message?.inviteResponseStatus);
+  const canRespond = !isOwnBubble && inviteStatus === SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_PENDING;
+  const targetFriendUid = escapeHtml(String(fromUid || activeFriendUid || "").trim());
+
+  let statusHtml = "";
+  if (!isOwnBubble) {
+    if (inviteStatus === SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_ACCEPTED) {
+      statusHtml = `<div class="social-chat-invite-state accepted">Invitación aceptada.</div>`;
+    } else if (inviteStatus === SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_REJECTED) {
+      statusHtml = `<div class="social-chat-invite-state rejected">Invitación rechazada.</div>`;
+    } else if (inviteStatus === SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_ROOM_CLOSED) {
+      statusHtml = `<div class="social-chat-invite-state closed">La sala fue cerrada.</div>`;
+    }
+  }
+
+  const actionsHtml = canRespond
+    ? `
+      <div class="social-chat-invite-actions">
+        <button
+          class="social-chat-invite-btn accept"
+          type="button"
+          data-social-chat-study-invite-action="accept"
+          data-social-chat-message-id="${safeMessageId}"
+          data-social-chat-friend-uid="${targetFriendUid}"
+        >
+          Aceptar
+        </button>
+        <button
+          class="social-chat-invite-btn reject"
+          type="button"
+          data-social-chat-study-invite-action="reject"
+          data-social-chat-message-id="${safeMessageId}"
+          data-social-chat-friend-uid="${targetFriendUid}"
+        >
+          Rechazar
+        </button>
+      </div>
+    `
+    : "";
+
+  const bubbleClasses = [
+    "social-chat-bubble",
+    "social-chat-bubble-invite",
+    positionClass,
+    isDeleteTarget ? "delete-target" : ""
+  ].filter(Boolean).join(" ");
+
+  const titleHtml = isOwnBubble
+    ? `Invitacion para sala ${roomTitle} enviada.`
+    : `${inviterName} te ha invitado a la sala ${roomTitle}.`;
+
+  return `
+    <div class="${bubbleClasses}">
+      <div class="social-chat-invite-title">${titleHtml}</div>
+      ${statusHtml}
+      ${actionsHtml}
+    </div>
+  `;
+}
+
+function renderSocialChatMessagesList(){
+  if (socialState.chatLoading) {
+    return `<div class="social-empty">Cargando chat...</div>`;
+  }
+
+  if (socialState.chatError) {
+    return `<div class="social-empty">${escapeHtml(socialState.chatError)}</div>`;
+  }
+
+  const messages = Array.isArray(socialState.chatMessages) ? socialState.chatMessages : [];
+  if (!messages.length) {
+    return `<div class="social-empty">Todavía no hay mensajes. Escribí el primero.</div>`;
+  }
+
+  const ownUid = String(currentUser?.uid || "").trim();
+  const activeFriendUid = String(socialState.chatActiveFriendUid || "").trim();
+  const activeDeletePrompt = getSocialChatDeletePromptForFriend(activeFriendUid);
+  const deleteTargetMessageId = String(activeDeletePrompt?.messageId || "").trim();
+  const friendReadAt = ownUid
+    ? getSocialReadTimestampFromDoc(socialState.chatFriendDocData || {}, ownUid)
+    : 0;
+
+  const groups = [];
+
+  messages.forEach((message) => {
+    const safeMessage = message && typeof message === "object" ? message : {};
+    const isOwnMessage = String(safeMessage.fromUid || "") === ownUid;
+    const createdAt = Math.max(0, Number(safeMessage.createdAt) || 0);
+    const minuteKey = createdAt > 0 ? Math.floor(createdAt / 60000) : null;
+    const messageKind = normalizeSocialChatMessageKind(safeMessage.kind || safeMessage.type);
+    const previousGroup = groups[groups.length - 1];
+    const canAppendToPrevious = !!previousGroup
+      && previousGroup.isOwnMessage === isOwnMessage
+      && previousGroup.kind === messageKind
+      && messageKind === SOCIAL_CHAT_KIND_MESSAGE
+      && previousGroup.minuteKey !== null
+      && previousGroup.minuteKey === minuteKey;
+
+    if (canAppendToPrevious) {
+      previousGroup.messages.push(safeMessage);
+      previousGroup.lastMessage = safeMessage;
+      return;
+    }
+
+    groups.push({
+      isOwnMessage,
+      kind: messageKind,
+      minuteKey,
+      messages: [safeMessage],
+      lastMessage: safeMessage
+    });
+  });
+
+  return groups.map((group) => {
+    const lastMessage = group.lastMessage || {};
+    const safeTimeHtml = escapeHtml(formatSocialTimestamp(lastMessage.createdAt));
+    const createdAt = Math.max(0, Number(lastMessage.createdAt) || 0);
+    const isInviteGroup = normalizeSocialChatMessageKind(group.kind) === SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE;
+    const isReadByFriend = !isInviteGroup && group.isOwnMessage && !!friendReadAt && createdAt > 0 && createdAt <= friendReadAt;
+    const statusHtml = (!isInviteGroup && group.isOwnMessage)
+      ? `
+          <span
+            class="social-chat-status ${isReadByFriend ? "read" : "sent"}"
+            aria-label="${isReadByFriend ? "Leído" : "Enviado"}"
+            title="${isReadByFriend ? "Leído" : "Enviado"}"
+          >
+            ${isReadByFriend
+              ? `
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M2.8 12.6 6.4 16.2l7.7-7.7" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"></path>
+                  <path d="M10.2 12.6 13.8 16.2l7.7-7.7" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+              `
+              : `
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M5.4 12.5 9 16.1l9.6-9.6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+              `
+            }
+          </span>
+        `
+      : "";
+
+    const bubblesHtml = group.messages.map((message, index) => {
+      const messageId = String(message?.id || "").trim();
+      const safeMessageIdHtml = escapeHtml(messageId);
+      const isOwnBubble = !!group.isOwnMessage && !!messageId;
+      const isDeleteTarget = isOwnBubble && messageId === deleteTargetMessageId;
+      const messageKind = normalizeSocialChatMessageKind(message?.kind || message?.type);
+      let positionClass = "group-single";
+      if (group.messages.length > 1) {
+        if (index === 0) {
+          positionClass = "group-first";
+        } else if (index === group.messages.length - 1) {
+          positionClass = "group-last";
+        } else {
+          positionClass = "group-middle";
+        }
+      }
+
+      const ownAttributes = isOwnBubble
+        ? ` data-social-chat-own-message="1" data-social-chat-message-id="${safeMessageIdHtml}" data-social-chat-friend-uid="${escapeHtml(activeFriendUid)}" title="Mantené apretado para eliminar"`
+        : "";
+
+      if (messageKind === SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE) {
+        return renderSocialChatStudyRoomInviteBubble(message, {
+          positionClass,
+          isDeleteTarget,
+          activeFriendUid
+        });
+      }
+
+      const safeTextHtml = escapeHtml(String(message.text || "")).replace(/\n/g, "<br>");
+      return `<div class="social-chat-bubble ${positionClass} ${isDeleteTarget ? "delete-target" : ""}"${ownAttributes}>${safeTextHtml}</div>`;
+    }).join("");
+
+    return `
+      <div class="social-chat-item ${isInviteGroup ? "invite" : (group.isOwnMessage ? "own" : "friend")}">
+        <div class="social-chat-stack">
+          ${bubblesHtml}
+        </div>
+        <div class="social-chat-meta">
+          <span class="social-chat-time">${safeTimeHtml}</span>
+          ${statusHtml}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderSocialChatEmojiPicker(targetUid = ""){
+  const safeUid = escapeHtml(String(targetUid || "").trim());
+  const optionsHtml = SOCIAL_CHAT_EMOJI_OPTIONS.map((emoji) => {
+    const safeEmoji = escapeHtml(emoji);
+    return `
+      <button
+        class="social-chat-emoji-option"
+        type="button"
+        data-social-chat-emoji-option
+        data-social-chat-emoji-value="${safeEmoji}"
+        data-social-chat-uid="${safeUid}"
+        aria-label="Agregar ${safeEmoji}"
+        title="${safeEmoji}"
+      >${safeEmoji}</button>
+    `;
+  }).join("");
+
+  return `
+    <div class="social-chat-emoji-wrap" data-social-chat-emoji-wrap>
+      <button
+        class="social-chat-emoji-btn"
+        type="button"
+        data-social-chat-emoji-toggle
+        data-social-chat-uid="${safeUid}"
+        aria-label="Agregar emoji"
+        aria-haspopup="menu"
+        aria-expanded="false"
+        title="Agregar emoji"
+      >
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="1.9"></circle>
+          <circle cx="9" cy="10" r="1" fill="currentColor"></circle>
+          <circle cx="15" cy="10" r="1" fill="currentColor"></circle>
+          <path d="M8.2 14.2c1 1.2 2.4 1.8 3.8 1.8s2.8-.6 3.8-1.8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
+        </svg>
+      </button>
+      <div class="social-chat-emoji-menu" data-social-chat-emoji-menu role="menu" aria-label="Selector de emojis">
+        ${optionsHtml}
+      </div>
+    </div>
+  `;
+}
+
+function insertEmojiIntoSocialChatInput(input, emojiValue = ""){
+  if (!(input instanceof HTMLInputElement)) return;
+
+  const emoji = String(emojiValue || "").trim();
+  if (!emoji) return;
+
+  const currentValue = String(input.value || "");
+  const selectionStart = Number.isInteger(input.selectionStart)
+    ? input.selectionStart
+    : currentValue.length;
+  const selectionEnd = Number.isInteger(input.selectionEnd)
+    ? input.selectionEnd
+    : selectionStart;
+
+  input.value = `${currentValue.slice(0, selectionStart)}${emoji}${currentValue.slice(selectionEnd)}`;
+
+  const nextCaretPosition = selectionStart + emoji.length;
+  try {
+    input.setSelectionRange(nextCaretPosition, nextCaretPosition);
+  } catch (_error) {}
+
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  try {
+    input.focus({ preventScroll: true });
+  } catch (_error) {
+    input.focus();
+  }
+}
+
+function renderSocialMessengerWidget(){
+  const activeChatUid = String(socialState.chatActiveFriendUid || "").trim();
+  if (!activeChatUid) return "";
+
+  const friend =
+    socialState.friendsByUid.get(activeChatUid) ||
+    normalizeSocialUser({ uid: activeChatUid, name: "Usuario" }, activeChatUid) ||
+    { uid: activeChatUid, name: "Usuario", photo: "" };
+  const safeName = escapeHtml(friend.name || "Usuario");
+  const safeUid = escapeHtml(activeChatUid);
+  const avatarSrc = escapeHtml(friend.photo || getLeaderboardFallbackPhoto(friend.name || "Usuario"));
+  const avatarFallback = escapeHtml(getLeaderboardFallbackPhoto(friend.name || "Usuario"));
+  const safeHeaderAria = escapeHtml(`Chat con ${friend.name || "Usuario"}`);
+  const unreadCount = Math.max(0, Number(socialState.chatUnreadByUid?.get(activeChatUid) || 0));
+  const hasUnread = unreadCount > 0;
+  const unreadLabel = unreadCount > 99 ? "99+" : String(unreadCount);
+  const activeDeletePrompt = getSocialChatDeletePromptForFriend(activeChatUid);
+  const hasDeletePrompt = !!activeDeletePrompt;
+  const deleteOverlayHtml = hasDeletePrompt
+    ? `
+      <div class="social-chat-delete-overlay" data-social-chat-delete-overlay>
+        <div class="social-chat-delete-card" data-social-chat-delete-card role="dialog" aria-modal="true" aria-label="Eliminar mensaje">
+          <strong>Eliminar mensaje</strong>
+          <p>¿Querés eliminar este mensaje para todos?</p>
+          <div class="social-chat-delete-actions">
+            <button
+              class="social-btn danger"
+              type="button"
+              data-social-chat-delete-confirm
+              data-social-chat-message-id="${escapeHtml(activeDeletePrompt.messageId)}"
+              data-social-chat-friend-uid="${safeUid}"
+            >
+              Eliminar para todos
+            </button>
+            <button class="social-btn ghost" type="button" data-social-chat-delete-cancel>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>
+    `
+    : "";
+
+  if (socialState.chatMinimized) {
+    const minimizedAria = escapeHtml(
+      `Restaurar chat con ${friend.name || "Usuario"}${hasUnread ? ` (${unreadCount} sin leer)` : ""}`
+    );
+    return `
+      <div class="social-messenger-minimized" data-social-messenger-minimized>
+        <button
+          class="social-messenger-minimized-main"
+          type="button"
+          data-social-chat-restore
+          aria-label="${minimizedAria}"
+          title="Restaurar chat"
+        >
+          <img
+            src="${avatarSrc}"
+            alt="Foto de ${safeName}"
+            onerror="this.src='${avatarFallback}'"
+          >
+          <span>${safeName}</span>
+          ${hasUnread ? `<span class="social-messenger-minimized-unread-badge" aria-hidden="true">${escapeHtml(unreadLabel)}</span>` : ""}
+        </button>
+        <button
+          class="social-messenger-control social-messenger-close"
+          type="button"
+          data-social-chat-close
+          aria-label="Cerrar chat"
+          title="Cerrar chat"
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M7 7 17 17M17 7 7 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+          </svg>
+        </button>
+      </div>
+    `;
+  }
+
+  return `
+    <section class="social-messenger-window" aria-label="${safeHeaderAria}">
+      <header class="social-messenger-header">
+        <div class="social-messenger-user">
+          <img
+            src="${avatarSrc}"
+            alt="Foto de ${safeName}"
+            onerror="this.src='${avatarFallback}'"
+          >
+          <div>
+            <strong>${safeName}</strong>
+            <span>Chat</span>
+          </div>
+        </div>
+        <div class="social-messenger-controls">
+          <button
+            class="social-messenger-control"
+            type="button"
+            data-social-chat-minimize
+            aria-label="Minimizar chat"
+            title="Minimizar"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M6 12h12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path>
+            </svg>
+          </button>
+          <button
+            class="social-messenger-control social-messenger-close"
+            type="button"
+            data-social-chat-close
+            aria-label="Cerrar chat"
+            title="Cerrar chat"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M7 7 17 17M17 7 7 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+      <div class="social-chat-panel social-chat-panel-floating ${hasDeletePrompt ? "delete-mode" : ""}" data-social-chat-panel="${safeUid}">
+        <div class="social-chat-list">
+          ${renderSocialChatMessagesList()}
+        </div>
+        <form class="social-chat-compose" data-social-chat-compose data-social-chat-uid="${safeUid}">
+          <div class="social-chat-plus-wrap" data-social-chat-plus-wrap>
+            <button
+              class="social-chat-plus-btn"
+              type="button"
+              data-social-chat-plus-toggle
+              data-social-chat-uid="${safeUid}"
+              aria-label="Más opciones de chat"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              title="Más opciones"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path>
+              </svg>
+            </button>
+            <div class="social-chat-plus-menu" data-social-chat-plus-menu role="menu">
+              <button
+                class="social-chat-plus-option"
+                type="button"
+                data-social-chat-plus-action="invite-shared-project"
+                data-social-chat-uid="${safeUid}"
+                role="menuitem"
+              >
+                Invitar a proyecto compartido
+              </button>
+              <button
+                class="social-chat-plus-option"
+                type="button"
+                data-social-chat-plus-action="invite-study-room"
+                data-social-chat-uid="${safeUid}"
+                role="menuitem"
+              >
+                Invitar a sala de estudio
+              </button>
+            </div>
+          </div>
+          <input
+            type="text"
+            data-social-chat-input
+            maxlength="${SOCIAL_CHAT_MAX_LENGTH}"
+            placeholder="Escribí un mensaje..."
+            autocomplete="off"
+            spellcheck="false"
+          >
+          ${renderSocialChatEmojiPicker(activeChatUid)}
+          <button class="social-btn primary social-chat-send" type="submit">Enviar</button>
+        </form>
+        ${deleteOverlayHtml}
+      </div>
+    </section>
+  `;
+}
+
+function openSocialFriendProfile(user = {}){
+  const baseSummary = getLeaderboardPublicSummary(user);
+  if (!baseSummary.uid) {
+    showToast("No se pudo abrir el perfil de este amigo.");
+    return;
+  }
+
+  const existing = document.getElementById("socialFriendProfileOverlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "overlay open";
+  overlay.id = "socialFriendProfileOverlay";
+  overlay.innerHTML = `
+    <div class="modal social-friend-profile-modal" role="dialog" aria-modal="true" aria-label="Perfil de amigo">
+      <div class="mhead">
+        <strong>Perfil</strong>
+        <button class="btn" type="button" data-social-profile-close>Cerrar</button>
+      </div>
+      <div class="mbody social-friend-profile-body">
+        ${renderLeaderboardProfileMenu(baseSummary, { loading: true })}
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  const closeProfile = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onEscClose, true);
+  };
+
+  const onEscClose = (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    closeProfile();
+  };
+
+  document.addEventListener("keydown", onEscClose, true);
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      closeProfile();
+      return;
+    }
+
+    const closeBtn = event.target instanceof Element
+      ? event.target.closest("[data-social-profile-close]")
+      : null;
+    if (closeBtn) {
+      event.preventDefault();
+      closeProfile();
+    }
+  });
+
+  const profileBody = overlay.querySelector(".social-friend-profile-body");
+
+  void (async () => {
+    let resolvedSummary = baseSummary;
+
+    try {
+      resolvedSummary = await fetchLeaderboardProfileSummary(baseSummary);
+    } catch (err) {
+      console.error("No se pudo cargar el perfil social.", err);
+    }
+
+    if (!overlay.isConnected) return;
+    if (!(profileBody instanceof HTMLElement)) return;
+
+    profileBody.innerHTML = renderLeaderboardProfileMenu(resolvedSummary);
+  })();
+}
+
+function patchSocialFriendsUI(scope = board){
+  syncSocialNavUnreadBadge(scope);
+
+  const activeChatUid = String(socialState.chatActiveFriendUid || "").trim();
+  const chatIsMinimized = !!socialState.chatMinimized;
+  const activeUnreadCount = activeChatUid
+    ? Math.max(0, Number(socialState.chatUnreadByUid?.get(activeChatUid) || 0))
+    : 0;
+  let activeDeletePrompt = getSocialChatDeletePromptForFriend(activeChatUid);
+  if (activeDeletePrompt) {
+    const ownUid = String(currentUser?.uid || "").trim();
+    const hasTargetMessage = Array.isArray(socialState.chatMessages) && socialState.chatMessages.some((message) => {
+      return (
+        String(message?.id || "").trim() === activeDeletePrompt.messageId &&
+        String(message?.fromUid || "").trim() === ownUid
+      );
+    });
+    if (!hasTargetMessage) {
+      socialState.chatDeletePrompt = null;
+      activeDeletePrompt = null;
+    }
+  }
+  const deletePromptKey = String(activeDeletePrompt?.messageId || "");
+  const nextWidgetKey = activeChatUid
+    ? `${activeChatUid}|${chatIsMinimized ? "1" : "0"}|del:${deletePromptKey}|unread:${chatIsMinimized ? activeUnreadCount : 0}`
+    : "";
+  const draftsByUid = socialState.chatDraftByUid instanceof Map
+    ? socialState.chatDraftByUid
+    : new Map();
+  let preservedDraft = "";
+  let shouldRestoreFocus = false;
+  let preservedSelectionStart = null;
+  let preservedSelectionEnd = null;
+
+  const currentInput = scope.querySelector(
+    "#socialMessengerHost [data-social-chat-compose][data-social-chat-uid] [data-social-chat-input]"
+  );
+  const currentForm = currentInput instanceof HTMLInputElement
+    ? currentInput.closest("[data-social-chat-compose]")
+    : null;
+  const currentFormUid = String(currentForm?.dataset?.socialChatUid || "").trim();
+
+  if (activeChatUid && currentInput instanceof HTMLInputElement && currentFormUid === activeChatUid) {
+    preservedDraft = currentInput.value || "";
+    draftsByUid.set(activeChatUid, preservedDraft);
+    shouldRestoreFocus = document.activeElement === currentInput;
+    preservedSelectionStart = currentInput.selectionStart;
+    preservedSelectionEnd = currentInput.selectionEnd;
+  } else if (activeChatUid) {
+    preservedDraft = String(draftsByUid.get(activeChatUid) || "");
+  }
+
+  const friendsCountElement = scope.querySelector("#socialFriendsCount");
+  const friendsList = scope.querySelector("#socialFriendsList");
+  const topFriendsLabelElement = scope.querySelector("#socialTopFriendsLabel");
+  const messengerHost = scope.querySelector("#socialMessengerHost");
+
+  if (friendsCountElement instanceof HTMLElement) {
+    friendsCountElement.textContent = formatSettingsStat(socialState.friends.length);
+  }
+
+  if (topFriendsLabelElement instanceof HTMLElement) {
+    const friendsCount = socialState.friends.length;
+    topFriendsLabelElement.textContent = `${formatSettingsStat(friendsCount)} ${friendsCount === 1 ? "amigo" : "amigos"}`;
+  }
+
+  if (friendsList instanceof HTMLElement) {
+    friendsList.innerHTML = renderSocialFriendsList();
+  }
+
+  let didRerenderWidget = false;
+  if (messengerHost instanceof HTMLElement) {
+    const previousWidgetKey = String(messengerHost.dataset.widgetKey || "");
+    if (previousWidgetKey !== nextWidgetKey) {
+      messengerHost.innerHTML = renderSocialMessengerWidget();
+      messengerHost.dataset.widgetKey = nextWidgetKey;
+      didRerenderWidget = true;
+    } else if (activeChatUid && !chatIsMinimized) {
+      const liveChatList = messengerHost.querySelector(".social-chat-list");
+      if (liveChatList instanceof HTMLElement) {
+        liveChatList.innerHTML = renderSocialChatMessagesList();
+      }
+    }
+  }
+
+  if (activeChatUid && didRerenderWidget) {
+    const refreshedInput = scope.querySelector(
+      `#socialMessengerHost [data-social-chat-compose][data-social-chat-uid="${activeChatUid}"] [data-social-chat-input]`
+    );
+
+    if (refreshedInput instanceof HTMLInputElement && !socialState.chatMinimized) {
+      refreshedInput.value = preservedDraft;
+
+      if (shouldRestoreFocus) {
+        try {
+          refreshedInput.focus({ preventScroll: true });
+        } catch (_error) {
+          refreshedInput.focus();
+        }
+
+        const valueLength = refreshedInput.value.length;
+        const nextStart = Number.isInteger(preservedSelectionStart)
+          ? Math.min(Math.max(0, preservedSelectionStart), valueLength)
+          : valueLength;
+        const nextEnd = Number.isInteger(preservedSelectionEnd)
+          ? Math.min(Math.max(nextStart, preservedSelectionEnd), valueLength)
+          : nextStart;
+
+        try {
+          refreshedInput.setSelectionRange(nextStart, nextEnd);
+        } catch (_error) {}
+      }
+    }
+  }
+
+  const activeChatList = scope.querySelector("#socialMessengerHost .social-chat-list");
+  if (activeChatList instanceof HTMLElement) {
+    activeChatList.scrollTop = activeChatList.scrollHeight;
+  }
+}
+
+function renderSocialFriendsList(){
+  if (!socialState.friends.length) {
+    return `<div class="social-empty">Todavía no tenés amigos agregados.</div>`;
+  }
+
+  return socialState.friends.map((friend) => {
+    const safeName = escapeHtml(friend.name || "Usuario");
+    const safeUid = escapeHtml(friend.uid || "");
+    const avatarSrc = escapeHtml(friend.photo || getLeaderboardFallbackPhoto(friend.name || "Usuario"));
+    const avatarFallback = escapeHtml(getLeaderboardFallbackPhoto(friend.name || "Usuario"));
+    const isChatOpen = socialState.chatActiveFriendUid === friend.uid;
+    const isChatMinimized = isChatOpen && !!socialState.chatMinimized;
+    const unreadCount = Math.max(0, Number(socialState.chatUnreadByUid.get(friend.uid) || 0));
+    const hasUnread = unreadCount > 0;
+    const unreadLabel = unreadCount > 99 ? "99+" : String(unreadCount);
+    const safeProfileAria = escapeHtml(`Ver perfil de ${friend.name || "Usuario"}`);
+    const chatVerb = isChatOpen
+      ? (isChatMinimized ? "Restaurar" : "Minimizar")
+      : "Abrir";
+    const safeChatAria = escapeHtml(
+      `${chatVerb} chat con ${friend.name || "Usuario"}${hasUnread ? ` (${unreadCount} sin leer)` : ""}`
+    );
+
+    return `
+      <div class="social-friend-item">
+        <div class="social-user-row ${isChatOpen ? "chat-open" : ""}">
+          <img
+            class="social-user-avatar"
+            src="${avatarSrc}"
+            alt="Foto de ${safeName}"
+            onerror="this.src='${avatarFallback}'"
+          >
+          <div class="social-user-meta">
+            <strong>${safeName}</strong>
+          </div>
+          <div class="social-user-actions">
+            <div class="social-friend-actions">
+              <button
+                class="social-friend-icon-btn ${isChatOpen ? "active" : ""} ${hasUnread ? "has-unread" : ""}"
+                type="button"
+                data-social-chat-toggle
+                data-social-chat-uid="${safeUid}"
+                aria-expanded="${isChatOpen ? "true" : "false"}"
+                aria-label="${safeChatAria}"
+                title="${safeChatAria}"
+              >
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M7 9.5h10M7 13.5h6M6.6 19.5 4 21V6.8C4 5.8 4.8 5 5.8 5h12.4c1 0 1.8.8 1.8 1.8v9.4c0 1-.8 1.8-1.8 1.8H8.4z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+                ${hasUnread ? `<span class="social-friend-unread-badge">${escapeHtml(unreadLabel)}</span>` : ""}
+              </button>
+              <button
+                class="social-friend-icon-btn"
+                type="button"
+                data-social-profile-open
+                data-social-profile-uid="${safeUid}"
+                data-social-profile-name="${safeName}"
+                data-social-profile-photo="${escapeHtml(friend.photo || "")}"
+                aria-label="${safeProfileAria}"
+                title="${safeProfileAria}"
+              >
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="8.2" r="3.2" stroke="currentColor" stroke-width="1.8"></circle>
+                  <path d="M5.2 18.9a6.8 6.8 0 0 1 13.6 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function bindSocialSearchEvents(scope = board){
+  const input = scope.querySelector("#socialSearchInput");
+  if (!(input instanceof HTMLInputElement)) return;
+
+  input.addEventListener("input", () => {
+    const nextQuery = String(input.value || "");
+    socialState.searchQuery = nextQuery;
+
+    if (socialState.searchDebounceTimer) {
+      clearTimeout(socialState.searchDebounceTimer);
+      socialState.searchDebounceTimer = null;
+    }
+
+    if (!nextQuery.trim()) {
+      void runSocialSearch("");
+      return;
+    }
+
+    socialState.searchDebounceTimer = setTimeout(() => {
+      socialState.searchDebounceTimer = null;
+      void runSocialSearch(nextQuery);
+    }, SOCIAL_SEARCH_DEBOUNCE_MS);
+  });
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+
+    if (socialState.searchDebounceTimer) {
+      clearTimeout(socialState.searchDebounceTimer);
+      socialState.searchDebounceTimer = null;
+    }
+
+    void runSocialSearch(input.value || "");
+  });
+}
+
+function bindSocialActionEvents(scope = board){
+  const socialRoot = scope.querySelector(".social-dashboard");
+  if (!(socialRoot instanceof HTMLElement)) return;
+
+  socialRoot.addEventListener("click", async (event) => {
+    if (!(event.target instanceof Element)) return;
+    const actionButton = event.target.closest("[data-social-action]");
+    if (!(actionButton instanceof HTMLButtonElement)) return;
+    if (actionButton.dataset.busy === "1") return;
+
+    const action = String(actionButton.dataset.socialAction || "");
+    const targetUid = String(actionButton.dataset.socialUid || "").trim();
+
+    actionButton.dataset.busy = "1";
+    actionButton.disabled = true;
+
+    try {
+      if (action === "send-request") {
+        await sendSocialFriendRequest({
+          uid: targetUid,
+          name: actionButton.dataset.socialName || "",
+          photo: actionButton.dataset.socialPhoto || ""
+        });
+      } else if (action === "accept-request") {
+        await acceptSocialFriendRequest(targetUid);
+      } else if (action === "reject-request") {
+        await rejectSocialFriendRequest(targetUid);
+      }
+    } catch (err) {
+      console.error("Error en acción social.", err);
+
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos suficientes para completar esta acción.");
+      } else {
+        showToast("No se pudo completar la acción social.");
+      }
+    } finally {
+      if (actionButton.isConnected) {
+        actionButton.dataset.busy = "0";
+        actionButton.disabled = false;
+      }
+    }
+  });
+}
+
+function closeSocialChatPlusMenus(scope = board){
+  const root = scope instanceof HTMLElement ? scope : board;
+  if (!(root instanceof HTMLElement)) return;
+
+  root.querySelectorAll("[data-social-chat-plus-menu].open").forEach((menu) => {
+    menu.classList.remove("open");
+  });
+
+  root.querySelectorAll("[data-social-chat-plus-toggle][aria-expanded='true']").forEach((toggle) => {
+    toggle.setAttribute("aria-expanded", "false");
+  });
+}
+
+function closeSocialChatEmojiMenus(scope = board){
+  const root = scope instanceof HTMLElement ? scope : board;
+  if (!(root instanceof HTMLElement)) return;
+
+  root.querySelectorAll("[data-social-chat-emoji-menu].open").forEach((menu) => {
+    menu.classList.remove("open");
+  });
+
+  root.querySelectorAll("[data-social-chat-emoji-toggle][aria-expanded='true']").forEach((toggle) => {
+    toggle.setAttribute("aria-expanded", "false");
+  });
+}
+
+function ensureSocialChatPlusOutsideCloser(){
+  if (socialChatPlusOutsideListenerBound) return;
+  socialChatPlusOutsideListenerBound = true;
+
+  document.addEventListener("pointerdown", (event) => {
+    const messengerHost = board?.querySelector?.("#socialMessengerHost");
+    if (!(messengerHost instanceof HTMLElement)) return;
+
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      (target.closest("[data-social-chat-plus-wrap]") || target.closest("[data-social-chat-emoji-wrap]"))
+    ) {
+      return;
+    }
+
+    closeSocialChatPlusMenus(board);
+    closeSocialChatEmojiMenus(board);
+  }, true);
+}
+
+function bindSocialChatEvents(scope = board){
+  const socialRoot = scope.querySelector(".social-dashboard");
+  const messengerHost = scope.querySelector("#socialMessengerHost");
+  const eventRoot = socialRoot || messengerHost;
+  if (!(eventRoot instanceof HTMLElement)) return;
+  if (eventRoot.dataset.socialChatBound === "1") return;
+  eventRoot.dataset.socialChatBound = "1";
+  ensureSocialChatPlusOutsideCloser();
+
+  eventRoot.addEventListener("click", async (event) => {
+    if (!(event.target instanceof Element)) return;
+
+    const deleteConfirmButton = event.target.closest("[data-social-chat-delete-confirm]");
+    if (deleteConfirmButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (deleteConfirmButton.dataset.busy === "1") return;
+
+      const messageId = String(deleteConfirmButton.dataset.socialChatMessageId || "").trim();
+      const friendUid = String(deleteConfirmButton.dataset.socialChatFriendUid || "").trim();
+      if (!messageId || !friendUid) return;
+
+      deleteConfirmButton.dataset.busy = "1";
+      deleteConfirmButton.disabled = true;
+
+      try {
+        await deleteSocialChatMessageForAll(friendUid, messageId);
+      } finally {
+        deleteConfirmButton.dataset.busy = "0";
+        if (deleteConfirmButton.isConnected) {
+          deleteConfirmButton.disabled = false;
+        }
+      }
+      return;
+    }
+
+    const deleteCancelButton = event.target.closest("[data-social-chat-delete-cancel]");
+    if (deleteCancelButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeSocialChatDeletePrompt();
+      return;
+    }
+
+    const deleteOverlay = event.target.closest("[data-social-chat-delete-overlay]");
+    if (deleteOverlay instanceof HTMLElement && event.target === deleteOverlay) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeSocialChatDeletePrompt();
+      return;
+    }
+
+    const studyInviteActionButton = event.target.closest("[data-social-chat-study-invite-action]");
+    if (studyInviteActionButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (studyInviteActionButton.dataset.busy === "1") return;
+
+      const action = String(studyInviteActionButton.dataset.socialChatStudyInviteAction || "").trim().toLowerCase();
+      const messageId = String(studyInviteActionButton.dataset.socialChatMessageId || "").trim();
+      const friendUid = String(studyInviteActionButton.dataset.socialChatFriendUid || "").trim();
+      if (!messageId || !friendUid) return;
+      if (action !== "accept" && action !== "reject") return;
+
+      studyInviteActionButton.dataset.busy = "1";
+      studyInviteActionButton.disabled = true;
+
+      try {
+        await respondToSocialChatStudyRoomInvite(friendUid, messageId, action);
+      } finally {
+        studyInviteActionButton.dataset.busy = "0";
+        if (studyInviteActionButton.isConnected) {
+          studyInviteActionButton.disabled = false;
+        }
+      }
+      return;
+    }
+
+    const plusActionButton = event.target.closest("[data-social-chat-plus-action]");
+    if (plusActionButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const action = String(plusActionButton.dataset.socialChatPlusAction || "").trim();
+      closeSocialChatPlusMenus(scope);
+      closeSocialChatEmojiMenus(scope);
+
+      if (action === "invite-shared-project") {
+        showToast("Invitar a proyecto compartido: pronto disponible.");
+      } else if (action === "invite-study-room") {
+        const friendUid = String(plusActionButton.dataset.socialChatUid || "").trim();
+        const friendName = String(
+          socialState.friendsByUid.get(friendUid)?.name ||
+          socialState.incomingByUid.get(friendUid)?.name ||
+          "usuario"
+        ).trim() || "usuario";
+        await sendStudyRoomInvitation(friendUid, friendName);
+      }
+      return;
+    }
+
+    const emojiOptionButton = event.target.closest("[data-social-chat-emoji-option]");
+    if (emojiOptionButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const emojiValue = String(emojiOptionButton.dataset.socialChatEmojiValue || "").trim();
+      if (!emojiValue) return;
+
+      const form = emojiOptionButton.closest("[data-social-chat-compose]");
+      const input = form?.querySelector?.("[data-social-chat-input]");
+      if (!(input instanceof HTMLInputElement)) return;
+
+      insertEmojiIntoSocialChatInput(input, emojiValue);
+      closeSocialChatEmojiMenus(scope);
+      return;
+    }
+
+    const emojiToggleButton = event.target.closest("[data-social-chat-emoji-toggle]");
+    if (emojiToggleButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const safeUid = String(emojiToggleButton.dataset.socialChatUid || "").trim();
+      if (!safeUid) return;
+
+      const wrap = emojiToggleButton.closest("[data-social-chat-emoji-wrap]");
+      const menu = wrap?.querySelector("[data-social-chat-emoji-menu]");
+      if (!(menu instanceof HTMLElement)) return;
+
+      const shouldOpen = !menu.classList.contains("open");
+      closeSocialChatPlusMenus(scope);
+      closeSocialChatEmojiMenus(scope);
+
+      if (shouldOpen) {
+        menu.classList.add("open");
+        emojiToggleButton.setAttribute("aria-expanded", "true");
+      }
+      return;
+    }
+
+    const plusToggleButton = event.target.closest("[data-social-chat-plus-toggle]");
+    if (plusToggleButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const safeUid = String(plusToggleButton.dataset.socialChatUid || "").trim();
+      if (!safeUid) return;
+
+      const wrap = plusToggleButton.closest("[data-social-chat-plus-wrap]");
+      const menu = wrap?.querySelector("[data-social-chat-plus-menu]");
+      if (!(menu instanceof HTMLElement)) return;
+
+      const shouldOpen = !menu.classList.contains("open");
+      closeSocialChatPlusMenus(scope);
+      closeSocialChatEmojiMenus(scope);
+
+      if (shouldOpen) {
+        menu.classList.add("open");
+        plusToggleButton.setAttribute("aria-expanded", "true");
+      }
+      return;
+    }
+
+    closeSocialChatPlusMenus(scope);
+    closeSocialChatEmojiMenus(scope);
+
+    const restoreButton = event.target.closest("[data-social-chat-restore]");
+    if (restoreButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (!socialState.chatActiveFriendUid) return;
+
+      socialState.chatDeletePrompt = null;
+      socialState.chatMinimized = false;
+      syncSocialActiveChatReadReceipt();
+      patchSocialFriendsUI();
+
+      const input = scope.querySelector(
+        `#socialMessengerHost [data-social-chat-compose][data-social-chat-uid="${socialState.chatActiveFriendUid}"] [data-social-chat-input]`
+      );
+      if (input instanceof HTMLInputElement) {
+        try {
+          input.focus({ preventScroll: true });
+        } catch (_error) {
+          input.focus();
+        }
+      }
+      return;
+    }
+
+    const minimizeButton = event.target.closest("[data-social-chat-minimize]");
+    if (minimizeButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (!socialState.chatActiveFriendUid) return;
+      socialState.chatDeletePrompt = null;
+      socialState.chatMinimized = true;
+      patchSocialFriendsUI();
+      return;
+    }
+
+    const closeButton = event.target.closest("[data-social-chat-close]");
+    if (closeButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      socialState.chatDeletePrompt = null;
+      closeSocialChatSession();
+      return;
+    }
+
+    const profileButton = event.target.closest("[data-social-profile-open]");
+    if (profileButton instanceof HTMLButtonElement) {
+      const profileUid = String(profileButton.dataset.socialProfileUid || "").trim();
+      if (!profileUid) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      openSocialFriendProfile({
+        uid: profileUid,
+        name: profileButton.dataset.socialProfileName || "Usuario",
+        photo: profileButton.dataset.socialProfilePhoto || ""
+      });
+      return;
+    }
+
+    const toggleButton = event.target.closest("[data-social-chat-toggle]");
+    if (!(toggleButton instanceof HTMLButtonElement)) return;
+
+    const friendUid = String(toggleButton.dataset.socialChatUid || "").trim();
+    if (!friendUid) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    openSocialChatSession(friendUid);
+  });
+
+  let holdTimerId = null;
+  let holdPointerId = null;
+  let holdStartX = 0;
+  let holdStartY = 0;
+
+  const clearHoldState = () => {
+    if (holdTimerId !== null) {
+      clearTimeout(holdTimerId);
+    }
+    holdTimerId = null;
+    holdPointerId = null;
+    holdStartX = 0;
+    holdStartY = 0;
+  };
+
+  eventRoot.addEventListener("pointerdown", (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (socialState.chatMinimized) return;
+    if (socialState.chatLoading) return;
+    if (socialState.chatError) return;
+
+    const bubble = event.target.closest("[data-social-chat-own-message='1']");
+    if (!(bubble instanceof HTMLElement)) return;
+
+    const messageId = String(bubble.dataset.socialChatMessageId || "").trim();
+    const friendUid = String(
+      bubble.dataset.socialChatFriendUid ||
+      socialState.chatActiveFriendUid ||
+      ""
+    ).trim();
+    if (!messageId || !friendUid) return;
+
+    clearHoldState();
+    holdPointerId = event.pointerId;
+    holdStartX = Number(event.clientX) || 0;
+    holdStartY = Number(event.clientY) || 0;
+    holdTimerId = window.setTimeout(() => {
+      holdTimerId = null;
+      openSocialChatDeletePrompt(friendUid, messageId);
+    }, SOCIAL_CHAT_DELETE_HOLD_MS);
+  });
+
+  eventRoot.addEventListener("pointermove", (event) => {
+    if (holdTimerId === null) return;
+    if (holdPointerId === null || event.pointerId !== holdPointerId) return;
+    const deltaX = Math.abs((Number(event.clientX) || 0) - holdStartX);
+    const deltaY = Math.abs((Number(event.clientY) || 0) - holdStartY);
+    if (deltaX > SOCIAL_CHAT_DELETE_MOVE_TOLERANCE || deltaY > SOCIAL_CHAT_DELETE_MOVE_TOLERANCE) {
+      clearHoldState();
+    }
+  });
+
+  eventRoot.addEventListener("pointerup", clearHoldState);
+  eventRoot.addEventListener("pointercancel", clearHoldState);
+  eventRoot.addEventListener("pointerleave", clearHoldState);
+
+  eventRoot.addEventListener("contextmenu", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const bubble = event.target.closest("[data-social-chat-own-message='1']");
+    if (!bubble) return;
+    event.preventDefault();
+  });
+
+  eventRoot.addEventListener("input", (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    if (!input.hasAttribute("data-social-chat-input")) return;
+
+    const form = input.closest("[data-social-chat-compose]");
+    const targetUid = String(form?.dataset?.socialChatUid || "").trim();
+    if (!targetUid) return;
+
+    if (!(socialState.chatDraftByUid instanceof Map)) {
+      socialState.chatDraftByUid = new Map();
+    }
+    socialState.chatDraftByUid.set(targetUid, String(input.value || ""));
+  });
+
+  eventRoot.addEventListener("submit", async (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    if (!form.hasAttribute("data-social-chat-compose")) return;
+
+    event.preventDefault();
+    closeSocialChatPlusMenus(scope);
+    closeSocialChatEmojiMenus(scope);
+
+    const targetUid = String(form.dataset.socialChatUid || "").trim();
+    const input = form.querySelector("[data-social-chat-input]");
+    const sendButton = form.querySelector(".social-chat-send");
+    if (!(input instanceof HTMLInputElement)) return;
+    if (!(sendButton instanceof HTMLButtonElement)) return;
+
+    if (!targetUid) return;
+    if (getSocialChatDeletePromptForFriend(targetUid)) return;
+    if (form.dataset.sending === "1") return;
+
+    const rawMessage = String(input.value || "");
+    if (!rawMessage.trim()) return;
+
+    form.dataset.sending = "1";
+    sendButton.disabled = true;
+
+    try {
+      const sent = await sendSocialChatMessage(targetUid, rawMessage);
+      if (sent) {
+        input.value = "";
+      }
+    } catch (err) {
+      console.error("No se pudo enviar mensaje social.", err);
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos suficientes para enviar mensajes.");
+      } else {
+        showToast("No se pudo enviar el mensaje.");
+      }
+    } finally {
+      if (form.isConnected) {
+        form.dataset.sending = "0";
+      }
+      if (sendButton.isConnected) {
+        sendButton.disabled = false;
+      }
+    }
+  });
+}
+
+function renderSocialView(){
+  const activeElement = document.activeElement;
+  const restoreSearchFocus =
+    activeElement instanceof HTMLInputElement &&
+    activeElement.id === "socialSearchInput";
+  const restoreSelectionStart = restoreSearchFocus ? activeElement.selectionStart : null;
+  const restoreSelectionEnd = restoreSearchFocus ? activeElement.selectionEnd : null;
+
+  const safeName = String(currentUser?.displayName || "Usuario").trim() || "Usuario";
+  const safeNameHtml = escapeHtml(safeName);
+  const safePillNameHtml = escapeHtml(formatSummaryPillName(safeName));
+  const avatarSrc = String(currentUser?.photoURL || getLeaderboardFallbackPhoto(safeName));
+  const avatarFallbackSrc = getLeaderboardFallbackPhoto(safeName);
+  const safeAvatarHtml = escapeHtml(avatarSrc);
+  const safeAvatarFallbackHtml = escapeHtml(avatarFallbackSrc);
+  const safeSearchQuery = escapeHtml(String(socialState.searchQuery || ""));
+  const incomingCount = socialState.incomingRequests.length;
+  const requestsCount = incomingCount;
+  const friendsCount = socialState.friends.length;
+  const friendsLabel = `${formatSettingsStat(friendsCount)} ${friendsCount === 1 ? "amigo" : "amigos"}`;
+
+  board.innerHTML = `
+    <section class="summary-dashboard social-dashboard" aria-label="Social">
+      <div class="summary-topbar">
+        <div class="summary-brand">
+          <img class="summary-brand-mark summary-brand-logo" src="/icons/flav-icon.png" alt="" aria-hidden="true">
+          <span class="summary-brand-text" aria-label="MULTITAREAS"><span>MULTI</span><span>TAREAS</span></span>
+          <span class="summary-brand-meta" aria-label="Version de la app">
+            <span class="summary-brand-beta">BETA</span>
+            <span class="summary-brand-version" data-app-version></span>
+          </span>
+        </div>
+        <button
+          class="summary-top-focus-mobile-btn"
+          type="button"
+          data-open-focus-mode="1"
+          aria-label="Abrir sesión de enfoque"
+        >
+          <span class="summary-top-focus-mobile-icon" aria-hidden="true"></span>
+        </button>
+        <button
+          class="summary-top-study-mobile-btn"
+          type="button"
+          data-open-study-rooms="1"
+          aria-label="Abrir salas de estudio"
+        >
+          <span class="summary-top-study-mobile-icon" aria-hidden="true"></span>
+        </button>
+        <div class="summary-nav-row">
+          <nav class="summary-nav" aria-label="Secciones del dashboard">
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_SUMMARY}">Resumen</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_TASKS}">Tareas diarias</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_PROJECTS}">Proyectos</button>
+            <button class="summary-nav-item active" type="button" data-view="${VIEW_MODE_SOCIAL}">Social</button>
+          </nav>
+          <button
+            class="summary-top-study-btn"
+            type="button"
+            data-open-study-rooms="1"
+            aria-label="Abrir salas de estudio"
+          >
+            <span class="summary-top-study-icon" aria-hidden="true"></span>
+            <span class="summary-top-study-label">Salas</span>
+          </button>
+          <button
+            class="summary-mobile-plus-btn"
+            type="button"
+            aria-label="Ir a resumen y escribir tarea"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+          <button
+            class="summary-top-focus-btn"
+            type="button"
+            data-open-focus-mode="1"
+            aria-label="Abrir sesión de enfoque"
+          >
+            <span class="summary-top-focus-icon" aria-hidden="true"></span>
+            <span class="summary-top-focus-label">Enfoque</span>
+          </button>
+        </div>
+        <div class="summary-mobile-status-user-row">
+          <div class="summary-action-btn primary summary-status-pill-mobile" role="status" aria-live="polite">
+            <span id="summaryStatusTextMobile"></span>
+          </div>
+          <button class="summary-user-pill" type="button" aria-label="Abrir menú de perfil" aria-haspopup="menu" aria-expanded="false">
+            <img
+              src="${safeAvatarHtml}"
+              alt="Foto de ${safeNameHtml}"
+              onerror="this.src='${safeAvatarFallbackHtml}'"
+            >
+            <div>
+              <strong>${safePillNameHtml}</strong>
+              <span id="socialTopFriendsLabel">${friendsLabel}</span>
+            </div>
+            <svg class="summary-user-pill-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="summary-hero social-hero">
+        <div class="summary-hero-copy">
+          <h2>Social</h2>
+          <p class="social-hero-subtitle">Buscá usuarios por nombre, enviá solicitudes y gestioná tus amistades.</p>
+        </div>
+      </div>
+
+      <div class="social-grid">
+        <article class="summary-card social-card social-card-search-block">
+          <div class="social-card-head">
+            <h3>Buscar</h3>
+            <span class="social-count" id="socialResultsCount">${formatSettingsStat(socialState.searchResults.length)}</span>
+          </div>
+          <div class="social-card-search">
+            <label class="social-search" for="socialSearchInput">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="11" cy="11" r="7.5" stroke="currentColor" stroke-width="1.7"></circle>
+                <path d="M16.7 16.7 21 21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+              </svg>
+              <input
+                id="socialSearchInput"
+                type="text"
+                value="${safeSearchQuery}"
+                placeholder="Buscar por nombre de usuario..."
+                autocomplete="off"
+                spellcheck="false"
+              >
+            </label>
+          </div>
+          <div class="social-user-list" id="socialResultsList">
+            ${renderSocialSearchResultsList()}
+          </div>
+        </article>
+
+        <article class="summary-card social-card social-card-requests-block">
+          <div class="social-card-head">
+            <h3>Solicitudes</h3>
+            <span class="social-count" id="socialRequestsCount">${formatSettingsStat(requestsCount)}</span>
+          </div>
+          <div class="social-requests-sections">
+            <section class="social-requests-block" aria-label="Solicitudes recibidas">
+              <div class="social-requests-subhead">
+                <h4>Recibidas</h4>
+              </div>
+              <div class="social-user-list social-user-list-sub" id="socialIncomingList">
+                ${renderSocialIncomingRequestsList()}
+              </div>
+            </section>
+            <section class="social-requests-block" aria-label="Solicitudes enviadas">
+              <div class="social-requests-subhead">
+                <h4>Enviadas</h4>
+              </div>
+              <div class="social-user-list social-user-list-sub" id="socialOutgoingList">
+                ${renderSocialOutgoingRequestsList()}
+              </div>
+            </section>
+          </div>
+        </article>
+
+        <article class="summary-card social-card social-card-friends-block">
+          <div class="social-card-head">
+            <h3>Amigos</h3>
+            <span class="social-count" id="socialFriendsCount">${formatSettingsStat(friendsCount)}</span>
+          </div>
+          <div class="social-user-list" id="socialFriendsList">
+            ${renderSocialFriendsList()}
+          </div>
+        </article>
+      </div>
+      <div class="social-messenger-host" id="socialMessengerHost">
+        ${renderSocialMessengerWidget()}
+      </div>
+    </section>
+  `;
+
+  syncAppVersionLabels();
+  bindSummaryNavEvents();
+  bindSummaryUserPillMenu();
+  bindSummaryTopStudyRoomsButton();
+  bindSummaryTopFocusButton();
+  bindSummaryMobilePlusButton();
+  bindSocialSearchEvents();
+  bindSocialActionEvents();
+  bindSocialChatEvents();
+  syncSummaryStatusText();
+  void refreshSocialRemoteState();
+
+  if (restoreSearchFocus) {
+    const refreshedInput = board.querySelector("#socialSearchInput");
+    if (refreshedInput instanceof HTMLInputElement) {
+      try {
+        refreshedInput.focus({ preventScroll: true });
+      } catch (_error) {
+        refreshedInput.focus();
+      }
+
+      const valueLength = refreshedInput.value.length;
+      const nextStart = Number.isInteger(restoreSelectionStart)
+        ? Math.min(Math.max(0, restoreSelectionStart), valueLength)
+        : valueLength;
+      const nextEnd = Number.isInteger(restoreSelectionEnd)
+        ? Math.min(Math.max(nextStart, restoreSelectionEnd), valueLength)
+        : nextStart;
+
+      try {
+        refreshedInput.setSelectionRange(nextStart, nextEnd);
+      } catch (_error) {
+        // algunos tipos de input no soportan setSelectionRange
+      }
+    }
+  }
+}
+
+function getStudyRoomIdentity(){
+  const identity = getCurrentUserSocialIdentity();
+  if (!identity?.uid) return null;
+
+  return {
+    uid: String(identity.uid || "").trim(),
+    name: String(identity.name || "Usuario").trim() || "Usuario",
+    photo: String(identity.photo || "").trim()
+  };
+}
+
+function normalizeStudyRoomParticipant(entry = {}, fallbackUid = ""){
+  const uid = String(entry?.uid || fallbackUid || "").trim();
+  if (!uid) return null;
+
+  return {
+    uid,
+    name: String(entry?.name || "Usuario").trim() || "Usuario",
+    photo: String(entry?.photo || "").trim(),
+    joinedAt: Math.max(0, Number(entry?.joinedAt) || 0),
+    updatedAt: Math.max(0, Number(entry?.updatedAt) || 0)
+  };
+}
+
+function normalizeStudyRoomInvite(entry = {}, fallbackUid = ""){
+  const uid = String(entry?.uid || fallbackUid || "").trim();
+  if (!uid) return null;
+
+  return {
+    uid,
+    invitedAt: Math.max(0, Number(entry?.invitedAt) || 0),
+    invitedByUid: String(entry?.invitedByUid || "").trim(),
+    invitedByName: String(entry?.invitedByName || "").trim()
+  };
+}
+
+function canCurrentUserAccessStudyRoom(roomData = null){
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!ownUid) {
+    return { allowed: false, reason: "auth" };
+  }
+
+  if (!roomData || typeof roomData !== "object") {
+    return { allowed: false, reason: "missing-room" };
+  }
+
+  if (roomData.inviteAccessUnknown) {
+    return { allowed: true, reason: "unknown" };
+  }
+
+  if (String(roomData.createdByUid || "").trim() === ownUid) {
+    return { allowed: true, reason: "owner" };
+  }
+
+  const participantsByUid = roomData.participantsByUid instanceof Map
+    ? roomData.participantsByUid
+    : new Map();
+  if (participantsByUid.has(ownUid)) {
+    return { allowed: true, reason: "participant" };
+  }
+
+  const invitedByUid = roomData.invitedByUid instanceof Map
+    ? roomData.invitedByUid
+    : new Map();
+  if (invitedByUid.has(ownUid)) {
+    return { allowed: true, reason: "invited" };
+  }
+
+  return { allowed: false, reason: "invite-required" };
+}
+
+function parseStudyRoomTasks(rawTasks = {}){
+  if (!rawTasks || typeof rawTasks !== "object" || Array.isArray(rawTasks)) {
+    return [];
+  }
+
+  const tasks = [];
+  Object.entries(rawTasks).forEach(([fallbackId, value]) => {
+    if (!value || typeof value !== "object") return;
+    const id = String(value.id || fallbackId || "").trim();
+    const text = String(value.text || "").trim();
+    if (!id || !text) return;
+
+    tasks.push({
+      id,
+      text: text.slice(0, STUDY_ROOM_MAX_TASK_LENGTH),
+      createdAt: Math.max(0, Number(value.createdAt) || 0),
+      done: !!value.done,
+      expGiven: value.expGiven === true
+    });
+  });
+
+  tasks.sort((a, b) => {
+    const byTime = (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0);
+    if (byTime !== 0) return byTime;
+    return String(a.id || "").localeCompare(String(b.id || ""), "es", { sensitivity: "base" });
+  });
+  sortTaskList(tasks);
+
+  return tasks;
+}
+
+function parseStudyRoomChatMessages(rawChat = {}){
+  if (!rawChat || typeof rawChat !== "object" || Array.isArray(rawChat)) {
+    return [];
+  }
+
+  const messages = [];
+  Object.entries(rawChat).forEach(([fallbackId, value]) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+
+    const id = String(value.id || fallbackId || "").trim();
+    const uid = String(value.uid || value.fromUid || "").trim();
+    const kind = String(value.kind || value.type || "").trim().toLowerCase() === "system"
+      ? "system"
+      : "message";
+    const text = String(value.text || "").trim().slice(0, STUDY_ROOM_CHAT_MAX_LENGTH);
+    if (!id || !text) return;
+    if (!uid && kind !== "system") return;
+
+    messages.push({
+      id,
+      uid: uid || "system",
+      kind,
+      name: String(value.name || "Usuario").trim() || "Usuario",
+      photo: String(value.photo || "").trim(),
+      text,
+      createdAt: Math.max(0, Number(value.createdAt) || 0)
+    });
+  });
+
+  messages.sort((a, b) => {
+    const byTime = (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0);
+    if (byTime !== 0) return byTime;
+    return String(a.id || "").localeCompare(String(b.id || ""), "es", { sensitivity: "base" });
+  });
+
+  return messages;
+}
+
+function createEmptyStudyRoomMusicState(){
+  return {
+    videoId: "",
+    title: "",
+    channel: "",
+    thumbnail: "",
+    state: "paused",
+    positionSeconds: 0,
+    startedAt: 0,
+    updatedAt: 0,
+    updatedByUid: ""
+  };
+}
+
+function normalizeStudyRoomMusicData(rawMusic = {}){
+  if (!rawMusic || typeof rawMusic !== "object" || Array.isArray(rawMusic)) {
+    return createEmptyStudyRoomMusicState();
+  }
+
+  const videoId = String(rawMusic.videoId || "").trim();
+  const hasVideo = /^[a-zA-Z0-9_-]{11}$/.test(videoId);
+  const state = String(rawMusic.state || "").trim().toLowerCase() === "playing"
+    ? "playing"
+    : "paused";
+
+  return {
+    videoId: hasVideo ? videoId : "",
+    title: String(rawMusic.title || "").trim(),
+    channel: String(rawMusic.channel || "").trim(),
+    thumbnail: String(rawMusic.thumbnail || "").trim(),
+    state: hasVideo ? state : "paused",
+    positionSeconds: Math.max(0, Number(rawMusic.positionSeconds) || 0),
+    startedAt: hasVideo ? Math.max(0, Number(rawMusic.startedAt) || 0) : 0,
+    updatedAt: Math.max(0, Number(rawMusic.updatedAt) || 0),
+    updatedByUid: String(rawMusic.updatedByUid || "").trim()
+  };
+}
+
+function getStudyRoomMusicCurrentPosition(musicData = null, now = Date.now()){
+  const safeMusic = normalizeStudyRoomMusicData(musicData);
+  if (!safeMusic.videoId) return 0;
+
+  let position = Math.max(0, Number(safeMusic.positionSeconds) || 0);
+  if (safeMusic.state === "playing" && safeMusic.startedAt > 0) {
+    const elapsedSeconds = Math.max(0, (Math.max(0, Number(now) || 0) - safeMusic.startedAt) / 1000);
+    position += elapsedSeconds;
+  }
+
+  if (!Number.isFinite(position)) return 0;
+  return Math.max(0, position);
+}
+
+function formatStudyRoomMusicPosition(value = 0){
+  const totalSeconds = Math.max(0, Math.floor(Number(value) || 0));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function parseYouTubeVideoId(rawInput = ""){
+  const safeInput = String(rawInput || "").trim();
+  if (!safeInput) return "";
+
+  if (/^[a-zA-Z0-9_-]{11}$/.test(safeInput)) {
+    return safeInput;
+  }
+
+  let maybeUrl = safeInput;
+  if (!/^https?:\/\//i.test(maybeUrl)) {
+    maybeUrl = `https://${maybeUrl}`;
+  }
+
+  try {
+    const parsedUrl = new URL(maybeUrl);
+    const host = String(parsedUrl.hostname || "").replace(/^www\./i, "").toLowerCase();
+    let candidate = "";
+
+    if (host === "youtu.be") {
+      candidate = String(parsedUrl.pathname || "").split("/").filter(Boolean)[0] || "";
+    } else if (host.endsWith("youtube.com")) {
+      if (parsedUrl.pathname === "/watch") {
+        candidate = String(parsedUrl.searchParams.get("v") || "").trim();
+      } else {
+        const parts = String(parsedUrl.pathname || "").split("/").filter(Boolean);
+        if (parts[0] === "shorts" || parts[0] === "embed" || parts[0] === "live") {
+          candidate = String(parts[1] || "").trim();
+        }
+      }
+    }
+
+    if (/^[a-zA-Z0-9_-]{11}$/.test(candidate)) {
+      return candidate;
+    }
+  } catch (_error) {}
+
+  return "";
+}
+
+function extractYouTubeVideoIdLoose(rawInput = ""){
+  const safeInput = String(rawInput || "").trim();
+  if (!safeInput) return "";
+
+  if (/^[a-zA-Z0-9_-]{11}$/.test(safeInput)) {
+    return safeInput;
+  }
+
+  const strictParsed = parseYouTubeVideoId(safeInput);
+  if (strictParsed) return strictParsed;
+
+  const watchMatch = safeInput.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  if (watchMatch?.[1]) {
+    return watchMatch[1];
+  }
+
+  const pathMatch = safeInput.match(/(?:^|\/)(?:shorts|embed|live)\/([a-zA-Z0-9_-]{11})(?:[/?#]|$)/i);
+  if (pathMatch?.[1]) {
+    return pathMatch[1];
+  }
+
+  const thumbnailMatch = safeInput.match(/\/vi\/([a-zA-Z0-9_-]{11})(?:[/?#]|$)/i);
+  if (thumbnailMatch?.[1]) {
+    return thumbnailMatch[1];
+  }
+
+  const compactMatch = safeInput.match(/(?:^|\/)([a-zA-Z0-9_-]{11})(?:[/?#]|$)/);
+  if (compactMatch?.[1] && safeInput.includes("/watch")) {
+    return compactMatch[1];
+  }
+
+  return "";
+}
+
+function getYouTubeThumbnailByVideoId(videoId = ""){
+  const safeVideoId = String(videoId || "").trim();
+  if (!safeVideoId) return "";
+  return `https://i.ytimg.com/vi/${encodeURIComponent(safeVideoId)}/hqdefault.jpg`;
+}
+
+function extractStudyRoomSearchRunsText(value = null){
+  if (typeof value === "string") {
+    return String(value || "").trim();
+  }
+
+  if (!value || typeof value !== "object") return "";
+
+  if (Array.isArray(value.runs)) {
+    return value.runs
+      .map((entry) => String(entry?.text || "").trim())
+      .filter(Boolean)
+      .join("");
+  }
+
+  if (typeof value.simpleText === "string") {
+    return String(value.simpleText || "").trim();
+  }
+
+  return "";
+}
+
+function normalizeStudyRoomMusicSearchItem(rawItem = {}){
+  if (!rawItem || typeof rawItem !== "object") return null;
+
+  const videoRenderer = rawItem.videoRenderer && typeof rawItem.videoRenderer === "object"
+    ? rawItem.videoRenderer
+    : null;
+
+  const idCandidates = [
+    rawItem.videoId,
+    rawItem.id?.videoId,
+    rawItem.id,
+    videoRenderer?.videoId,
+    rawItem.url,
+    rawItem.path,
+    rawItem.videoUrl,
+    rawItem.watchUrl,
+    rawItem.webpage_url,
+    rawItem.link,
+    rawItem.thumbnail,
+    rawItem.thumbnailUrl,
+    rawItem.snippet?.thumbnails?.high?.url,
+    rawItem.snippet?.thumbnails?.medium?.url,
+    rawItem.snippet?.thumbnails?.default?.url
+  ];
+
+  let videoId = "";
+  for (const candidate of idCandidates) {
+    const direct = String(candidate || "").trim();
+    if (/^[a-zA-Z0-9_-]{11}$/.test(direct)) {
+      videoId = direct;
+      break;
+    }
+    const parsed = extractYouTubeVideoIdLoose(direct);
+    if (parsed) {
+      videoId = parsed;
+      break;
+    }
+  }
+  if (!videoId) return null;
+
+  const title =
+    String(
+      rawItem.title ||
+      rawItem.name ||
+      extractStudyRoomSearchRunsText(rawItem.titleText) ||
+      extractStudyRoomSearchRunsText(videoRenderer?.title) ||
+      rawItem.snippet?.title ||
+      "Video de YouTube"
+    ).trim() || "Video de YouTube";
+  const channel = String(
+    rawItem.channel ||
+    rawItem.author ||
+    extractStudyRoomSearchRunsText(rawItem.ownerText) ||
+    extractStudyRoomSearchRunsText(videoRenderer?.ownerText) ||
+    rawItem.uploaderName ||
+    rawItem.channelTitle ||
+    rawItem.snippet?.channelTitle ||
+    ""
+  ).trim();
+
+  let thumbnail = String(rawItem.thumbnail || rawItem.thumbnailUrl || "").trim();
+  if (!thumbnail && Array.isArray(rawItem.videoThumbnails) && rawItem.videoThumbnails.length) {
+    const sorted = [...rawItem.videoThumbnails].sort((a, b) => {
+      const aWidth = Math.max(0, Number(a?.width) || 0);
+      const bWidth = Math.max(0, Number(b?.width) || 0);
+      return bWidth - aWidth;
+    });
+    thumbnail = String(sorted[0]?.url || "").trim();
+  }
+  if (!thumbnail && rawItem.snippet?.thumbnails && typeof rawItem.snippet.thumbnails === "object") {
+    const thumbnails = Object.values(rawItem.snippet.thumbnails)
+      .map((entry) => String(entry?.url || "").trim())
+      .filter(Boolean);
+    if (thumbnails.length) {
+      thumbnail = thumbnails[0];
+    }
+  }
+  if (!thumbnail && Array.isArray(videoRenderer?.thumbnail?.thumbnails)) {
+    const thumbnails = videoRenderer.thumbnail.thumbnails
+      .map((entry) => String(entry?.url || "").trim())
+      .filter(Boolean);
+    if (thumbnails.length) {
+      thumbnail = thumbnails[thumbnails.length - 1];
+    }
+  }
+  if (thumbnail.startsWith("//")) {
+    thumbnail = `https:${thumbnail}`;
+  }
+  if (!thumbnail) {
+    thumbnail = getYouTubeThumbnailByVideoId(videoId);
+  }
+
+  return {
+    videoId,
+    title,
+    channel,
+    thumbnail
+  };
+}
+
+async function resolveStudyRoomMusicVideoById(videoId = ""){
+  const safeVideoId = String(videoId || "").trim();
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(safeVideoId)) return null;
+
+  const fallback = {
+    videoId: safeVideoId,
+    title: "Video de YouTube",
+    channel: "",
+    thumbnail: getYouTubeThumbnailByVideoId(safeVideoId)
+  };
+
+  try {
+    const watchUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(safeVideoId)}`;
+    const endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`;
+    const response = await fetch(endpoint, {
+      method: "GET",
+      mode: "cors",
+      cache: "no-store"
+    });
+    if (!response.ok) {
+      return fallback;
+    }
+
+    const payload = await response.json();
+    return {
+      videoId: safeVideoId,
+      title: String(payload?.title || fallback.title).trim() || fallback.title,
+      channel: String(payload?.author_name || "").trim(),
+      thumbnail: String(payload?.thumbnail_url || fallback.thumbnail).trim() || fallback.thumbnail
+    };
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function parseStudyRoomYouTubeFeedResults(rawXml = ""){
+  const xmlText = String(rawXml || "").trim();
+  if (!xmlText) return [];
+  if (typeof DOMParser === "undefined") return [];
+
+  try {
+    const xml = new DOMParser().parseFromString(xmlText, "application/xml");
+    if (xml.querySelector("parsererror")) {
+      return [];
+    }
+
+    const entries = Array.from(xml.getElementsByTagName("entry"));
+    const byVideoId = new Map();
+
+    entries.forEach((entry) => {
+      if (!(entry instanceof Element)) return;
+
+      let videoId = "";
+      const ytVideoIdNode = entry.getElementsByTagName("yt:videoId")[0];
+      if (ytVideoIdNode) {
+        videoId = String(ytVideoIdNode.textContent || "").trim();
+      }
+      if (!videoId) {
+        const idNode = entry.getElementsByTagName("id")[0];
+        const idText = String(idNode?.textContent || "").trim();
+        const match = idText.match(/video:([a-zA-Z0-9_-]{11})/);
+        if (match?.[1]) {
+          videoId = match[1];
+        }
+      }
+      if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return;
+
+      const titleNode = entry.getElementsByTagName("title")[0];
+      const title = String(titleNode?.textContent || "Video de YouTube").trim() || "Video de YouTube";
+
+      let channel = "";
+      const authorNode = entry.getElementsByTagName("author")[0];
+      if (authorNode) {
+        const authorNameNode = authorNode.getElementsByTagName("name")[0];
+        channel = String(authorNameNode?.textContent || "").trim();
+      }
+
+      if (byVideoId.has(videoId)) return;
+      byVideoId.set(videoId, {
+        videoId,
+        title,
+        channel,
+        thumbnail: getYouTubeThumbnailByVideoId(videoId)
+      });
+    });
+
+    return Array.from(byVideoId.values()).slice(0, STUDY_ROOM_MUSIC_SEARCH_MAX_RESULTS);
+  } catch (_error) {
+    return [];
+  }
+}
+
+async function fetchStudyRoomMusicSearchEndpoint(endpointConfig = {}, queryText = ""){
+  const config = typeof endpointConfig === "string"
+    ? { url: endpointConfig }
+    : (endpointConfig && typeof endpointConfig === "object" ? endpointConfig : {});
+  const safeEndpoint = String(config.url || "").trim();
+  const safeQuery = String(queryText || "").trim();
+  if (!safeEndpoint || !safeQuery) return [];
+
+  const safeApiKey = String(firebaseConfig?.apiKey || "").trim();
+  const endpoint = safeEndpoint
+    .replace("{query}", encodeURIComponent(safeQuery))
+    .replace("{apiKey}", encodeURIComponent(safeApiKey));
+  if (endpoint.includes("{apiKey}") || endpoint.includes("key=&")) {
+    throw new Error("search-endpoint-missing-key");
+  }
+  const requestTimeout = Math.max(
+    1000,
+    Number(config.timeoutMs) || STUDY_ROOM_MUSIC_SEARCH_REQUEST_TIMEOUT_MS
+  );
+
+  const controller = new AbortController();
+  const timeoutHandle = window.setTimeout(() => {
+    controller.abort();
+  }, requestTimeout);
+
+  let response = null;
+  try {
+    response = await fetch(endpoint, {
+      method: "GET",
+      mode: "cors",
+      cache: "no-store",
+      signal: controller.signal
+    });
+  } finally {
+    window.clearTimeout(timeoutHandle);
+  }
+
+  if (!response || !response.ok) {
+    const statusCode = Number(response?.status) || 0;
+    throw new Error(`search-endpoint-${statusCode || "failed"}`);
+  }
+
+  if (String(config.parser || "").trim() === "youtube_rss") {
+    const xmlPayload = await response.text();
+    return parseStudyRoomYouTubeFeedResults(xmlPayload);
+  }
+
+  const payload = await response.json();
+  let rawItems = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.items)
+      ? payload.items
+      : Array.isArray(payload?.results)
+        ? payload.results
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : [];
+
+  if (config.responsePath) {
+    const pathKey = String(config.responsePath || "").trim();
+    if (pathKey && Array.isArray(payload?.[pathKey])) {
+      rawItems = payload[pathKey];
+    }
+  }
+
+  if (config.onlyVideos) {
+    rawItems = rawItems.filter((entry) => {
+      const entryType = String(entry?.type || entry?.kind || "").toLowerCase();
+      if (!entryType) return true;
+      return entryType.includes("video");
+    });
+  }
+
+  const byVideoId = new Map();
+  rawItems.forEach((entry) => {
+    const normalized = normalizeStudyRoomMusicSearchItem(entry);
+    if (!normalized) return;
+    if (byVideoId.has(normalized.videoId)) return;
+    byVideoId.set(normalized.videoId, normalized);
+  });
+
+  return Array.from(byVideoId.values()).slice(0, STUDY_ROOM_MUSIC_SEARCH_MAX_RESULTS);
+}
+
+async function searchYouTubeMusicVideos(queryText = ""){
+  const safeQuery = String(queryText || "").trim();
+  if (!safeQuery) return [];
+
+  const directVideoId = parseYouTubeVideoId(safeQuery);
+  if (directVideoId) {
+    const directVideo = await resolveStudyRoomMusicVideoById(directVideoId);
+    return directVideo ? [directVideo] : [];
+  }
+
+  const aggregatedByVideoId = new Map();
+  let hadSuccessfulResponse = false;
+  let lastError = null;
+
+  for (const endpointConfig of STUDY_ROOM_MUSIC_SEARCH_ENDPOINTS) {
+    try {
+      const results = await fetchStudyRoomMusicSearchEndpoint(endpointConfig, safeQuery);
+      hadSuccessfulResponse = true;
+      results.forEach((entry) => {
+        const safeVideoId = String(entry?.videoId || "").trim();
+        if (!safeVideoId || aggregatedByVideoId.has(safeVideoId)) return;
+        aggregatedByVideoId.set(safeVideoId, entry);
+      });
+
+      if (aggregatedByVideoId.size >= STUDY_ROOM_MUSIC_SEARCH_MAX_RESULTS) {
+        break;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const aggregated = Array.from(aggregatedByVideoId.values()).slice(0, STUDY_ROOM_MUSIC_SEARCH_MAX_RESULTS);
+  if (aggregated.length) {
+    return aggregated;
+  }
+
+  if (hadSuccessfulResponse) {
+    return [];
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  return [];
+}
+
+function normalizeStudyRoomData(data = {}, fallbackId = ""){
+  const id = String(data?.id || fallbackId || "").trim();
+  if (!id) return null;
+
+  const title = String(data?.title || "Sala de estudio").trim() || "Sala de estudio";
+  const createdByUid = String(data?.createdByUid || "").trim();
+  const createdByName = String(data?.createdByName || "Usuario").trim() || "Usuario";
+  const createdByPhoto = String(data?.createdByPhoto || "").trim();
+  const createdAt = Math.max(0, Number(data?.createdAt) || 0);
+  const updatedAt = Math.max(createdAt, Number(data?.updatedAt) || 0);
+  const isActive = data?.isActive !== false;
+  const inviteAccessUnknown = data?.inviteAccessUnknown === true;
+
+  const participants = [];
+  const participantsRaw = data?.participants;
+  if (participantsRaw && typeof participantsRaw === "object" && !Array.isArray(participantsRaw)) {
+    Object.entries(participantsRaw).forEach(([uid, value]) => {
+      const normalized = normalizeStudyRoomParticipant(value, uid);
+      if (!normalized) return;
+      participants.push(normalized);
+    });
+  }
+  participants.sort((a, b) => {
+    const byJoinedAt = (Number(a.joinedAt) || 0) - (Number(b.joinedAt) || 0);
+    if (byJoinedAt !== 0) return byJoinedAt;
+    return String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" });
+  });
+  const participantsByUid = new Map(participants.map((entry) => [entry.uid, entry]));
+  const participantsCount = Math.max(
+    participants.length,
+    Math.max(0, Number(data?.participantsCount) || 0)
+  );
+
+  const invited = [];
+  const invitedRaw = data?.invited;
+  if (invitedRaw && typeof invitedRaw === "object" && !Array.isArray(invitedRaw)) {
+    Object.entries(invitedRaw).forEach(([uid, value]) => {
+      const normalizedInvite = normalizeStudyRoomInvite(value, uid);
+      if (!normalizedInvite) return;
+      invited.push(normalizedInvite);
+    });
+  }
+  invited.sort((a, b) => {
+    const byInvitedAt = (Number(a.invitedAt) || 0) - (Number(b.invitedAt) || 0);
+    if (byInvitedAt !== 0) return byInvitedAt;
+    return String(a.uid || "").localeCompare(String(b.uid || ""), "es", { sensitivity: "base" });
+  });
+  const invitedByUid = new Map(invited.map((entry) => [entry.uid, entry]));
+
+  const boards = [];
+  const boardsRaw = data?.boards;
+  if (boardsRaw && typeof boardsRaw === "object" && !Array.isArray(boardsRaw)) {
+    Object.entries(boardsRaw).forEach(([uid, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return;
+      const base = normalizeStudyRoomParticipant(value, uid);
+      if (!base) return;
+      const tasks = parseStudyRoomTasks(value.tasks);
+
+      boards.push({
+        uid: base.uid,
+        name: base.name,
+        photo: base.photo,
+        joinedAt: base.joinedAt,
+        updatedAt: Math.max(base.updatedAt, Number(value?.updatedAt) || 0),
+        tasks
+      });
+    });
+  }
+  boards.sort((a, b) => {
+    const byUpdated = (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0);
+    if (byUpdated !== 0) return byUpdated;
+    return String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" });
+  });
+  const boardsByUid = new Map(boards.map((entry) => [entry.uid, entry]));
+  const chatMessages = parseStudyRoomChatMessages(data?.chat);
+  const chatById = new Map(chatMessages.map((entry) => [entry.id, entry]));
+  const music = normalizeStudyRoomMusicData(data?.music);
+
+  return {
+    id,
+    title,
+    createdByUid,
+    createdByName,
+    createdByPhoto,
+    createdAt,
+    updatedAt,
+    isActive,
+    inviteAccessUnknown,
+    participants,
+    participantsCount,
+    participantsByUid,
+    invited,
+    invitedByUid,
+    boards,
+    boardsByUid,
+    chatMessages,
+    chatById,
+    music
+  };
+}
+
+function normalizeStudyRoomClosureSummary(data = {}){
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+
+  const id = String(data.id || "").trim();
+  if (!id) return null;
+
+  const roomId = String(data.roomId || "").trim();
+  const roomTitle = String(data.roomTitle || "Sala de estudio").trim() || "Sala de estudio";
+  const closedAt = Math.max(0, Number(data.closedAt) || 0);
+  const completedCount = Math.max(0, Number(data.completedCount) || 0);
+  const pendingCount = Math.max(0, Number(data.pendingCount) || 0);
+  const closedByUid = String(data.closedByUid || "").trim();
+  const closedByName = String(data.closedByName || "Creador").trim() || "Creador";
+  const totalCount = Math.max(
+    completedCount + pendingCount,
+    Math.max(0, Number(data.totalCount) || 0)
+  );
+
+  const nextSteps = [];
+  const nextStepsRaw = Array.isArray(data.nextSteps) ? data.nextSteps : [];
+  nextStepsRaw.forEach((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return;
+    const text = String(entry.text || "").trim().slice(0, STUDY_ROOM_MAX_TASK_LENGTH);
+    if (!text) return;
+    nextSteps.push({
+      text,
+      ownerUid: String(entry.ownerUid || "").trim(),
+      ownerName: String(entry.ownerName || "Integrante").trim() || "Integrante"
+    });
+  });
+
+  return {
+    id,
+    roomId,
+    roomTitle,
+    closedAt,
+    completedCount,
+    pendingCount,
+    totalCount,
+    closedByUid,
+    closedByName,
+    nextSteps
+  };
+}
+
+function collectStudyRoomClosureSummaryRecipientUids(roomData = null){
+  const recipients = new Set();
+  if (!roomData || typeof roomData !== "object") return [];
+
+  const creatorUid = String(roomData.createdByUid || "").trim();
+  if (creatorUid) {
+    recipients.add(creatorUid);
+  }
+
+  const participants = Array.isArray(roomData.participants) ? roomData.participants : [];
+  participants.forEach((entry) => {
+    const uid = String(entry?.uid || "").trim();
+    if (uid) recipients.add(uid);
+  });
+
+  const boards = Array.isArray(roomData.boards) ? roomData.boards : [];
+  boards.forEach((entry) => {
+    const uid = String(entry?.uid || "").trim();
+    if (uid) recipients.add(uid);
+  });
+
+  return Array.from(recipients);
+}
+
+function buildStudyRoomClosureSummaryPayload(
+  roomData = null,
+  {
+    closedByUid = "",
+    closedByName = ""
+  } = {}
+){
+  if (!roomData || typeof roomData !== "object") return null;
+
+  const roomId = String(roomData.id || "").trim();
+  if (!roomId) return null;
+  const roomTitle = String(roomData.title || "Sala de estudio").trim() || "Sala de estudio";
+
+  const cards = buildStudyRoomCards(roomData);
+  let completedCount = 0;
+  let pendingCount = 0;
+  const pendingCandidates = [];
+
+  cards.forEach((card, cardIndex) => {
+    const ownerUid = String(card?.uid || "").trim();
+    const ownerName = String(card?.name || "Integrante").trim() || "Integrante";
+    const cardTasks = Array.isArray(card?.tasks) ? card.tasks : [];
+    cardTasks.forEach((task, taskIndex) => {
+      const text = String(task?.text || "").trim().slice(0, STUDY_ROOM_MAX_TASK_LENGTH);
+      if (!text) return;
+      if (task?.done) {
+        completedCount += 1;
+        return;
+      }
+      pendingCount += 1;
+      pendingCandidates.push({
+        text,
+        ownerUid,
+        ownerName,
+        createdAt: Math.max(0, Number(task?.createdAt) || 0),
+        cardIndex,
+        taskIndex
+      });
+    });
+  });
+
+  pendingCandidates.sort((a, b) => {
+    const byTime = (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0);
+    if (byTime !== 0) return byTime;
+    const byCard = (Number(a.cardIndex) || 0) - (Number(b.cardIndex) || 0);
+    if (byCard !== 0) return byCard;
+    const byTask = (Number(a.taskIndex) || 0) - (Number(b.taskIndex) || 0);
+    if (byTask !== 0) return byTask;
+    return String(a.text || "").localeCompare(String(b.text || ""), "es", { sensitivity: "base" });
+  });
+
+  const closedAt = Date.now();
+  const safeClosedByUid = String(closedByUid || roomData.createdByUid || "").trim();
+  const safeClosedByName = String(
+    closedByName ||
+    roomData.createdByName ||
+    getCurrentUserSocialIdentity()?.name ||
+    "Creador"
+  ).trim() || "Creador";
+  const nextSteps = pendingCandidates.slice(0, 6).map((entry) => ({
+    text: String(entry.text || "").slice(0, STUDY_ROOM_MAX_TASK_LENGTH),
+    ownerUid: String(entry.ownerUid || "").trim(),
+    ownerName: String(entry.ownerName || "Integrante").trim() || "Integrante"
+  }));
+
+  return normalizeStudyRoomClosureSummary({
+    id: `sr_close_${closedAt}_${Math.random().toString(36).slice(2, 8)}`,
+    roomId,
+    roomTitle,
+    closedAt,
+    completedCount,
+    pendingCount,
+    totalCount: completedCount + pendingCount,
+    closedByUid: safeClosedByUid,
+    closedByName: safeClosedByName,
+    nextSteps
+  });
+}
+
+async function broadcastStudyRoomClosureSummary(
+  roomData = null,
+  {
+    closedByUid = "",
+    closedByName = ""
+  } = {}
+){
+  const summaryPayload = buildStudyRoomClosureSummaryPayload(roomData, {
+    closedByUid,
+    closedByName
+  });
+  if (!summaryPayload) return false;
+
+  const recipientUids = collectStudyRoomClosureSummaryRecipientUids(roomData);
+  if (!recipientUids.length) return false;
+
+  const writeResults = await Promise.allSettled(
+    recipientUids.map((uid) => {
+      const safeUid = String(uid || "").trim();
+      if (!safeUid) return Promise.resolve(false);
+      return setDoc(
+        doc(db, "users", safeUid),
+        {
+          [STUDY_ROOM_CLOSURE_SUMMARY_FIELD]: summaryPayload
+        },
+        { merge: true }
+      );
+    })
+  );
+
+  const hasSuccess = writeResults.some((result) => result.status === "fulfilled");
+  if (!hasSuccess) {
+    const firstError = writeResults.find((result) => result.status === "rejected");
+    if (firstError && firstError.status === "rejected") {
+      console.warn("No se pudo distribuir el resumen de cierre de sala.", firstError.reason);
+    }
+  }
+
+  return hasSuccess;
+}
+
+function normalizePublicStudyRoomFromLeaderboard(data = {}, fallbackUid = ""){
+  const roomRaw = data?.[STUDY_ROOM_PUBLIC_FIELD];
+  if (!roomRaw || typeof roomRaw !== "object" || Array.isArray(roomRaw)) {
+    return null;
+  }
+
+  const roomId = String(roomRaw.id || "").trim();
+  if (!roomId) return null;
+  if (roomRaw.isActive === false) return null;
+
+  const creatorUid = String(roomRaw.createdByUid || fallbackUid || "").trim();
+  const creatorName = String(roomRaw.createdByName || data?.name || "Usuario").trim() || "Usuario";
+  const creatorPhoto = String(roomRaw.createdByPhoto || data?.photo || "").trim();
+  const createdAt = Math.max(0, Number(roomRaw.createdAt) || 0);
+  const updatedAt = Math.max(createdAt, Number(roomRaw.updatedAt) || 0);
+  const participantsCount = Math.max(0, Number(roomRaw.participantsCount) || 0);
+
+  return normalizeStudyRoomData(
+    {
+      id: roomId,
+      title: roomRaw.title,
+      createdByUid: creatorUid,
+      createdByName: creatorName,
+      createdByPhoto: creatorPhoto,
+      createdAt,
+      updatedAt,
+      isActive: true,
+      participantsCount,
+      inviteAccessUnknown: true
+    },
+    roomId
+  );
+}
+
+function normalizeOwnedStudyRoomFromUserData(data = {}, fallbackUid = ""){
+  const ownedRoomRaw = data?.[STUDY_ROOM_OWNED_FIELD];
+  if (!ownedRoomRaw || typeof ownedRoomRaw !== "object" || Array.isArray(ownedRoomRaw)) {
+    return null;
+  }
+
+  const fallbackRoomId = String(ownedRoomRaw.id || fallbackUid || "").trim();
+  const normalized = normalizeStudyRoomData(ownedRoomRaw, fallbackRoomId);
+  if (!normalized) return null;
+  if (!normalized.isActive) return null;
+
+  return normalized;
+}
+
+function buildStudyRoomCards(roomData = null){
+  if (!roomData || typeof roomData !== "object") return [];
+
+  const cardsByUid = new Map();
+  const ownUid = String(currentUser?.uid || "").trim();
+
+  const participants = Array.isArray(roomData.participants) ? roomData.participants : [];
+  participants.forEach((participant) => {
+    const uid = String(participant?.uid || "").trim();
+    if (!uid) return;
+    cardsByUid.set(uid, {
+      uid,
+      name: String(participant.name || "Usuario").trim() || "Usuario",
+      photo: String(participant.photo || "").trim(),
+      joinedAt: Math.max(0, Number(participant.joinedAt) || 0),
+      updatedAt: Math.max(0, Number(participant.updatedAt) || 0),
+      tasks: []
+    });
+  });
+
+  const boards = Array.isArray(roomData.boards) ? roomData.boards : [];
+  boards.forEach((boardEntry) => {
+    const uid = String(boardEntry?.uid || "").trim();
+    if (!uid) return;
+    const previous = cardsByUid.get(uid);
+
+    cardsByUid.set(uid, {
+      uid,
+      name: String(previous?.name || boardEntry?.name || "Usuario").trim() || "Usuario",
+      photo: String(previous?.photo || boardEntry?.photo || "").trim(),
+      joinedAt: Math.max(0, Number(previous?.joinedAt) || Number(boardEntry?.joinedAt) || 0),
+      updatedAt: Math.max(
+        Number(previous?.updatedAt) || 0,
+        Number(boardEntry?.updatedAt) || 0
+      ),
+      tasks: Array.isArray(boardEntry?.tasks) ? boardEntry.tasks : []
+    });
+  });
+
+  const cards = Array.from(cardsByUid.values());
+  cards.sort((a, b) => {
+    if (a.uid === ownUid && b.uid !== ownUid) return -1;
+    if (b.uid === ownUid && a.uid !== ownUid) return 1;
+    const byJoinedAt = (Number(a.joinedAt) || 0) - (Number(b.joinedAt) || 0);
+    if (byJoinedAt !== 0) return byJoinedAt;
+    return String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" });
+  });
+
+  return cards;
+}
+
+function getStudyRoomTaskDraft(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return "";
+  if (!(studyRoomsState.taskDraftByRoomId instanceof Map)) {
+    studyRoomsState.taskDraftByRoomId = new Map();
+  }
+  return String(studyRoomsState.taskDraftByRoomId.get(safeRoomId) || "");
+}
+
+function setStudyRoomTaskDraft(roomId = "", value = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+  if (!(studyRoomsState.taskDraftByRoomId instanceof Map)) {
+    studyRoomsState.taskDraftByRoomId = new Map();
+  }
+  studyRoomsState.taskDraftByRoomId.set(safeRoomId, String(value || ""));
+}
+
+function getStudyRoomChatDraft(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return "";
+  if (!(studyRoomsState.chatDraftByRoomId instanceof Map)) {
+    studyRoomsState.chatDraftByRoomId = new Map();
+  }
+  return String(studyRoomsState.chatDraftByRoomId.get(safeRoomId) || "");
+}
+
+function setStudyRoomChatDraft(roomId = "", value = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+  if (!(studyRoomsState.chatDraftByRoomId instanceof Map)) {
+    studyRoomsState.chatDraftByRoomId = new Map();
+  }
+  studyRoomsState.chatDraftByRoomId.set(safeRoomId, String(value || ""));
+}
+
+function getStudyRoomMusicSearchDraft(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return "";
+  if (!(studyRoomsState.musicSearchDraftByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchDraftByRoomId = new Map();
+  }
+  return String(studyRoomsState.musicSearchDraftByRoomId.get(safeRoomId) || "");
+}
+
+function setStudyRoomMusicSearchDraft(roomId = "", value = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+  if (!(studyRoomsState.musicSearchDraftByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchDraftByRoomId = new Map();
+  }
+  studyRoomsState.musicSearchDraftByRoomId.set(safeRoomId, String(value || ""));
+}
+
+function getStudyRoomMusicSearchResults(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return [];
+  if (!(studyRoomsState.musicSearchResultsByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchResultsByRoomId = new Map();
+  }
+  const results = studyRoomsState.musicSearchResultsByRoomId.get(safeRoomId);
+  return Array.isArray(results) ? results : [];
+}
+
+function setStudyRoomMusicSearchResults(roomId = "", results = []){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+  if (!(studyRoomsState.musicSearchResultsByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchResultsByRoomId = new Map();
+  }
+  const normalized = Array.isArray(results) ? results : [];
+  studyRoomsState.musicSearchResultsByRoomId.set(safeRoomId, normalized);
+}
+
+function getStudyRoomMusicSearchLoading(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return false;
+  if (!(studyRoomsState.musicSearchLoadingByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchLoadingByRoomId = new Map();
+  }
+  return studyRoomsState.musicSearchLoadingByRoomId.get(safeRoomId) === true;
+}
+
+function setStudyRoomMusicSearchLoading(roomId = "", isLoading = false){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+  if (!(studyRoomsState.musicSearchLoadingByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchLoadingByRoomId = new Map();
+  }
+  studyRoomsState.musicSearchLoadingByRoomId.set(safeRoomId, !!isLoading);
+}
+
+function getStudyRoomMusicSearchError(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return "";
+  if (!(studyRoomsState.musicSearchErrorByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchErrorByRoomId = new Map();
+  }
+  return String(studyRoomsState.musicSearchErrorByRoomId.get(safeRoomId) || "");
+}
+
+function setStudyRoomMusicSearchError(roomId = "", value = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+  if (!(studyRoomsState.musicSearchErrorByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchErrorByRoomId = new Map();
+  }
+  studyRoomsState.musicSearchErrorByRoomId.set(safeRoomId, String(value || ""));
+}
+
+function bumpStudyRoomMusicSearchToken(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return 0;
+  if (!(studyRoomsState.musicSearchTokenByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchTokenByRoomId = new Map();
+  }
+  const nextToken = (Number(studyRoomsState.musicSearchTokenByRoomId.get(safeRoomId)) || 0) + 1;
+  studyRoomsState.musicSearchTokenByRoomId.set(safeRoomId, nextToken);
+  return nextToken;
+}
+
+function getStudyRoomMusicSearchToken(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return 0;
+  if (!(studyRoomsState.musicSearchTokenByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchTokenByRoomId = new Map();
+  }
+  return Number(studyRoomsState.musicSearchTokenByRoomId.get(safeRoomId)) || 0;
+}
+
+function buildStudyRoomMusicEmbedUrl(videoId = "", { autoplay = false, startSeconds = 0 } = {}){
+  const safeVideoId = String(videoId || "").trim();
+  if (!safeVideoId) return "";
+
+  const originValue = typeof window !== "undefined" && window.location
+    ? String(window.location.origin || "").trim()
+    : "";
+  const params = new URLSearchParams({
+    enablejsapi: "1",
+    rel: "0",
+    modestbranding: "1",
+    iv_load_policy: "3",
+    playsinline: "1",
+    autoplay: autoplay ? "1" : "0"
+  });
+  if (originValue) {
+    params.set("origin", originValue);
+  }
+  const safeStart = Math.max(0, Math.floor(Number(startSeconds) || 0));
+  if (safeStart > 0) {
+    params.set("start", String(safeStart));
+  }
+
+  return `https://www.youtube.com/embed/${encodeURIComponent(safeVideoId)}?${params.toString()}`;
+}
+
+function postStudyRoomMusicIframeCommand(iframe, func = "", args = []){
+  if (!(iframe instanceof HTMLIFrameElement)) return;
+  const safeFunc = String(func || "").trim();
+  if (!safeFunc) return;
+  if (!iframe.contentWindow) return;
+
+  try {
+    iframe.contentWindow.postMessage(
+      JSON.stringify({
+        event: "command",
+        func: safeFunc,
+        args: Array.isArray(args) ? args : []
+      }),
+      "*"
+    );
+  } catch (_error) {}
+}
+
+function postStudyRoomMusicIframeListeningCommand(iframe){
+  if (!(iframe instanceof HTMLIFrameElement)) return;
+  if (!iframe.contentWindow) return;
+
+  try {
+    iframe.contentWindow.postMessage(
+      JSON.stringify({
+        event: "listening",
+        id: String(iframe.dataset.studyRoomMusicVideoId || "study-room-player"),
+        channel: "widget"
+      }),
+      "*"
+    );
+  } catch (_error) {}
+}
+
+function isStudyRoomMusicYouTubeOrigin(origin = ""){
+  const safeOrigin = String(origin || "").trim();
+  if (!safeOrigin) return false;
+
+  try {
+    const parsedOrigin = new URL(safeOrigin);
+    const host = String(parsedOrigin.hostname || "").toLowerCase();
+    return host === "youtube.com"
+      || host.endsWith(".youtube.com")
+      || host === "youtube-nocookie.com"
+      || host.endsWith(".youtube-nocookie.com");
+  } catch (_error) {
+    return false;
+  }
+}
+
+function parseStudyRoomMusicIframeMessagePayload(rawData){
+  if (rawData && typeof rawData === "object") {
+    return rawData;
+  }
+  if (typeof rawData !== "string") return null;
+  const trimmedPayload = rawData.trim();
+  if (!trimmedPayload || !trimmedPayload.startsWith("{")) return null;
+
+  try {
+    const parsed = JSON.parse(trimmedPayload);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function setStudyRoomMusicPendingSeekEntry(
+  roomId = "",
+  positionSeconds = 0,
+  { ttlMs = STUDY_ROOM_MUSIC_SEEK_PENDING_TTL_MS } = {}
+){
+  const safeRoomId = String(roomId || "").trim();
+  const safePosition = Math.max(0, Number(positionSeconds) || 0);
+  if (!safeRoomId || !Number.isFinite(safePosition)) return;
+
+  if (!(studyRoomsState.musicIframePendingSeekByRoomId instanceof Map)) {
+    studyRoomsState.musicIframePendingSeekByRoomId = new Map();
+  }
+
+  const now = Date.now();
+  const safeTtlMs = Math.max(300, Math.floor(Number(ttlMs) || STUDY_ROOM_MUSIC_SEEK_PENDING_TTL_MS));
+  studyRoomsState.musicIframePendingSeekByRoomId.set(safeRoomId, {
+    positionSeconds: safePosition,
+    expiresAt: now + safeTtlMs
+  });
+}
+
+function clearStudyRoomMusicPendingSeekEntry(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+  if (!(studyRoomsState.musicIframePendingSeekByRoomId instanceof Map)) return;
+  studyRoomsState.musicIframePendingSeekByRoomId.delete(safeRoomId);
+}
+
+function hasStudyRoomMusicPendingSeekEntry(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return false;
+
+  if (!(studyRoomsState.musicIframePendingSeekByRoomId instanceof Map)) {
+    studyRoomsState.musicIframePendingSeekByRoomId = new Map();
+  }
+
+  const pendingEntry = studyRoomsState.musicIframePendingSeekByRoomId.get(safeRoomId);
+  if (!pendingEntry || typeof pendingEntry !== "object") return false;
+
+  const now = Date.now();
+  const expiresAt = Math.max(0, Number(pendingEntry.expiresAt) || 0);
+  if (!expiresAt || expiresAt < now) {
+    studyRoomsState.musicIframePendingSeekByRoomId.delete(safeRoomId);
+    return false;
+  }
+
+  return true;
+}
+
+function isStudyRoomMusicPendingSeekMatch(
+  roomId = "",
+  positionSeconds = 0,
+  { consume = false, toleranceSeconds = STUDY_ROOM_MUSIC_SEEK_PENDING_TOLERANCE_SECONDS } = {}
+){
+  const safeRoomId = String(roomId || "").trim();
+  const safePosition = Math.max(0, Number(positionSeconds) || 0);
+  if (!safeRoomId || !Number.isFinite(safePosition)) return false;
+
+  if (!(studyRoomsState.musicIframePendingSeekByRoomId instanceof Map)) {
+    studyRoomsState.musicIframePendingSeekByRoomId = new Map();
+  }
+
+  const pendingEntry = studyRoomsState.musicIframePendingSeekByRoomId.get(safeRoomId);
+  if (!pendingEntry || typeof pendingEntry !== "object") return false;
+
+  const now = Date.now();
+  const expiresAt = Math.max(0, Number(pendingEntry.expiresAt) || 0);
+  if (!expiresAt || expiresAt < now) {
+    studyRoomsState.musicIframePendingSeekByRoomId.delete(safeRoomId);
+    return false;
+  }
+
+  const pendingPosition = Math.max(0, Number(pendingEntry.positionSeconds) || 0);
+  const safeTolerance = Math.max(0.4, Number(toleranceSeconds) || STUDY_ROOM_MUSIC_SEEK_PENDING_TOLERANCE_SECONDS);
+  const isMatch = Math.abs(pendingPosition - safePosition) <= safeTolerance;
+  if (isMatch && consume) {
+    studyRoomsState.musicIframePendingSeekByRoomId.delete(safeRoomId);
+  }
+  return isMatch;
+}
+
+function normalizeStudyRoomMusicIframePlayerState(playerState = Number.NaN){
+  const numericPlayerState = Number(playerState);
+  if (numericPlayerState === 1) return 1;
+  if (numericPlayerState === 2) return 2;
+  return 0;
+}
+
+function setStudyRoomMusicObservedSeekSample(roomId = "", positionSeconds = 0, playerState = Number.NaN){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+
+  const safePosition = Math.max(0, Number(positionSeconds) || 0);
+  if (!Number.isFinite(safePosition)) return;
+
+  if (!(studyRoomsState.musicIframeSeekObservedByRoomId instanceof Map)) {
+    studyRoomsState.musicIframeSeekObservedByRoomId = new Map();
+  }
+
+  studyRoomsState.musicIframeSeekObservedByRoomId.set(safeRoomId, {
+    positionSeconds: safePosition,
+    playerState: normalizeStudyRoomMusicIframePlayerState(playerState),
+    at: Date.now()
+  });
+}
+
+async function syncStudyRoomMusicSeekFromIframe(roomId = "", observedSeconds = 0, playerState = Number.NaN){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const observedPosition = Math.max(0, Number(observedSeconds) || 0);
+  if (!Number.isFinite(observedPosition)) return false;
+  if (isStudyRoomMusicPendingSeekMatch(safeRoomId, observedPosition, { consume: true })) return false;
+
+  const roomData = studyRoomsState.activeRoomData;
+  const currentMusic = normalizeStudyRoomMusicData(roomData?.music);
+  if (!currentMusic.videoId) return false;
+
+  const now = Date.now();
+  const currentPosition = Math.max(0, getStudyRoomMusicCurrentPosition(currentMusic, now));
+  if (Math.abs(currentPosition - observedPosition) < STUDY_ROOM_MUSIC_SEEK_SYNC_MIN_DELTA_SECONDS) {
+    return false;
+  }
+
+  if (!(studyRoomsState.musicIframeSeekSyncLastByRoomId instanceof Map)) {
+    studyRoomsState.musicIframeSeekSyncLastByRoomId = new Map();
+  }
+  const lastSyncEntry = studyRoomsState.musicIframeSeekSyncLastByRoomId.get(safeRoomId);
+  if (lastSyncEntry && typeof lastSyncEntry === "object") {
+    const lastAt = Math.max(0, Number(lastSyncEntry.at) || 0);
+    const lastPosition = Math.max(0, Number(lastSyncEntry.positionSeconds) || 0);
+    if (
+      lastAt > 0 &&
+      (now - lastAt) < STUDY_ROOM_MUSIC_SEEK_SYNC_THROTTLE_MS &&
+      Math.abs(lastPosition - observedPosition) < STUDY_ROOM_MUSIC_SEEK_SYNC_MIN_DELTA_SECONDS
+    ) {
+      return false;
+    }
+  }
+
+  const normalizedPlayerState = normalizeStudyRoomMusicIframePlayerState(playerState);
+  const nextState = normalizedPlayerState === 1
+    ? "playing"
+    : normalizedPlayerState === 2
+      ? "paused"
+      : currentMusic.state;
+  const nextMusic = normalizeStudyRoomMusicData({
+    ...currentMusic,
+    state: nextState,
+    positionSeconds: observedPosition,
+    startedAt: nextState === "playing" ? now : 0,
+    updatedAt: now
+  });
+
+  setStudyRoomMusicPendingSeekEntry(safeRoomId, observedPosition);
+  const persisted = await persistStudyRoomMusicState(safeRoomId, nextMusic);
+  if (!persisted) {
+    clearStudyRoomMusicPendingSeekEntry(safeRoomId);
+    return false;
+  }
+
+  studyRoomsState.musicIframeSeekSyncLastByRoomId.set(safeRoomId, {
+    positionSeconds: observedPosition,
+    at: now
+  });
+  setStudyRoomMusicObservedSeekSample(safeRoomId, observedPosition, normalizedPlayerState);
+  return true;
+}
+
+async function flushStudyRoomMusicSeekSyncFromIframe(roomId = ""){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return false;
+
+  if (!(studyRoomsState.musicIframeSeekSyncDraftByRoomId instanceof Map)) {
+    studyRoomsState.musicIframeSeekSyncDraftByRoomId = new Map();
+  }
+  if (!(studyRoomsState.musicIframeSeekSyncInFlightByRoomId instanceof Set)) {
+    studyRoomsState.musicIframeSeekSyncInFlightByRoomId = new Set();
+  }
+  if (!(studyRoomsState.musicIframeSeekSyncTimerByRoomId instanceof Map)) {
+    studyRoomsState.musicIframeSeekSyncTimerByRoomId = new Map();
+  }
+
+  const draft = studyRoomsState.musicIframeSeekSyncDraftByRoomId.get(safeRoomId);
+  if (!draft || typeof draft !== "object") return false;
+  if (studyRoomsState.musicIframeSeekSyncInFlightByRoomId.has(safeRoomId)) {
+    return false;
+  }
+
+  const positionSeconds = Math.max(0, Number(draft.positionSeconds) || 0);
+  const playerState = Number(draft.playerState);
+  studyRoomsState.musicIframeSeekSyncDraftByRoomId.delete(safeRoomId);
+  studyRoomsState.musicIframeSeekSyncInFlightByRoomId.add(safeRoomId);
+
+  try {
+    return await syncStudyRoomMusicSeekFromIframe(safeRoomId, positionSeconds, playerState);
+  } finally {
+    studyRoomsState.musicIframeSeekSyncInFlightByRoomId.delete(safeRoomId);
+    if (studyRoomsState.musicIframeSeekSyncDraftByRoomId.has(safeRoomId)) {
+      const existingTimer = studyRoomsState.musicIframeSeekSyncTimerByRoomId.get(safeRoomId);
+      if (!existingTimer) {
+        const retryTimer = setTimeout(() => {
+          if (studyRoomsState.musicIframeSeekSyncTimerByRoomId instanceof Map) {
+            studyRoomsState.musicIframeSeekSyncTimerByRoomId.delete(safeRoomId);
+          }
+          void flushStudyRoomMusicSeekSyncFromIframe(safeRoomId);
+        }, STUDY_ROOM_MUSIC_SEEK_SYNC_DEBOUNCE_MS);
+        studyRoomsState.musicIframeSeekSyncTimerByRoomId.set(safeRoomId, retryTimer);
+      }
+    }
+  }
+}
+
+function queueStudyRoomMusicSeekSyncFromIframe(roomId = "", observedSeconds = 0, playerState = Number.NaN){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return;
+
+  const safePosition = Math.max(0, Number(observedSeconds) || 0);
+  if (!Number.isFinite(safePosition)) return;
+  const safePlayerState = normalizeStudyRoomMusicIframePlayerState(playerState);
+  if (!(studyRoomsState.musicIframeSeekObservedByRoomId instanceof Map)) {
+    studyRoomsState.musicIframeSeekObservedByRoomId = new Map();
+  }
+  const previousObserved = studyRoomsState.musicIframeSeekObservedByRoomId.get(safeRoomId);
+  const rememberObservedSample = () => {
+    studyRoomsState.musicIframeSeekObservedByRoomId.set(safeRoomId, {
+      positionSeconds: safePosition,
+      playerState: safePlayerState,
+      at: Date.now()
+    });
+  };
+
+  if (safePlayerState === 0) {
+    rememberObservedSample();
+    return;
+  }
+
+  if (hasStudyRoomMusicPendingSeekEntry(safeRoomId)) {
+    if (isStudyRoomMusicPendingSeekMatch(safeRoomId, safePosition, { consume: true })) {
+      rememberObservedSample();
+      return;
+    }
+    rememberObservedSample();
+    return;
+  }
+
+  if (previousObserved && typeof previousObserved === "object") {
+    const previousPosition = Math.max(0, Number(previousObserved.positionSeconds) || 0);
+    const previousPlayerState = normalizeStudyRoomMusicIframePlayerState(previousObserved.playerState);
+    const previousAt = Math.max(0, Number(previousObserved.at) || 0);
+    const elapsedSeconds = previousPlayerState === 1 && previousAt > 0
+      ? Math.max(0, (Date.now() - previousAt) / 1000)
+      : 0;
+    const expectedPosition = previousPosition + elapsedSeconds;
+    const driftSeconds = Math.abs(expectedPosition - safePosition);
+    const changedPlaybackState = (
+      (previousPlayerState === 1 || previousPlayerState === 2) &&
+      (safePlayerState === 1 || safePlayerState === 2) &&
+      previousPlayerState !== safePlayerState
+    );
+    const driftThreshold = changedPlaybackState
+      ? Math.max(STUDY_ROOM_MUSIC_SEEK_SYNC_MIN_DELTA_SECONDS, 1.8)
+      : STUDY_ROOM_MUSIC_SEEK_SYNC_MIN_DELTA_SECONDS;
+
+    if (driftSeconds < driftThreshold) {
+      rememberObservedSample();
+      return;
+    }
+  } else {
+    rememberObservedSample();
+    return;
+  }
+
+  rememberObservedSample();
+
+  if (!(studyRoomsState.musicIframeSeekSyncDraftByRoomId instanceof Map)) {
+    studyRoomsState.musicIframeSeekSyncDraftByRoomId = new Map();
+  }
+  if (!(studyRoomsState.musicIframeSeekSyncTimerByRoomId instanceof Map)) {
+    studyRoomsState.musicIframeSeekSyncTimerByRoomId = new Map();
+  }
+
+  studyRoomsState.musicIframeSeekSyncDraftByRoomId.set(safeRoomId, {
+    positionSeconds: safePosition,
+    playerState: Number(playerState)
+  });
+
+  const previousTimerId = studyRoomsState.musicIframeSeekSyncTimerByRoomId.get(safeRoomId);
+  if (previousTimerId) {
+    try {
+      clearTimeout(previousTimerId);
+    } catch (_error) {}
+  }
+
+  const timeoutId = setTimeout(() => {
+    if (studyRoomsState.musicIframeSeekSyncTimerByRoomId instanceof Map) {
+      studyRoomsState.musicIframeSeekSyncTimerByRoomId.delete(safeRoomId);
+    }
+    void flushStudyRoomMusicSeekSyncFromIframe(safeRoomId);
+  }, STUDY_ROOM_MUSIC_SEEK_SYNC_DEBOUNCE_MS);
+  studyRoomsState.musicIframeSeekSyncTimerByRoomId.set(safeRoomId, timeoutId);
+}
+
+function getStudyRoomMusicActiveIframe(scope = board){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return null;
+
+  const safeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  const roomData = studyRoomsState.activeRoomData;
+  if (!safeRoomId || !roomData || typeof roomData !== "object") return null;
+  if (String(roomData.id || "").trim() !== safeRoomId) return null;
+
+  const playerHost = scope.querySelector("#studyRoomWorkspace [data-study-room-music-player-host]");
+  if (!(playerHost instanceof HTMLElement)) return null;
+  if (String(playerHost.dataset.studyRoomId || "").trim() !== safeRoomId) return null;
+
+  const iframe = playerHost.querySelector("iframe[data-study-room-music-iframe]");
+  if (!(iframe instanceof HTMLIFrameElement)) return null;
+  return iframe;
+}
+
+async function syncStudyRoomMusicPlaybackStateFromIframe(roomId = "", desiredState = "paused"){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const safeDesiredState = String(desiredState || "").trim().toLowerCase() === "playing"
+    ? "playing"
+    : "paused";
+  if (!(studyRoomsState.musicIframePendingStateByRoomId instanceof Map)) {
+    studyRoomsState.musicIframePendingStateByRoomId = new Map();
+  }
+
+  const pendingState = String(studyRoomsState.musicIframePendingStateByRoomId.get(safeRoomId) || "").trim();
+  if (pendingState === safeDesiredState) return false;
+
+  const roomData = studyRoomsState.activeRoomData;
+  const currentMusic = normalizeStudyRoomMusicData(roomData?.music);
+  if (!currentMusic.videoId) return false;
+  if (currentMusic.state === safeDesiredState) return false;
+
+  studyRoomsState.musicIframePendingStateByRoomId.set(safeRoomId, safeDesiredState);
+  try {
+    return await setStudyRoomMusicPlaybackState(safeRoomId, safeDesiredState);
+  } finally {
+    const latestPending = String(studyRoomsState.musicIframePendingStateByRoomId.get(safeRoomId) || "").trim();
+    if (latestPending === safeDesiredState) {
+      studyRoomsState.musicIframePendingStateByRoomId.delete(safeRoomId);
+    }
+  }
+}
+
+function handleStudyRoomMusicIframeMessage(event){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return;
+  if (!isStudyRoomMusicYouTubeOrigin(event?.origin)) return;
+
+  const iframe = getStudyRoomMusicActiveIframe();
+  if (!(iframe instanceof HTMLIFrameElement)) return;
+  if (!iframe.contentWindow || event.source !== iframe.contentWindow) return;
+
+  const payload = parseStudyRoomMusicIframeMessagePayload(event?.data);
+  if (!payload || typeof payload !== "object") return;
+
+  const payloadEvent = String(payload.event || "").trim();
+  let playerState = Number.NaN;
+  let currentTime = Number.NaN;
+  if (payloadEvent === "infoDelivery") {
+    playerState = Number(payload?.info?.playerState);
+    currentTime = Number(payload?.info?.currentTime);
+  } else if (payloadEvent === "onStateChange") {
+    playerState = Number(payload?.info);
+  } else {
+    return;
+  }
+
+  const safeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  if (!safeRoomId) return;
+
+  if (Number.isFinite(currentTime) && currentTime >= 0) {
+    queueStudyRoomMusicSeekSyncFromIframe(safeRoomId, currentTime, playerState);
+  }
+
+  if (playerState === 1 || playerState === 2) {
+    const nextState = playerState === 1 ? "playing" : "paused";
+    void syncStudyRoomMusicPlaybackStateFromIframe(safeRoomId, nextState);
+  }
+}
+
+function ensureStudyRoomMusicIframeMessageListener(){
+  if (studyRoomMusicIframeMessageListenerBound) return;
+  if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+
+  window.addEventListener("message", handleStudyRoomMusicIframeMessage);
+  studyRoomMusicIframeMessageListenerBound = true;
+}
+
+function getCurrentUserOwnedActiveStudyRoom(){
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!ownUid) return null;
+
+  const activeRoomData = studyRoomsState.activeRoomData;
+  if (
+    activeRoomData &&
+    typeof activeRoomData === "object" &&
+    activeRoomData.isActive &&
+    String(activeRoomData.createdByUid || "").trim() === ownUid
+  ) {
+    return activeRoomData;
+  }
+
+  const roomFromList = studyRoomsState.rooms.find((room) => (
+    room &&
+    room.isActive &&
+    String(room.createdByUid || "").trim() === ownUid
+  ));
+
+  return roomFromList || null;
+}
+
+async function upsertCurrentUserStudyRoomPublicSummary(roomData = null){
+  if (!currentUser?.uid) return false;
+  if (!roomData || typeof roomData !== "object") return false;
+
+  const safeRoomId = String(roomData.id || "").trim();
+  if (!safeRoomId) return false;
+
+  const safeName = String(roomData.createdByName || currentUser.displayName || "Usuario").trim() || "Usuario";
+  const safePhoto = String(roomData.createdByPhoto || currentUser.photoURL || "").trim();
+  const safeTitle = String(roomData.title || "Sala de estudio").trim() || "Sala de estudio";
+  const safeCreatedByUid = String(roomData.createdByUid || currentUser.uid || "").trim() || String(currentUser.uid || "");
+  const participantsCount = Math.max(
+    1,
+    Math.max(0, Number(roomData.participantsCount) || 0),
+    Array.isArray(roomData.participants) ? roomData.participants.length : 0
+  );
+  const createdAt = Math.max(0, Number(roomData.createdAt) || Date.now());
+  const updatedAt = Math.max(createdAt, Number(roomData.updatedAt) || Date.now());
+
+  const payload = {
+    id: safeRoomId,
+    title: safeTitle,
+    createdByUid: safeCreatedByUid,
+    createdByName: safeName,
+    createdByPhoto: safePhoto,
+    createdAt,
+    updatedAt,
+    isActive: true,
+    participantsCount
+  };
+
+  try {
+    await setDoc(
+      doc(db, "leaderboard", currentUser.uid),
+      {
+        [STUDY_ROOM_PUBLIC_FIELD]: payload
+      },
+      { merge: true }
+    );
+    return true;
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo sincronizar el índice público de salas de estudio.", err);
+    }
+    return false;
+  }
+}
+
+async function clearCurrentUserStudyRoomPublicSummary(){
+  if (!currentUser?.uid) return false;
+
+  try {
+    await setDoc(
+      doc(db, "leaderboard", currentUser.uid),
+      {
+        [STUDY_ROOM_PUBLIC_FIELD]: deleteField()
+      },
+      { merge: true }
+    );
+    return true;
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo limpiar el índice público de salas de estudio.", err);
+    }
+    return false;
+  }
+}
+
+function stopStudyRoomsListListener(){
+  if (typeof studyRoomsState.roomsUnsub === "function") {
+    try {
+      studyRoomsState.roomsUnsub();
+    } catch (_error) {}
+  }
+  studyRoomsState.roomsUnsub = null;
+  studyRoomsState.roomsSource = "primary";
+}
+
+function stopStudyRoomActiveListener(){
+  if (typeof studyRoomsState.activeRoomUnsub === "function") {
+    try {
+      studyRoomsState.activeRoomUnsub();
+    } catch (_error) {}
+  }
+  studyRoomsState.activeRoomUnsub = null;
+}
+
+function renderStudyRoomsActiveList(){
+  if (studyRoomsState.roomsLoading && !studyRoomsState.rooms.length) {
+    return `<div class="social-empty">Cargando salas de estudio...</div>`;
+  }
+
+  if (studyRoomsState.roomsError && !studyRoomsState.rooms.length) {
+    return `<div class="social-empty">${escapeHtml(studyRoomsState.roomsError)}</div>`;
+  }
+
+  if (!studyRoomsState.rooms.length) {
+    return `<div class="social-empty">No hay salas en curso por ahora.</div>`;
+  }
+
+  const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  const ownUid = String(currentUser?.uid || "").trim();
+
+  return studyRoomsState.rooms.map((room) => {
+    const roomId = String(room.id || "").trim();
+    const safeRoomId = escapeHtml(roomId);
+    const isCurrent = roomId === activeRoomId;
+    const isCreator = !!ownUid && String(room.createdByUid || "").trim() === ownUid;
+    const hostName = String(room.createdByName || "Usuario").trim() || "Usuario";
+    const safeHostName = escapeHtml(hostName);
+    const safeTitle = escapeHtml(room.title || "Sala de estudio");
+    const participantsCount = Math.max(
+      Array.isArray(room.participants) ? room.participants.length : 0,
+      Math.max(0, Number(room.participantsCount) || 0)
+    );
+    const avatarSrc = escapeHtml(room.createdByPhoto || getLeaderboardFallbackPhoto(hostName));
+    const avatarFallback = escapeHtml(getLeaderboardFallbackPhoto(hostName));
+    const access = canCurrentUserAccessStudyRoom(room);
+    const canOpen = access.allowed;
+    const shouldDisableJoin = !canOpen;
+    const joinLabel = canOpen ? "Entrar" : "Con invitación";
+    const joinClass = canOpen ? "primary" : "ghost";
+    const rowActionButton = isCurrent
+      ? `
+          <button
+            class="social-btn danger"
+            type="button"
+            data-study-room-leave
+            data-study-room-owner="${isCreator ? "1" : "0"}"
+          >
+            ${isCreator ? "Cerrar sala" : "Salir de la sala"}
+          </button>
+        `
+      : isCreator
+        ? `
+          <button
+            class="social-btn ${joinClass}"
+            type="button"
+            data-study-room-join
+            data-study-room-id="${safeRoomId}"
+            ${shouldDisableJoin ? "disabled aria-disabled=\"true\"" : ""}
+          >
+            ${joinLabel}
+          </button>
+        `
+        : "";
+
+    return `
+      <div class="social-user-row study-room-row ${isCurrent ? "chat-open" : ""}">
+        <img
+          class="social-user-avatar"
+          src="${avatarSrc}"
+          alt="Foto de ${safeHostName}"
+          onerror="this.src='${avatarFallback}'"
+        >
+        <div class="social-user-meta">
+          <strong>${safeTitle}</strong>
+          <span>Creada por ${safeHostName}</span>
+        </div>
+        <div class="social-user-actions">
+          <span class="social-count mini">${formatSettingsStat(participantsCount)}</span>
+          ${rowActionButton}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderStudyRoomChatMessages(roomData = null){
+  const messages = Array.isArray(roomData?.chatMessages) ? roomData.chatMessages : [];
+  if (!messages.length) {
+    return `<div class="social-empty">Todavía no hay mensajes en esta sala.</div>`;
+  }
+
+  const ownUid = String(currentUser?.uid || "").trim();
+  const groups = [];
+
+  messages.forEach((message) => {
+    const safeMessage = message && typeof message === "object" ? message : {};
+    const messageKind = String(safeMessage.kind || "message").trim().toLowerCase() === "system"
+      ? "system"
+      : "message";
+    const fromUid = String(safeMessage.uid || "").trim();
+
+    if (messageKind === "system") {
+      groups.push({
+        type: "system",
+        message: safeMessage
+      });
+      return;
+    }
+
+    const isOwnMessage = !!ownUid && fromUid === ownUid;
+    const createdAt = Math.max(0, Number(safeMessage.createdAt) || 0);
+    const minuteKey = createdAt > 0 ? Math.floor(createdAt / 60000) : null;
+    const previousGroup = groups[groups.length - 1];
+    const canAppendToPrevious =
+      !!previousGroup &&
+      previousGroup.type === "message" &&
+      previousGroup.isOwnMessage === isOwnMessage &&
+      previousGroup.fromUid === fromUid &&
+      previousGroup.minuteKey !== null &&
+      previousGroup.minuteKey === minuteKey;
+
+    if (canAppendToPrevious) {
+      previousGroup.messages.push(safeMessage);
+      previousGroup.lastMessage = safeMessage;
+      if (!previousGroup.fromPhoto) {
+        previousGroup.fromPhoto = String(safeMessage.photo || "").trim();
+      }
+      return;
+    }
+
+    groups.push({
+      type: "message",
+      fromUid,
+      fromName: String(safeMessage.name || "Usuario").trim() || "Usuario",
+      fromPhoto: String(safeMessage.photo || "").trim(),
+      isOwnMessage,
+      minuteKey,
+      messages: [safeMessage],
+      lastMessage: safeMessage
+    });
+  });
+
+  return groups.map((group) => {
+    if (group.type === "system") {
+      const safeSystemText = escapeHtml(String(group.message?.text || "")).replace(/\n/g, "<br>");
+      return `<div class="study-room-chat-system">${safeSystemText}</div>`;
+    }
+
+    const safeSenderName = escapeHtml(group.fromName || "Usuario");
+    const safeTimeHtml = escapeHtml(formatSocialTimestamp(group.lastMessage?.createdAt));
+    const avatarFallback = getLeaderboardFallbackPhoto(group.fromName || "Usuario");
+    const avatarSrc = String(group.fromPhoto || "").trim() || avatarFallback;
+    const safeAvatarHtml = escapeHtml(avatarSrc);
+    const safeAvatarFallbackHtml = escapeHtml(avatarFallback);
+
+    const bubblesHtml = group.messages.map((message, index) => {
+      const safeTextHtml = escapeHtml(String(message.text || "")).replace(/\n/g, "<br>");
+      let positionClass = "group-single";
+      if (group.messages.length > 1) {
+        if (index === 0) {
+          positionClass = "group-first";
+        } else if (index === group.messages.length - 1) {
+          positionClass = "group-last";
+        } else {
+          positionClass = "group-middle";
+        }
+      }
+
+      return `<div class="social-chat-bubble ${positionClass}">${safeTextHtml}</div>`;
+    }).join("");
+
+    const chatItemHtml = `
+      <div class="social-chat-item ${group.isOwnMessage ? "own" : "friend"}">
+        ${group.isOwnMessage ? "" : `<div class="study-room-chat-author">${safeSenderName}</div>`}
+        <div class="social-chat-stack">
+          ${bubblesHtml}
+        </div>
+        <div class="social-chat-meta">
+          <span class="social-chat-time">${safeTimeHtml}</span>
+        </div>
+      </div>
+    `;
+
+    if (group.isOwnMessage) {
+      return `
+        <div class="study-room-chat-row own">
+          ${chatItemHtml}
+        </div>
+      `;
+    }
+
+    return `
+      <div class="study-room-chat-row friend">
+        <img
+          class="study-room-chat-avatar"
+          src="${safeAvatarHtml}"
+          alt="Foto de ${safeSenderName}"
+          onerror="this.src='${safeAvatarFallbackHtml}'"
+        >
+        ${chatItemHtml}
+      </div>
+    `;
+  }).join("");
+}
+
+function renderStudyRoomTaskItem(task, { isOwnCard = false, safeRoomId = "" } = {}){
+  const safeTaskIdRaw = String(task?.id || "").trim();
+  const safeTaskId = escapeHtml(safeTaskIdRaw);
+  const isDone = !!task?.done;
+  const safeTaskText = escapeHtml(task?.text || "");
+  const taskClass = `study-room-task task${isDone ? " done" : ""}`;
+
+  if (!isOwnCard || !safeTaskIdRaw) {
+    return `
+      <li class="study-room-task-item">
+        <div class="${taskClass}">
+          <div class="task-swipe-surface">
+            <div class="cb" aria-hidden="true"></div>
+            <div class="tmain">
+              <div class="ttext">${safeTaskText}</div>
+            </div>
+          </div>
+        </div>
+      </li>
+    `;
+  }
+
+  return `
+    <li class="study-room-task-item">
+      <div
+        class="${taskClass}"
+        data-study-task-item
+        data-study-room-id="${safeRoomId}"
+        data-study-task-id="${safeTaskId}"
+      >
+        <div class="task-swipe-actions" aria-hidden="true">
+          <div class="task-swipe-action task-swipe-complete">
+            <span class="task-swipe-action-icon task-swipe-action-icon-main">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m5 12.5 4 4L19 7"/>
+              </svg>
+            </span>
+            <span class="task-swipe-action-icon task-swipe-action-icon-undo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 14 4 9l5-5"/>
+                <path d="M4 9h9a6 6 0 0 1 0 12h-1"/>
+              </svg>
+            </span>
+          </div>
+          <div class="task-swipe-action task-swipe-delete">
+            <span class="task-swipe-action-icon task-swipe-action-icon-main">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 7h16"/>
+                <path d="M9 7V5h6v2"/>
+                <path d="M7 7l1 12h8l1-12"/>
+                <path d="M10 11v5"/>
+                <path d="M14 11v5"/>
+              </svg>
+            </span>
+            <span class="task-swipe-action-icon task-swipe-action-icon-undo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 14 4 9l5-5"/>
+                <path d="M4 9h9a6 6 0 0 1 0 12h-1"/>
+              </svg>
+            </span>
+          </div>
+        </div>
+        <div class="task-swipe-surface">
+          <div
+            class="cb"
+            data-study-task-toggle
+            data-study-room-id="${safeRoomId}"
+            data-study-task-id="${safeTaskId}"
+            data-study-task-done="${isDone ? "1" : "0"}"
+            role="button"
+            tabindex="0"
+            aria-label="${isDone ? "Marcar como pendiente" : "Marcar como hecha"}"
+          ></div>
+          <div class="tmain">
+            <div
+              class="ttext"
+              data-study-task-text
+              data-study-room-id="${safeRoomId}"
+              data-study-task-id="${safeTaskId}"
+            >${safeTaskText}</div>
+          </div>
+          <div class="task-actions-anchor" data-study-task-actions-anchor>
+            <div class="task-menu-stack">
+              <button
+                class="task-menu-btn danger"
+                type="button"
+                data-study-task-delete
+                data-study-room-id="${safeRoomId}"
+                data-study-task-id="${safeTaskId}"
+              >
+                <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 7h16"/>
+                  <path d="M9 7V5h6v2"/>
+                  <path d="M7 7l1 12h8l1-12"/>
+                  <path d="M10 11v5"/>
+                  <path d="M14 11v5"/>
+                </svg>
+                <span>Borrar tarea</span>
+              </button>
+            </div>
+            <button
+              class="icon task-action"
+              type="button"
+              data-study-task-menu-toggle
+              aria-label="Opciones de tarea"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9"/>
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </li>
+  `;
+}
+
+function renderStudyRoomTasksList(card, { isOwnCard = false, safeRoomId = "" } = {}){
+  const tasks = Array.isArray(card?.tasks) ? card.tasks : [];
+  if (!tasks.length) {
+    return `<div class="social-empty study-room-task-empty">Sin tareas cargadas por ahora.</div>`;
+  }
+
+  const roomIdForState = String(safeRoomId || "").trim();
+  const cardUidForState = String(card?.uid || "").trim();
+  const completionStateKey = buildTaskCompletionStateKeyForStudyRoom(roomIdForState, cardUidForState);
+  const hasPendingTasks = tasks.some((task) => !task?.done);
+  const hasCompletedTasks = tasks.some((task) => !!task?.done);
+  const canToggleCompletedTasks = hasPendingTasks && hasCompletedTasks;
+  const completedTasksCollapsed = canToggleCompletedTasks
+    ? isTaskCompletionSectionCollapsed(completionStateKey)
+    : false;
+  const safeCardUid = escapeHtml(cardUidForState);
+
+  const taskItemsHtml = [];
+  let completionDividerInserted = false;
+  let hasPendingTaskRendered = false;
+
+  tasks.forEach((task) => {
+    if (task?.done && hasPendingTaskRendered && !completionDividerInserted) {
+      taskItemsHtml.push(`
+        <li class="task-completion-divider-row study-room-task-completion-divider-row">
+          <div class="task-completion-divider" aria-hidden="true"></div>
+          <button
+            type="button"
+            class="task-completion-toggle"
+            data-completed-toggle-scope="study-room"
+            data-study-room-id="${safeRoomId}"
+            data-study-card-uid="${safeCardUid}"
+            aria-expanded="${completedTasksCollapsed ? "false" : "true"}"
+            aria-label="${escapeHtml(getTaskCompletionToggleAriaLabel(completedTasksCollapsed))}"
+          >
+            ${getTaskCompletionToggleIconMarkup(completedTasksCollapsed)}
+          </button>
+        </li>
+      `);
+      completionDividerInserted = true;
+    }
+    if (!task?.done) {
+      hasPendingTaskRendered = true;
+    }
+    if (task?.done && completedTasksCollapsed) {
+      return;
+    }
+    taskItemsHtml.push(renderStudyRoomTaskItem(task, { isOwnCard, safeRoomId }));
+  });
+
+  return `<ul class="study-room-task-list">${taskItemsHtml.join("")}</ul>`;
+}
+
+function bindStudyRoomTaskSwipeInteractions(scope = board){
+  if (!(scope instanceof Element)) return;
+
+  const workspace = scope.querySelector("#studyRoomWorkspace");
+  if (!(workspace instanceof HTMLElement)) return;
+
+  const taskElements = workspace.querySelectorAll("[data-study-task-item]");
+  taskElements.forEach((taskElement) => {
+    if (!(taskElement instanceof HTMLElement)) return;
+
+    const toggleTaskButton = taskElement.querySelector("[data-study-task-toggle]");
+    const deleteTaskButton = taskElement.querySelector("[data-study-task-delete]");
+    const taskMenuToggleButton = taskElement.querySelector("[data-study-task-menu-toggle]");
+    const swipeSurface = taskElement.querySelector(".task-swipe-surface");
+    const swipeCompleteAction = taskElement.querySelector(".task-swipe-complete");
+    const swipeDeleteAction = taskElement.querySelector(".task-swipe-delete");
+    const swipeCompleteMainIcon = swipeCompleteAction?.querySelector(".task-swipe-action-icon-main");
+    const swipeDeleteMainIcon = swipeDeleteAction?.querySelector(".task-swipe-action-icon-main");
+    const swipeCompleteUndoIcon = swipeCompleteAction?.querySelector(".task-swipe-action-icon-undo");
+    const swipeDeleteUndoIcon = swipeDeleteAction?.querySelector(".task-swipe-action-icon-undo");
+
+    const hasRequiredControls =
+      toggleTaskButton instanceof HTMLElement &&
+      deleteTaskButton instanceof HTMLButtonElement &&
+      swipeSurface instanceof HTMLElement &&
+      swipeCompleteAction instanceof HTMLElement &&
+      swipeDeleteAction instanceof HTMLElement;
+    if (!hasRequiredControls) return;
+
+    const getIsDone = () => String(toggleTaskButton.dataset.studyTaskDone || "").trim() === "1";
+    taskElement.classList.toggle("swipe-undo-mode", getIsDone());
+
+    if (!isMobileTaskFocusEnabled()) {
+      taskElement.classList.remove(
+        "mobile-swipe-enabled",
+        "swipe-right",
+        "swipe-left",
+        "swipe-committing",
+        "swipe-hinting",
+        "swipe-hinting-return",
+        "swipe-interacting"
+      );
+      return;
+    }
+
+    taskElement.classList.add("mobile-swipe-enabled");
+    if (taskElement.dataset.studySwipeBound === "1") {
+      return;
+    }
+    taskElement.dataset.studySwipeBound = "1";
+
+    let longPressTimer = null;
+    let pressStartX = 0;
+    let pressStartY = 0;
+    let longPressTriggered = false;
+
+    let swipeTracking = false;
+    let swipeLocked = false;
+    let swipeActionInFlight = false;
+    let swipeOffset = 0;
+    let swipeStartX = 0;
+    let swipeStartY = 0;
+    let touchEligibleForTapHint = false;
+    let touchMovedBeyondTap = false;
+    let tapHintTimer = null;
+
+    const clearLongPressTimer = () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    };
+
+    const clearTapHintTimer = () => {
+      if (tapHintTimer) {
+        clearTimeout(tapHintTimer);
+        tapHintTimer = null;
+      }
+    };
+
+    const setSwipeActionVisual = (actionElement, mainIconElement, undoIconElement, progress, direction) => {
+      if (!(actionElement instanceof HTMLElement)) return;
+      const clamped = Math.max(0, Math.min(1, progress));
+      const visibleWidth = Math.round(clamped * MOBILE_TASK_SWIPE_MAX_OFFSET);
+      actionElement.style.width = `${visibleWidth}px`;
+      actionElement.style.opacity = clamped > 0 ? "1" : "0";
+
+      const isDone = getIsDone();
+      const activeIconElement = isDone ? undoIconElement : mainIconElement;
+      const inactiveIconElement = isDone ? mainIconElement : undoIconElement;
+      if (inactiveIconElement instanceof HTMLElement) {
+        inactiveIconElement.style.opacity = "0";
+        inactiveIconElement.style.transform = `translateY(-50%) translateX(${direction > 0 ? -10 : 10}px) scale(.78)`;
+      }
+      if (!(activeIconElement instanceof HTMLElement)) return;
+      if (clamped <= 0) {
+        activeIconElement.style.opacity = "0";
+        activeIconElement.style.transform = `translateY(-50%) translateX(${direction > 0 ? -10 : 10}px) scale(.78)`;
+        return;
+      }
+
+      const opacity = Math.min(1, 0.2 + (clamped * 0.8));
+      const scale = Math.min(1, 0.78 + (clamped * 0.22));
+      const shift = (1 - clamped) * 10;
+      const translateX = direction > 0 ? -shift : shift;
+      activeIconElement.style.opacity = String(opacity);
+      activeIconElement.style.transform = `translateY(-50%) translateX(${translateX}px) scale(${scale})`;
+    };
+
+    const updateSwipeVisual = (rawOffset) => {
+      const direction = rawOffset === 0 ? 0 : (rawOffset > 0 ? 1 : -1);
+      const absOffset = Math.abs(rawOffset);
+      const capped = Math.min(absOffset, MOBILE_TASK_SWIPE_MAX_OFFSET);
+      const overflow = Math.max(0, absOffset - MOBILE_TASK_SWIPE_MAX_OFFSET);
+      const easedOffset = direction * (capped + (overflow * 0.2));
+      swipeOffset = easedOffset;
+
+      swipeSurface.style.transform = `translate3d(${easedOffset}px, 0, 0)`;
+
+      const progress = Math.min(1, Math.abs(easedOffset) / MOBILE_TASK_SWIPE_TRIGGER_OFFSET);
+      taskElement.style.setProperty("--task-swipe-progress", String(progress));
+      taskElement.classList.toggle("swipe-right", direction > 0);
+      taskElement.classList.toggle("swipe-left", direction < 0);
+      taskElement.classList.toggle("swipe-undo-mode", getIsDone());
+
+      setSwipeActionVisual(
+        swipeCompleteAction,
+        swipeCompleteMainIcon,
+        swipeCompleteUndoIcon,
+        direction > 0 ? progress : 0,
+        1
+      );
+      setSwipeActionVisual(
+        swipeDeleteAction,
+        swipeDeleteMainIcon,
+        swipeDeleteUndoIcon,
+        direction < 0 ? progress : 0,
+        -1
+      );
+    };
+
+    const resetTaskSwipeState = (animate = true) => {
+      swipeOffset = 0;
+      if (!animate) {
+        taskElement.classList.add("swipe-interacting");
+      }
+      swipeSurface.style.transform = "translate3d(0, 0, 0)";
+      taskElement.style.setProperty("--task-swipe-progress", "0");
+      taskElement.classList.remove("swipe-right", "swipe-left", "swipe-committing", "swipe-hinting", "swipe-hinting-return");
+      taskElement.classList.toggle("swipe-undo-mode", getIsDone());
+      setSwipeActionVisual(swipeCompleteAction, swipeCompleteMainIcon, swipeCompleteUndoIcon, 0, 1);
+      setSwipeActionVisual(swipeDeleteAction, swipeDeleteMainIcon, swipeDeleteUndoIcon, 0, -1);
+      if (!animate) {
+        requestAnimationFrame(() => {
+          taskElement.classList.remove("swipe-interacting");
+        });
+      }
+    };
+
+    const runTapHint = () => {
+      if (!taskElement.isConnected) return;
+      if (swipeLocked || swipeActionInFlight) return;
+      clearTapHintTimer();
+      taskElement.classList.remove("swipe-hinting-return");
+      taskElement.classList.add("swipe-hinting");
+      updateSwipeVisual(MOBILE_TASK_TAP_HINT_OFFSET);
+      tapHintTimer = window.setTimeout(() => {
+        if (!taskElement.isConnected) return;
+        taskElement.classList.remove("swipe-hinting");
+        taskElement.classList.add("swipe-hinting-return");
+        updateSwipeVisual(0);
+        tapHintTimer = window.setTimeout(() => {
+          if (!taskElement.isConnected) return;
+          resetTaskSwipeState(false);
+        }, MOBILE_TASK_TAP_HINT_RETURN_MS);
+      }, MOBILE_TASK_TAP_HINT_HOLD_MS);
+    };
+
+    const ignoreSwipeTarget = (target) => (
+      target.closest(".cb")
+      || target.closest(".task-actions-anchor")
+    );
+
+    const persistSwipeTaskCompletion = async (nextDone) => {
+      if (toggleTaskButton.dataset.busy === "1") return false;
+      const safeRoomId = String(toggleTaskButton.dataset.studyRoomId || "").trim();
+      const safeTaskId = String(toggleTaskButton.dataset.studyTaskId || "").trim();
+      if (!safeRoomId || !safeTaskId) return false;
+
+      const currentDone = getIsDone();
+      const desiredDone = !!nextDone;
+      if (currentDone === desiredDone) return false;
+
+      toggleTaskButton.dataset.busy = "1";
+      toggleTaskButton.setAttribute("aria-disabled", "true");
+      try {
+        const updated = await setStudyRoomTaskDone(
+          safeRoomId,
+          safeTaskId,
+          desiredDone,
+          { toggleElement: toggleTaskButton }
+        );
+        if (updated && desiredDone && soundEnabled) {
+          playRewardSound();
+        }
+        return updated;
+      } finally {
+        toggleTaskButton.dataset.busy = "0";
+        if (toggleTaskButton.isConnected) {
+          toggleTaskButton.removeAttribute("aria-disabled");
+        }
+      }
+    };
+
+    const deleteSwipeTask = async () => {
+      if (deleteTaskButton.dataset.busy === "1") return false;
+      const safeRoomId = String(deleteTaskButton.dataset.studyRoomId || "").trim();
+      const safeTaskId = String(deleteTaskButton.dataset.studyTaskId || "").trim();
+      if (!safeRoomId || !safeTaskId) return false;
+
+      const shouldDelete = await askSwipeDeleteConfirmation();
+      if (!shouldDelete) return false;
+
+      deleteTaskButton.dataset.busy = "1";
+      deleteTaskButton.disabled = true;
+      try {
+        const deleted = await deleteStudyRoomTask(safeRoomId, safeTaskId);
+        if (deleted && soundEnabled) {
+          playDeleteTaskSound();
+        }
+        return deleted;
+      } finally {
+        deleteTaskButton.dataset.busy = "0";
+        if (deleteTaskButton.isConnected) {
+          deleteTaskButton.disabled = false;
+        }
+      }
+    };
+
+    const swipeCompleteHandler = async () => {
+      return persistSwipeTaskCompletion(true);
+    };
+
+    const swipeDeleteHandler = async () => {
+      return deleteSwipeTask();
+    };
+
+    const swipeUndoHandler = async () => {
+      return persistSwipeTaskCompletion(false);
+    };
+
+    taskElement.addEventListener("touchstart", (event) => {
+      if (!isMobileTaskFocusEnabled()) return;
+      if (isMobileTaskReorderEnabled()) return;
+      if (event.touches.length !== 1) return;
+      if (activeTaskMobileFocus && activeTaskMobileFocus.taskElement !== taskElement) return;
+
+      const touchTarget = event.target instanceof Element ? event.target : null;
+      if (!touchTarget) return;
+
+      longPressTriggered = false;
+      pressStartX = event.touches[0].clientX;
+      pressStartY = event.touches[0].clientY;
+      touchMovedBeyondTap = false;
+      taskElement.classList.toggle("swipe-undo-mode", getIsDone());
+
+      const shouldIgnoreTarget = ignoreSwipeTarget(touchTarget);
+      touchEligibleForTapHint = !shouldIgnoreTarget;
+      swipeTracking = !shouldIgnoreTarget;
+      swipeLocked = false;
+      swipeActionInFlight = false;
+      swipeStartX = event.touches[0].clientX;
+      swipeStartY = event.touches[0].clientY;
+      clearTapHintTimer();
+      if (Math.abs(swipeOffset) > 0.5) {
+        resetTaskSwipeState(false);
+      }
+
+      clearLongPressTimer();
+      if (!shouldIgnoreTarget) {
+        longPressTimer = setTimeout(() => {
+          longPressTriggered = true;
+          if (taskMenuToggleButton instanceof HTMLElement) {
+            taskMenuToggleButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+          }
+        }, MOBILE_TASK_LONG_PRESS_MS);
+      }
+    }, { passive: true });
+
+    taskElement.addEventListener("touchmove", (event) => {
+      if (!isMobileTaskFocusEnabled()) return;
+      if (isMobileTaskReorderEnabled()) return;
+      if (event.touches.length !== 1) return;
+
+      const touch = event.touches[0];
+      const moveX = Math.abs(touch.clientX - pressStartX);
+      const moveY = Math.abs(touch.clientY - pressStartY);
+
+      if (longPressTimer && (moveX > MOBILE_TASK_MOVE_TOLERANCE || moveY > MOBILE_TASK_MOVE_TOLERANCE)) {
+        clearLongPressTimer();
+      }
+      if (moveX > MOBILE_TASK_MOVE_TOLERANCE || moveY > MOBILE_TASK_MOVE_TOLERANCE) {
+        touchMovedBeyondTap = true;
+      }
+
+      if (!swipeTracking || swipeActionInFlight) return;
+
+      const deltaX = touch.clientX - swipeStartX;
+      const deltaY = touch.clientY - swipeStartY;
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+
+      if (!swipeLocked) {
+        if (absX < MOBILE_TASK_SWIPE_LOCK_DISTANCE) return;
+        if (absY >= absX) {
+          swipeTracking = false;
+          resetTaskSwipeState(true);
+          return;
+        }
+        swipeLocked = true;
+        clearLongPressTimer();
+        taskElement.classList.add("swipe-interacting");
+      }
+
+      if (swipeLocked) {
+        event.preventDefault();
+        updateSwipeVisual(deltaX);
+      }
+    }, { passive: false });
+
+    taskElement.addEventListener("touchend", (event) => {
+      if (swipeLocked) {
+        event.preventDefault();
+        clearLongPressTimer();
+        taskElement.classList.remove("swipe-interacting");
+
+        const direction = swipeOffset > 0 ? 1 : (swipeOffset < 0 ? -1 : 0);
+        const reachedActionThreshold = Math.abs(swipeOffset) >= MOBILE_TASK_SWIPE_TRIGGER_OFFSET;
+        const actionHandler = getIsDone()
+          ? swipeUndoHandler
+          : (direction > 0 ? swipeCompleteHandler : swipeDeleteHandler);
+
+        if (direction !== 0 && reachedActionThreshold && actionHandler) {
+          swipeActionInFlight = true;
+          taskElement.classList.add("swipe-committing");
+          updateSwipeVisual(direction * MOBILE_TASK_SWIPE_MAX_OFFSET);
+          Promise.resolve(actionHandler()).catch((error) => {
+            console.error(error);
+            if (taskElement.isConnected) resetTaskSwipeState(true);
+          }).finally(() => {
+            swipeActionInFlight = false;
+            if (taskElement.isConnected) {
+              taskElement.classList.remove("swipe-committing");
+            }
+          });
+        } else {
+          resetTaskSwipeState(true);
+        }
+
+        swipeLocked = false;
+        swipeTracking = false;
+        return;
+      }
+
+      if (longPressTriggered) {
+        event.preventDefault();
+      }
+      clearLongPressTimer();
+      if (!longPressTriggered && touchEligibleForTapHint && !touchMovedBeyondTap) {
+        runTapHint();
+      }
+      swipeTracking = false;
+      swipeLocked = false;
+      touchEligibleForTapHint = false;
+    });
+
+    taskElement.addEventListener("touchcancel", () => {
+      clearLongPressTimer();
+      clearTapHintTimer();
+      swipeTracking = false;
+      swipeLocked = false;
+      swipeActionInFlight = false;
+      touchEligibleForTapHint = false;
+      taskElement.classList.remove("swipe-interacting");
+      resetTaskSwipeState(true);
+    });
+  });
+}
+
+function renderStudyRoomUserCard(card, { ownUid = "", roomId = "", creatorUid = "" } = {}){
+  const safeOwnUid = String(ownUid || "").trim();
+  const safeCreatorUid = String(creatorUid || "").trim();
+  const safeRoomId = escapeHtml(String(roomId || "").trim());
+  const cardUid = String(card?.uid || "").trim();
+  const safeCardUid = escapeHtml(cardUid);
+  const isOwnCard = cardUid === safeOwnUid;
+  const isCreatorCard = !!safeCreatorUid && cardUid === safeCreatorUid;
+  const safeCardName = escapeHtml(card?.name || "Usuario");
+  const avatarSrc = escapeHtml(card?.photo || getLeaderboardFallbackPhoto(card?.name || "Usuario"));
+  const avatarFallback = escapeHtml(getLeaderboardFallbackPhoto(card?.name || "Usuario"));
+  const safeRole = escapeHtml(isCreatorCard ? "Creador" : "Invitado");
+  const tasksHtml = renderStudyRoomTasksList(card, { isOwnCard, safeRoomId });
+  const ownDraft = isOwnCard ? escapeHtml(getStudyRoomTaskDraft(roomId)) : "";
+  const ownFormHtml = isOwnCard
+    ? `
+      <form class="study-room-task-form" data-study-task-form data-study-room-id="${safeRoomId}">
+        <input
+          type="text"
+          data-study-task-input
+          data-study-room-id="${safeRoomId}"
+          maxlength="${STUDY_ROOM_MAX_TASK_LENGTH}"
+          value="${ownDraft}"
+          placeholder="Agregar tarea de esta sesión..."
+          autocomplete="off"
+          spellcheck="false"
+          enterkeyhint="done"
+        >
+      </form>
+    `
+    : "";
+
+  return `
+    <article
+      class="study-room-user-card ${isOwnCard ? "own" : ""}"
+      data-study-room-card-uid="${safeCardUid}"
+    >
+      <div class="study-room-user-head">
+        <img
+          src="${avatarSrc}"
+          alt="Foto de ${safeCardName}"
+          onerror="this.src='${avatarFallback}'"
+        >
+        <div>
+          <strong>${safeCardName}</strong>
+          <small>${safeRole}</small>
+        </div>
+      </div>
+      ${tasksHtml}
+      ${ownFormHtml}
+    </article>
+  `;
+}
+
+function renderStudyRoomCardsGrid(cards = [], { ownUid = "", roomId = "", creatorUid = "" } = {}){
+  if (!Array.isArray(cards) || !cards.length) {
+    return `<div class="social-empty">Todavía no hay participantes activos en esta sala.</div>`;
+  }
+  return cards.map((card) => renderStudyRoomUserCard(card, { ownUid, roomId, creatorUid })).join("");
+}
+
+function renderStudyRoomMusicPanel(roomData = null){
+  const safeRoomIdRaw = String(roomData?.id || "").trim();
+  if (!safeRoomIdRaw) {
+    return `<div class="social-empty">Música no disponible.</div>`;
+  }
+
+  const safeRoomId = escapeHtml(safeRoomIdRaw);
+  const music = normalizeStudyRoomMusicData(roomData?.music);
+  const hasTrack = !!music.videoId;
+  const safeTitle = escapeHtml(music.title || "Sin video seleccionado");
+  const safeChannel = escapeHtml(music.channel || "");
+  const safeThumb = escapeHtml(music.thumbnail || getYouTubeThumbnailByVideoId(music.videoId));
+  const safeThumbFallback = escapeHtml(getYouTubeThumbnailByVideoId(music.videoId));
+  const safeDraft = escapeHtml(getStudyRoomMusicSearchDraft(safeRoomIdRaw));
+  const safeInputError = escapeHtml(getStudyRoomMusicSearchError(safeRoomIdRaw));
+  const helperClass = `study-room-music-link-help${safeInputError ? " error" : ""}`;
+  const helperText = safeInputError || "Pegá un link de YouTube para reproducirlo en la sala.";
+
+  return `
+    <div class="social-card-head">
+      <h3>Música de sala</h3>
+    </div>
+    <div class="study-room-music-now">
+      <div class="study-room-music-now-main">
+        ${hasTrack ? `
+          <img
+            src="${safeThumb}"
+            alt="Miniatura del video actual"
+            onerror="this.src='${safeThumbFallback}'"
+          >
+        ` : `
+          <div class="study-room-music-now-placeholder" aria-hidden="true"></div>
+        `}
+        <div>
+          <strong>${safeTitle}</strong>
+          <small>${safeChannel || "YouTube"}</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="study-room-music-player-shell">
+      <div class="study-room-music-player-host" data-study-room-music-player-host data-study-room-id="${safeRoomId}">
+        ${hasTrack ? "" : `<div class="social-empty">Cuando elijan un video, se reproduce para todos acá.</div>`}
+      </div>
+    </div>
+
+    <form class="study-room-music-link" data-study-room-music-link-form data-study-room-id="${safeRoomId}">
+      <input
+        type="text"
+        data-study-room-music-link-input
+        data-study-room-id="${safeRoomId}"
+        value="${safeDraft}"
+        placeholder="Pegá un link de YouTube..."
+        autocomplete="off"
+        spellcheck="false"
+      >
+      <button class="social-btn primary" type="submit">Reproducir</button>
+    </form>
+    <div class="${helperClass}">${helperText}</div>
+  `;
+}
+
+function renderStudyRoomWorkspace(){
+  const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  if (!activeRoomId) {
+    return `
+      <div class="social-card-head">
+        <h3>Sala de estudio</h3>
+      </div>
+      <div class="social-empty">Abrí o elegí una sala para comenzar a estudiar en equipo.</div>
+    `;
+  }
+
+  if (studyRoomsState.activeRoomLoading) {
+    return `
+      <div class="social-card-head">
+        <h3>Sala de estudio</h3>
+      </div>
+      <div class="social-empty">Conectando con la sala...</div>
+    `;
+  }
+
+  if (studyRoomsState.activeRoomError && !studyRoomsState.activeRoomData) {
+    return `
+      <div class="social-card-head">
+        <h3>Sala de estudio</h3>
+      </div>
+      <div class="social-empty">${escapeHtml(studyRoomsState.activeRoomError)}</div>
+    `;
+  }
+
+  const roomData = studyRoomsState.activeRoomData;
+  if (!roomData || roomData.id !== activeRoomId) {
+    return `
+      <div class="social-card-head">
+        <h3>Sala de estudio</h3>
+      </div>
+      <div class="social-empty">La sala seleccionada todavía no está lista.</div>
+    `;
+  }
+
+  const safeRoomTitle = escapeHtml(roomData.title || "Sala de estudio");
+  const safeCreatorName = escapeHtml(roomData.createdByName || "Usuario");
+  const participantsCount = Math.max(
+    Array.isArray(roomData.participants) ? roomData.participants.length : 0,
+    Math.max(0, Number(roomData.participantsCount) || 0)
+  );
+  const cards = buildStudyRoomCards(roomData);
+  const ownUid = String(currentUser?.uid || "").trim();
+  const isCreator = String(roomData.createdByUid || "").trim() === ownUid;
+  const safeRoomId = escapeHtml(roomData.id || activeRoomId);
+  const safeChatDraft = escapeHtml(getStudyRoomChatDraft(roomData.id));
+  const invitableFriends = isCreator
+    ? (Array.isArray(socialState.friends) ? socialState.friends : [])
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") return null;
+        const uid = String(entry.uid || "").trim();
+        if (!uid || uid === ownUid) return null;
+        return {
+          uid,
+          name: String(entry.name || "Usuario").trim() || "Usuario",
+          photo: String(entry.photo || "").trim()
+        };
+      })
+      .filter((entry) => !!entry)
+    : [];
+  const inviteMenuContent = invitableFriends.length
+    ? invitableFriends.map((friend) => {
+      const safeFriendUid = escapeHtml(friend.uid);
+      const safeFriendName = escapeHtml(friend.name);
+      const avatarFallback = getLeaderboardFallbackPhoto(friend.name);
+      const safeAvatarFallback = escapeHtml(avatarFallback);
+      const safeAvatar = escapeHtml(friend.photo || avatarFallback);
+      return `
+        <button
+          class="study-room-invite-friend"
+          type="button"
+          data-study-room-invite-friend
+          data-study-room-id="${safeRoomId}"
+          data-social-friend-uid="${safeFriendUid}"
+          data-social-friend-name="${safeFriendName}"
+          title="Invitar a ${safeFriendName}"
+        >
+          <img
+            src="${safeAvatar}"
+            alt="Foto de ${safeFriendName}"
+            onerror="this.src='${safeAvatarFallback}'"
+          >
+          <span>${safeFriendName}</span>
+        </button>
+      `;
+    }).join("")
+    : `<div class="study-room-invite-empty">Todavía no tenés amigos para invitar.</div>`;
+  const titleInviteButton = isCreator
+    ? `
+      <div class="study-room-invite-wrap" data-study-room-invite-wrap data-study-room-id="${safeRoomId}">
+        <button
+          class="study-room-invite-toggle"
+          type="button"
+          data-study-room-invite-toggle
+          data-study-room-id="${safeRoomId}"
+          aria-expanded="false"
+          aria-label="Invitar un amigo"
+          title="Invitar un amigo"
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M2,21h8a1,1,0,0,0,0-2H3.071A7.011,7.011,0,0,1,10,13a5.044,5.044,0,1,0-3.377-1.337A9.01,9.01,0,0,0,1,20,1,1,0,0,0,2,21ZM10,5A3,3,0,1,1,7,8,3,3,0,0,1,10,5ZM23,16a1,1,0,0,1-1,1H19v3a1,1,0,0,1-2,0V17H14a1,1,0,0,1,0-2h3V12a1,1,0,0,1,2,0v3h3A1,1,0,0,1,23,16Z" fill="currentColor"></path>
+          </svg>
+        </button>
+        <div class="study-room-invite-menu" data-study-room-invite-menu>
+          <div class="study-room-invite-title">Invitar a sala</div>
+          ${inviteMenuContent}
+        </div>
+      </div>
+    `
+    : "";
+
+  const cardsHtml = renderStudyRoomCardsGrid(cards, {
+    ownUid,
+    roomId: roomData.id || activeRoomId,
+    creatorUid: roomData.createdByUid || ""
+  });
+
+  return `
+    <div class="social-card-head">
+      <div class="study-room-title-wrap">
+        <h3>${safeRoomTitle}</h3>
+        ${titleInviteButton}
+      </div>
+      <div class="study-room-head-actions">
+        <span class="social-count">${formatSettingsStat(participantsCount)}</span>
+        <button
+          class="social-btn ghost"
+          type="button"
+          data-study-room-leave
+          data-study-room-owner="${isCreator ? "1" : "0"}"
+        >
+          ${isCreator ? "Cerrar sala" : "Salir de la sala"}
+        </button>
+      </div>
+    </div>
+    <p class="study-room-meta">Creada por ${safeCreatorName} (Acceso solo por invitación)</p>
+    ${studyRoomsState.activeRoomError ? `<div class="social-empty">${escapeHtml(studyRoomsState.activeRoomError)}</div>` : ""}
+    <div class="study-room-board-grid">
+      ${cardsHtml}
+    </div>
+    <div class="study-room-bottom-grid">
+      <div class="study-room-chat-shell">
+        <div class="social-card-head">
+          <h3>Chat</h3>
+        </div>
+        <div class="social-chat-panel study-room-chat-panel">
+          <div class="social-chat-list study-room-chat-list">
+            ${renderStudyRoomChatMessages(roomData)}
+          </div>
+          <form class="social-chat-compose study-room-chat-compose" data-study-room-chat-form data-study-room-id="${safeRoomId}">
+            <input
+              type="text"
+              data-study-room-chat-input
+              data-study-room-id="${safeRoomId}"
+              maxlength="${STUDY_ROOM_CHAT_MAX_LENGTH}"
+              value="${safeChatDraft}"
+              placeholder="Escribí un mensaje para la sala..."
+              autocomplete="off"
+              spellcheck="false"
+            >
+            <button class="social-btn primary social-chat-send" type="submit">Enviar</button>
+          </form>
+        </div>
+      </div>
+      <div class="study-room-music-shell">
+        ${renderStudyRoomMusicPanel(roomData)}
+      </div>
+    </div>
+  `;
+}
+
+function hasCurrentUserOwnedActiveStudyRoom(){
+  const ownActiveRoom = getCurrentUserOwnedActiveStudyRoom();
+  return !!(
+    ownActiveRoom &&
+    ownActiveRoom.isActive
+  );
+}
+
+function renderStudyRoomsCreateForm(){
+  if (hasCurrentUserOwnedActiveStudyRoom()) {
+    return "";
+  }
+
+  const safeCreateDraft = escapeHtml(String(studyRoomsState.createTitleDraft || ""));
+  return `
+    <form class="study-create-form" data-study-create-form>
+      <label class="study-create-label" for="studyRoomTitleInput">Crea tu propia Sala de estudio</label>
+      <input
+        id="studyRoomTitleInput"
+        type="text"
+        maxlength="${STUDY_ROOM_MAX_TITLE_LENGTH}"
+        value="${safeCreateDraft}"
+        placeholder="Título de la sala..."
+        autocomplete="off"
+        spellcheck="false"
+      >
+      <p class="study-create-warning">El título será visible para cualquier persona.</p>
+      <button class="social-btn primary" type="submit" data-study-create-submit>Crear nueva sala</button>
+    </form>
+  `;
+}
+
+function patchStudyRoomsCreateFormUI(scope = board){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return;
+
+  const createFormSlot = scope.querySelector("#studyRoomsCreateFormSlot");
+  if (!(createFormSlot instanceof HTMLElement)) return;
+
+  const nextHtml = renderStudyRoomsCreateForm();
+  if (createFormSlot.innerHTML !== nextHtml) {
+    createFormSlot.innerHTML = nextHtml;
+  }
+}
+
+function patchStudyRoomsUI(scope = board){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return;
+
+  const activeElement = document.activeElement;
+  const shouldRestoreCreateInput = activeElement instanceof HTMLInputElement && activeElement.id === "studyRoomTitleInput";
+  const shouldRestoreTaskInput =
+    activeElement instanceof HTMLInputElement &&
+    activeElement.hasAttribute("data-study-task-input");
+  const shouldRestoreChatInput =
+    activeElement instanceof HTMLInputElement &&
+    activeElement.hasAttribute("data-study-room-chat-input");
+  const shouldRestoreMusicLinkInput =
+    activeElement instanceof HTMLInputElement &&
+    activeElement.hasAttribute("data-study-room-music-link-input");
+  const taskInputRoomId = shouldRestoreTaskInput
+    ? String(activeElement.dataset.studyRoomId || "").trim()
+    : "";
+  const chatInputRoomId = shouldRestoreChatInput
+    ? String(activeElement.dataset.studyRoomId || "").trim()
+    : "";
+  const musicLinkRoomId = shouldRestoreMusicLinkInput
+    ? String(activeElement.dataset.studyRoomId || "").trim()
+    : "";
+  const restoreSelectionStart =
+    activeElement instanceof HTMLInputElement
+      ? activeElement.selectionStart
+      : null;
+  const restoreSelectionEnd =
+    activeElement instanceof HTMLInputElement
+      ? activeElement.selectionEnd
+      : null;
+
+  const countElement = scope.querySelector("#studyRoomsActiveCount");
+  const roomsListElement = scope.querySelector("#studyRoomsActiveList");
+  const workspaceElement = scope.querySelector("#studyRoomWorkspace");
+
+  if (countElement instanceof HTMLElement || roomsListElement instanceof HTMLElement) {
+    patchStudyRoomsListUI(scope);
+  }
+
+  if (workspaceElement instanceof HTMLElement) {
+    workspaceElement.innerHTML = renderStudyRoomWorkspace();
+    syncStudyRoomMusicIframe(scope);
+    syncStudyRoomChatHeightWithMusicPlayer(scope);
+    bindStudyRoomTaskSwipeInteractions(scope);
+  }
+
+  let inputToRestore = null;
+  if (shouldRestoreCreateInput) {
+    const createInput = scope.querySelector("#studyRoomTitleInput");
+    if (createInput instanceof HTMLInputElement) {
+      inputToRestore = createInput;
+    }
+  } else if (shouldRestoreTaskInput && taskInputRoomId) {
+    const taskInput = scope.querySelector(
+      `[data-study-task-input][data-study-room-id="${taskInputRoomId}"]`
+    );
+    if (taskInput instanceof HTMLInputElement) {
+      inputToRestore = taskInput;
+    }
+  } else if (shouldRestoreChatInput && chatInputRoomId) {
+    const chatInput = scope.querySelector(
+      `[data-study-room-chat-input][data-study-room-id="${chatInputRoomId}"]`
+    );
+    if (chatInput instanceof HTMLInputElement) {
+      inputToRestore = chatInput;
+    }
+  } else if (shouldRestoreMusicLinkInput && musicLinkRoomId) {
+    const musicInput = scope.querySelector(
+      `[data-study-room-music-link-input][data-study-room-id="${musicLinkRoomId}"]`
+    );
+    if (musicInput instanceof HTMLInputElement) {
+      inputToRestore = musicInput;
+    }
+  }
+
+  if (inputToRestore instanceof HTMLInputElement) {
+    try {
+      inputToRestore.focus({ preventScroll: true });
+    } catch (_error) {
+      inputToRestore.focus();
+    }
+
+    const valueLength = inputToRestore.value.length;
+    const nextStart = Number.isInteger(restoreSelectionStart)
+      ? Math.min(Math.max(0, restoreSelectionStart), valueLength)
+      : valueLength;
+    const nextEnd = Number.isInteger(restoreSelectionEnd)
+      ? Math.min(Math.max(nextStart, restoreSelectionEnd), valueLength)
+      : nextStart;
+
+    try {
+      inputToRestore.setSelectionRange(nextStart, nextEnd);
+    } catch (_error) {}
+  }
+}
+
+function patchStudyRoomsListUI(scope = board){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return;
+
+  patchStudyRoomsCreateFormUI(scope);
+
+  const countElement = scope.querySelector("#studyRoomsActiveCount");
+  const roomsListElement = scope.querySelector("#studyRoomsActiveList");
+
+  if (countElement instanceof HTMLElement) {
+    countElement.textContent = formatSettingsStat(studyRoomsState.rooms.length);
+  }
+
+  if (roomsListElement instanceof HTMLElement) {
+    const ownUid = String(currentUser?.uid || "").trim();
+    const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+    const listSignature = JSON.stringify({
+      loading: !!studyRoomsState.roomsLoading,
+      error: String(studyRoomsState.roomsError || ""),
+      ownUid,
+      activeRoomId,
+      rooms: (Array.isArray(studyRoomsState.rooms) ? studyRoomsState.rooms : []).map((room) => {
+        const safeRoomId = String(room?.id || "").trim();
+        const participantsCount = Math.max(
+          Array.isArray(room?.participants) ? room.participants.length : 0,
+          Math.max(0, Number(room?.participantsCount) || 0)
+        );
+        const isCurrent = safeRoomId === activeRoomId;
+        const isCreator = !!ownUid && String(room?.createdByUid || "").trim() === ownUid;
+        const access = canCurrentUserAccessStudyRoom(room);
+        return {
+          id: safeRoomId,
+          title: String(room?.title || ""),
+          createdByUid: String(room?.createdByUid || "").trim(),
+          createdByName: String(room?.createdByName || ""),
+          createdByPhoto: String(room?.createdByPhoto || ""),
+          participantsCount,
+          isCurrent,
+          isCreator,
+          canOpen: !!access.allowed
+        };
+      })
+    });
+
+    const shouldRenderList = (
+      studyRoomsState.roomsListRenderSignature !== listSignature ||
+      !roomsListElement.firstElementChild
+    );
+
+    if (shouldRenderList) {
+      roomsListElement.innerHTML = renderStudyRoomsActiveList();
+      studyRoomsState.roomsListRenderSignature = listSignature;
+    }
+  }
+}
+
+function getStudyRoomChatSignature(roomData = null){
+  const messages = Array.isArray(roomData?.chatMessages) ? roomData.chatMessages : [];
+  return messages
+    .map((entry) => String(entry?.id || "").trim())
+    .filter(Boolean)
+    .join("|");
+}
+
+function getStudyRoomMusicSignature(roomData = null){
+  const music = normalizeStudyRoomMusicData(roomData?.music);
+  return JSON.stringify({
+    videoId: String(music.videoId || "").trim(),
+    title: String(music.title || ""),
+    channel: String(music.channel || ""),
+    thumbnail: String(music.thumbnail || ""),
+    state: String(music.state || "paused"),
+    positionSeconds: Math.max(0, Math.round((Number(music.positionSeconds) || 0) * 10) / 10),
+    startedAt: Math.max(0, Number(music.startedAt) || 0),
+    updatedAt: Math.max(0, Number(music.updatedAt) || 0),
+    updatedByUid: String(music.updatedByUid || "").trim()
+  });
+}
+
+function getStudyRoomCoreSignature(roomData = null){
+  if (!roomData || typeof roomData !== "object") return "";
+
+  const participants = Array.isArray(roomData.participants)
+    ? roomData.participants
+      .map((entry) => ({
+        uid: String(entry?.uid || "").trim(),
+        name: String(entry?.name || ""),
+        photo: String(entry?.photo || "")
+      }))
+      .filter((entry) => !!entry.uid)
+      .sort((a, b) => a.uid.localeCompare(b.uid, "es", { sensitivity: "base" }))
+    : [];
+
+  return JSON.stringify({
+    id: String(roomData.id || "").trim(),
+    title: String(roomData.title || ""),
+    isActive: roomData.isActive !== false,
+    createdByUid: String(roomData.createdByUid || "").trim(),
+    createdByName: String(roomData.createdByName || ""),
+    participants
+  });
+}
+
+function getStudyRoomBoardsSignature(roomData = null){
+  if (!roomData || typeof roomData !== "object") return "";
+
+  const boards = Array.isArray(roomData.boards)
+    ? roomData.boards
+      .map((boardEntry) => {
+        const uid = String(boardEntry?.uid || "").trim();
+        const tasks = Array.isArray(boardEntry?.tasks)
+          ? boardEntry.tasks
+            .map((taskEntry) => ({
+              id: String(taskEntry?.id || "").trim(),
+              text: String(taskEntry?.text || ""),
+              done: !!taskEntry?.done
+            }))
+            .filter((taskEntry) => !!taskEntry.id)
+            .sort((a, b) => a.id.localeCompare(b.id, "es", { sensitivity: "base" }))
+          : [];
+        return {
+          uid,
+          name: String(boardEntry?.name || ""),
+          photo: String(boardEntry?.photo || ""),
+          tasks
+        };
+      })
+      .filter((boardEntry) => !!boardEntry.uid)
+      .sort((a, b) => a.uid.localeCompare(b.uid, "es", { sensitivity: "base" }))
+    : [];
+
+  return JSON.stringify(boards);
+}
+
+function getStudyRoomStaticSignature(roomData = null){
+  return JSON.stringify({
+    core: getStudyRoomCoreSignature(roomData),
+    boards: getStudyRoomBoardsSignature(roomData)
+  });
+}
+
+function shouldPatchStudyRoomChatOnly(previousRoom = null, nextRoom = null){
+  if (!previousRoom || typeof previousRoom !== "object") return false;
+  if (!nextRoom || typeof nextRoom !== "object") return false;
+  if (String(previousRoom.id || "").trim() !== String(nextRoom.id || "").trim()) return false;
+
+  const previousChatSignature = getStudyRoomChatSignature(previousRoom);
+  const nextChatSignature = getStudyRoomChatSignature(nextRoom);
+  if (previousChatSignature === nextChatSignature) return false;
+
+  return (
+    getStudyRoomStaticSignature(previousRoom) === getStudyRoomStaticSignature(nextRoom) &&
+    getStudyRoomMusicSignature(previousRoom) === getStudyRoomMusicSignature(nextRoom)
+  );
+}
+
+function shouldPatchStudyRoomMusicOnly(previousRoom = null, nextRoom = null){
+  if (!previousRoom || typeof previousRoom !== "object") return false;
+  if (!nextRoom || typeof nextRoom !== "object") return false;
+  if (String(previousRoom.id || "").trim() !== String(nextRoom.id || "").trim()) return false;
+
+  const previousMusicSignature = getStudyRoomMusicSignature(previousRoom);
+  const nextMusicSignature = getStudyRoomMusicSignature(nextRoom);
+  if (previousMusicSignature === nextMusicSignature) return false;
+
+  return (
+    getStudyRoomStaticSignature(previousRoom) === getStudyRoomStaticSignature(nextRoom) &&
+    getStudyRoomChatSignature(previousRoom) === getStudyRoomChatSignature(nextRoom)
+  );
+}
+
+function patchStudyRoomWorkspaceIncremental(previousRoom = null, nextRoom = null){
+  if (!previousRoom || typeof previousRoom !== "object") return false;
+  if (!nextRoom || typeof nextRoom !== "object") return false;
+  if (String(previousRoom.id || "").trim() !== String(nextRoom.id || "").trim()) return false;
+
+  const previousCoreSignature = getStudyRoomCoreSignature(previousRoom);
+  const nextCoreSignature = getStudyRoomCoreSignature(nextRoom);
+  if (previousCoreSignature !== nextCoreSignature) {
+    return false;
+  }
+
+  const previousBoardsSignature = getStudyRoomBoardsSignature(previousRoom);
+  const nextBoardsSignature = getStudyRoomBoardsSignature(nextRoom);
+  const previousChatSignature = getStudyRoomChatSignature(previousRoom);
+  const nextChatSignature = getStudyRoomChatSignature(nextRoom);
+  const previousMusicSignature = getStudyRoomMusicSignature(previousRoom);
+  const nextMusicSignature = getStudyRoomMusicSignature(nextRoom);
+
+  const boardsChanged = previousBoardsSignature !== nextBoardsSignature;
+  const chatChanged = previousChatSignature !== nextChatSignature;
+  const musicChanged = previousMusicSignature !== nextMusicSignature;
+  if (!boardsChanged && !chatChanged && !musicChanged) {
+    return true;
+  }
+
+  if (boardsChanged && !patchStudyRoomBoardsUI()) {
+    return false;
+  }
+
+  if (chatChanged) {
+    if (!patchStudyRoomChatUI()) {
+      return false;
+    }
+  }
+  if (musicChanged) {
+    if (!patchStudyRoomMusicUI()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areStudyRoomRenderStatesEqual(previousRoom = null, nextRoom = null){
+  if (!previousRoom || typeof previousRoom !== "object") return false;
+  if (!nextRoom || typeof nextRoom !== "object") return false;
+  if (String(previousRoom.id || "").trim() !== String(nextRoom.id || "").trim()) return false;
+
+  return (
+    getStudyRoomCoreSignature(previousRoom) === getStudyRoomCoreSignature(nextRoom) &&
+    getStudyRoomBoardsSignature(previousRoom) === getStudyRoomBoardsSignature(nextRoom) &&
+    getStudyRoomChatSignature(previousRoom) === getStudyRoomChatSignature(nextRoom) &&
+    getStudyRoomMusicSignature(previousRoom) === getStudyRoomMusicSignature(nextRoom)
+  );
+}
+
+function patchStudyRoomChatUI(scope = board){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return false;
+  const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  const roomData = studyRoomsState.activeRoomData;
+  if (!activeRoomId || !roomData || typeof roomData !== "object") return false;
+  if (String(roomData.id || "").trim() !== activeRoomId) return false;
+
+  const chatListElement = scope.querySelector("#studyRoomWorkspace .study-room-chat-list");
+  if (!(chatListElement instanceof HTMLElement)) return false;
+
+  const distanceToBottom =
+    chatListElement.scrollHeight - chatListElement.scrollTop - chatListElement.clientHeight;
+  const shouldStickToBottom = distanceToBottom <= 34;
+
+  chatListElement.innerHTML = renderStudyRoomChatMessages(roomData);
+
+  if (shouldStickToBottom) {
+    chatListElement.scrollTop = chatListElement.scrollHeight;
+  }
+
+  syncStudyRoomChatHeightWithMusicPlayer(scope);
+
+  return true;
+}
+
+function syncStudyRoomChatHeightWithMusicPlayer(scope = board){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return false;
+
+  const bottomGrid = scope.querySelector("#studyRoomWorkspace .study-room-bottom-grid");
+  if (!(bottomGrid instanceof HTMLElement)) return false;
+
+  const chatShell = bottomGrid.querySelector(".study-room-chat-shell");
+  const chatPanel = bottomGrid.querySelector(".study-room-chat-panel");
+  const chatHead = bottomGrid.querySelector(".study-room-chat-shell .social-card-head");
+  const musicShell = bottomGrid.querySelector(".study-room-music-shell");
+  if (!(chatShell instanceof HTMLElement) || !(chatPanel instanceof HTMLElement) || !(musicShell instanceof HTMLElement)) {
+    return false;
+  }
+
+  const isMobileLayout = typeof window !== "undefined" && window.matchMedia
+    ? window.matchMedia("(max-width: 900px)").matches
+    : typeof window !== "undefined" && window.innerWidth <= 900;
+
+  if (isMobileLayout) {
+    chatShell.style.height = "";
+    chatPanel.style.height = "";
+    return true;
+  }
+
+  const musicShellHeight = Math.round(musicShell.getBoundingClientRect().height);
+  if (!musicShellHeight || musicShellHeight < 160) {
+    chatShell.style.height = "";
+    chatPanel.style.height = "";
+    return false;
+  }
+
+  const targetShellHeight = musicShellHeight;
+  chatShell.style.height = `${targetShellHeight}px`;
+
+  const shellStyles = typeof window !== "undefined"
+    ? window.getComputedStyle(chatShell)
+    : null;
+  const paddingTop = shellStyles ? parseFloat(shellStyles.paddingTop || "0") || 0 : 0;
+  const paddingBottom = shellStyles ? parseFloat(shellStyles.paddingBottom || "0") || 0 : 0;
+  const gap = shellStyles
+    ? (parseFloat(shellStyles.rowGap || shellStyles.gap || "0") || 0)
+    : 0;
+  const headerHeight = chatHead instanceof HTMLElement
+    ? Math.round(chatHead.getBoundingClientRect().height)
+    : 0;
+
+  const availablePanelHeight = Math.max(
+    120,
+    Math.round(targetShellHeight - paddingTop - paddingBottom - headerHeight - gap)
+  );
+  chatPanel.style.height = `${availablePanelHeight}px`;
+  return true;
+}
+
+function syncStudyRoomMusicIframe(scope = board){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return false;
+  ensureStudyRoomMusicIframeMessageListener();
+
+  const safeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  const roomData = studyRoomsState.activeRoomData;
+  if (!safeRoomId || !roomData || typeof roomData !== "object") return false;
+  if (String(roomData.id || "").trim() !== safeRoomId) return false;
+
+  const playerHost = scope.querySelector("#studyRoomWorkspace [data-study-room-music-player-host]");
+  if (!(playerHost instanceof HTMLElement)) return false;
+  if (String(playerHost.dataset.studyRoomId || "").trim() !== safeRoomId) return false;
+
+  const music = normalizeStudyRoomMusicData(roomData.music);
+  if (!music.videoId) {
+    playerHost.innerHTML = `<div class="social-empty">Cuando elijan un video, se reproduce para todos acá.</div>`;
+    if (studyRoomsState.musicIframeSignatureByRoomId instanceof Map) {
+      studyRoomsState.musicIframeSignatureByRoomId.delete(safeRoomId);
+    }
+    if (studyRoomsState.musicIframePendingStateByRoomId instanceof Map) {
+      studyRoomsState.musicIframePendingStateByRoomId.delete(safeRoomId);
+    }
+    if (studyRoomsState.musicIframePendingSeekByRoomId instanceof Map) {
+      studyRoomsState.musicIframePendingSeekByRoomId.delete(safeRoomId);
+    }
+    if (studyRoomsState.musicIframeSeekSyncDraftByRoomId instanceof Map) {
+      studyRoomsState.musicIframeSeekSyncDraftByRoomId.delete(safeRoomId);
+    }
+    if (studyRoomsState.musicIframeSeekSyncLastByRoomId instanceof Map) {
+      studyRoomsState.musicIframeSeekSyncLastByRoomId.delete(safeRoomId);
+    }
+    if (studyRoomsState.musicIframeSeekObservedByRoomId instanceof Map) {
+      studyRoomsState.musicIframeSeekObservedByRoomId.delete(safeRoomId);
+    }
+    if (studyRoomsState.musicIframeSeekSyncTimerByRoomId instanceof Map) {
+      const seekTimerId = studyRoomsState.musicIframeSeekSyncTimerByRoomId.get(safeRoomId);
+      if (seekTimerId) {
+        try {
+          clearTimeout(seekTimerId);
+        } catch (_error) {}
+      }
+      studyRoomsState.musicIframeSeekSyncTimerByRoomId.delete(safeRoomId);
+    }
+    if (studyRoomsState.musicIframeSeekSyncInFlightByRoomId instanceof Set) {
+      studyRoomsState.musicIframeSeekSyncInFlightByRoomId.delete(safeRoomId);
+    }
+    return true;
+  }
+
+  const controlSignature = JSON.stringify({
+    videoId: music.videoId,
+    state: music.state,
+    positionSeconds: Math.max(0, Math.round((Number(music.positionSeconds) || 0) * 10) / 10),
+    startedAt: Math.max(0, Number(music.startedAt) || 0),
+    updatedAt: Math.max(0, Number(music.updatedAt) || 0)
+  });
+
+  let iframe = playerHost.querySelector("iframe[data-study-room-music-iframe]");
+  const shouldCreateNewIframe = !(
+    iframe instanceof HTMLIFrameElement &&
+    String(iframe.dataset.studyRoomMusicVideoId || "").trim() === music.videoId
+  );
+
+  const applyPlaybackCommands = () => {
+    const latestMusic = normalizeStudyRoomMusicData(studyRoomsState.activeRoomData?.music);
+    if (!latestMusic.videoId) return;
+    postStudyRoomMusicIframeListeningCommand(iframe);
+    const positionNow = Math.max(0, Math.floor(getStudyRoomMusicCurrentPosition(latestMusic)));
+    setStudyRoomMusicPendingSeekEntry(safeRoomId, positionNow);
+    setStudyRoomMusicObservedSeekSample(
+      safeRoomId,
+      positionNow,
+      latestMusic.state === "playing" ? 1 : 2
+    );
+    postStudyRoomMusicIframeCommand(iframe, "seekTo", [positionNow, true]);
+    postStudyRoomMusicIframeCommand(
+      iframe,
+      latestMusic.state === "playing" ? "playVideo" : "pauseVideo",
+      []
+    );
+  };
+
+  if (shouldCreateNewIframe) {
+    const startSeconds = Math.max(0, Math.floor(getStudyRoomMusicCurrentPosition(music)));
+    const autoplay = music.state === "playing";
+    const nextIframe = document.createElement("iframe");
+    nextIframe.className = "study-room-music-player-frame";
+    nextIframe.dataset.studyRoomMusicIframe = "1";
+    nextIframe.dataset.studyRoomMusicVideoId = music.videoId;
+    nextIframe.loading = "lazy";
+    nextIframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+    nextIframe.referrerPolicy = "strict-origin-when-cross-origin";
+    nextIframe.allowFullscreen = true;
+    nextIframe.src = buildStudyRoomMusicEmbedUrl(music.videoId, { autoplay, startSeconds });
+
+    playerHost.innerHTML = "";
+    playerHost.appendChild(nextIframe);
+    iframe = nextIframe;
+
+    nextIframe.addEventListener("load", () => {
+      postStudyRoomMusicIframeListeningCommand(nextIframe);
+      setTimeout(() => postStudyRoomMusicIframeListeningCommand(nextIframe), 180);
+      setTimeout(applyPlaybackCommands, 180);
+      setTimeout(applyPlaybackCommands, 760);
+    }, { once: true });
+
+    if (!(studyRoomsState.musicIframeSignatureByRoomId instanceof Map)) {
+      studyRoomsState.musicIframeSignatureByRoomId = new Map();
+    }
+    studyRoomsState.musicIframeSignatureByRoomId.set(safeRoomId, controlSignature);
+    return true;
+  }
+
+  if (!(studyRoomsState.musicIframeSignatureByRoomId instanceof Map)) {
+    studyRoomsState.musicIframeSignatureByRoomId = new Map();
+  }
+  const previousSignature = String(studyRoomsState.musicIframeSignatureByRoomId.get(safeRoomId) || "");
+  if (previousSignature === controlSignature) {
+    postStudyRoomMusicIframeListeningCommand(iframe);
+    return true;
+  }
+
+  const pendingIframeState = studyRoomsState.musicIframePendingStateByRoomId instanceof Map
+    ? String(studyRoomsState.musicIframePendingStateByRoomId.get(safeRoomId) || "").trim()
+    : "";
+  const shouldSkipPlaybackCommands = !!pendingIframeState && pendingIframeState === String(music.state || "").trim();
+  if (shouldSkipPlaybackCommands) {
+    postStudyRoomMusicIframeListeningCommand(iframe);
+    studyRoomsState.musicIframeSignatureByRoomId.set(safeRoomId, controlSignature);
+    return true;
+  }
+
+  const targetPositionNow = Math.max(0, getStudyRoomMusicCurrentPosition(music));
+  const shouldSkipSeekReplay = isStudyRoomMusicPendingSeekMatch(
+    safeRoomId,
+    targetPositionNow,
+    {
+      consume: true,
+      toleranceSeconds: STUDY_ROOM_MUSIC_SEEK_PENDING_TOLERANCE_SECONDS
+    }
+  );
+  if (shouldSkipSeekReplay) {
+    postStudyRoomMusicIframeListeningCommand(iframe);
+    studyRoomsState.musicIframeSignatureByRoomId.set(safeRoomId, controlSignature);
+    return true;
+  }
+
+  applyPlaybackCommands();
+  setTimeout(applyPlaybackCommands, 180);
+  studyRoomsState.musicIframeSignatureByRoomId.set(safeRoomId, controlSignature);
+  return true;
+}
+
+function patchStudyRoomMusicUI(scope = board){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return false;
+
+  const safeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  const roomData = studyRoomsState.activeRoomData;
+  if (!safeRoomId || !roomData || typeof roomData !== "object") return false;
+  if (String(roomData.id || "").trim() !== safeRoomId) return false;
+  const music = normalizeStudyRoomMusicData(roomData.music);
+
+  const shell = scope.querySelector("#studyRoomWorkspace .study-room-music-shell");
+  if (!(shell instanceof HTMLElement)) return false;
+
+  const hasTrack = !!music.videoId;
+  const musicMain = shell.querySelector(".study-room-music-now-main");
+  const titleElement = musicMain?.querySelector("strong");
+  const channelElement = musicMain?.querySelector("small");
+  const helperElement = shell.querySelector(".study-room-music-link-help");
+  const linkInput = shell.querySelector("[data-study-room-music-link-input]");
+  const playerHost = shell.querySelector("[data-study-room-music-player-host]");
+  const canPatchInline = (
+    musicMain instanceof HTMLElement &&
+    titleElement instanceof HTMLElement &&
+    channelElement instanceof HTMLElement &&
+    helperElement instanceof HTMLElement &&
+    linkInput instanceof HTMLInputElement &&
+    playerHost instanceof HTMLElement &&
+    String(playerHost.dataset.studyRoomId || "").trim() === safeRoomId
+  );
+
+  if (canPatchInline) {
+    const safeTitle = String(music.title || "Sin video seleccionado").trim() || "Sin video seleccionado";
+    const safeChannel = String(music.channel || "").trim() || "YouTube";
+    const inputError = String(getStudyRoomMusicSearchError(safeRoomId) || "").trim();
+    const helperText = inputError || "Pegá un link de YouTube para reproducirlo en la sala.";
+
+    titleElement.textContent = safeTitle;
+    channelElement.textContent = safeChannel;
+
+    const currentImg = musicMain.querySelector("img");
+    const currentPlaceholder = musicMain.querySelector(".study-room-music-now-placeholder");
+    if (hasTrack) {
+      const safeThumb = String(music.thumbnail || getYouTubeThumbnailByVideoId(music.videoId)).trim();
+      const safeThumbFallback = String(getYouTubeThumbnailByVideoId(music.videoId)).trim();
+      if (currentImg instanceof HTMLImageElement) {
+        currentImg.src = safeThumb;
+        currentImg.alt = "Miniatura del video actual";
+        currentImg.onerror = () => {
+          currentImg.src = safeThumbFallback;
+        };
+      } else if (currentPlaceholder instanceof HTMLElement) {
+        const nextImg = document.createElement("img");
+        nextImg.src = safeThumb;
+        nextImg.alt = "Miniatura del video actual";
+        nextImg.onerror = () => {
+          nextImg.src = safeThumbFallback;
+        };
+        currentPlaceholder.replaceWith(nextImg);
+      }
+    } else if (currentImg instanceof HTMLImageElement) {
+      const placeholder = document.createElement("div");
+      placeholder.className = "study-room-music-now-placeholder";
+      placeholder.setAttribute("aria-hidden", "true");
+      currentImg.replaceWith(placeholder);
+    }
+
+    linkInput.dataset.studyRoomId = safeRoomId;
+    const nextDraft = String(getStudyRoomMusicSearchDraft(safeRoomId) || "");
+    if (linkInput !== document.activeElement) {
+      linkInput.value = nextDraft;
+    }
+
+    helperElement.textContent = helperText;
+    helperElement.classList.toggle("error", !!inputError);
+
+    syncStudyRoomMusicIframe(scope);
+    syncStudyRoomChatHeightWithMusicPlayer(scope);
+    return true;
+  }
+
+  const previousPlayerHost = shell.querySelector("[data-study-room-music-player-host]");
+  const preservedPlayerHost = previousPlayerHost instanceof HTMLElement
+    ? previousPlayerHost
+    : null;
+
+  shell.innerHTML = renderStudyRoomMusicPanel(roomData);
+
+  if (preservedPlayerHost) {
+    const nextPlayerHost = shell.querySelector("[data-study-room-music-player-host]");
+    if (nextPlayerHost instanceof HTMLElement) {
+      preservedPlayerHost.dataset.studyRoomId = String(nextPlayerHost.dataset.studyRoomId || safeRoomId);
+      nextPlayerHost.replaceWith(preservedPlayerHost);
+    }
+  }
+
+  syncStudyRoomMusicIframe(scope);
+  syncStudyRoomChatHeightWithMusicPlayer(scope);
+  return true;
+}
+
+function patchStudyRoomBoardsUI(scope = board){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return false;
+
+  const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  const roomData = studyRoomsState.activeRoomData;
+  if (!activeRoomId || !roomData || typeof roomData !== "object") return false;
+  if (String(roomData.id || "").trim() !== activeRoomId) return false;
+
+  const boardGridElement = scope.querySelector("#studyRoomWorkspace .study-room-board-grid");
+  if (!(boardGridElement instanceof HTMLElement)) return false;
+
+  const activeElement = document.activeElement;
+  const shouldRestoreTaskInput = (
+    activeElement instanceof HTMLInputElement &&
+    activeElement.hasAttribute("data-study-task-input")
+  );
+  const taskInputRoomId = shouldRestoreTaskInput
+    ? String(activeElement.dataset.studyRoomId || "").trim()
+    : "";
+  const restoreSelectionStart = shouldRestoreTaskInput ? activeElement.selectionStart : null;
+  const restoreSelectionEnd = shouldRestoreTaskInput ? activeElement.selectionEnd : null;
+
+  const cards = buildStudyRoomCards(roomData);
+  const ownUid = String(currentUser?.uid || "").trim();
+  boardGridElement.innerHTML = renderStudyRoomCardsGrid(cards, {
+    ownUid,
+    roomId: activeRoomId,
+    creatorUid: roomData.createdByUid || ""
+  });
+  bindStudyRoomTaskSwipeInteractions(scope);
+
+  if (!taskInputRoomId) return true;
+
+  const taskInput = scope.querySelector(
+    `[data-study-task-input][data-study-room-id="${taskInputRoomId}"]`
+  );
+  if (!(taskInput instanceof HTMLInputElement)) return true;
+
+  try {
+    taskInput.focus({ preventScroll: true });
+  } catch (_error) {
+    taskInput.focus();
+  }
+
+  const valueLength = taskInput.value.length;
+  const nextStart = Number.isInteger(restoreSelectionStart)
+    ? Math.min(Math.max(0, restoreSelectionStart), valueLength)
+    : valueLength;
+  const nextEnd = Number.isInteger(restoreSelectionEnd)
+    ? Math.min(Math.max(nextStart, restoreSelectionEnd), valueLength)
+    : nextStart;
+
+  try {
+    taskInput.setSelectionRange(nextStart, nextEnd);
+  } catch (_error) {}
+
+  return true;
+}
+
+function patchStudyRoomTaskCardUI(targetUid = "", scope = board){
+  if (currentViewMode !== VIEW_MODE_STUDY_ROOMS) return false;
+
+  const safeTargetUid = String(targetUid || "").trim();
+  if (!safeTargetUid) return false;
+
+  const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  const roomData = studyRoomsState.activeRoomData;
+  if (!activeRoomId || !roomData || typeof roomData !== "object") return false;
+  if (String(roomData.id || "").trim() !== activeRoomId) return false;
+
+  const boardGridElement = scope.querySelector("#studyRoomWorkspace .study-room-board-grid");
+  if (!(boardGridElement instanceof HTMLElement)) return false;
+
+  const cards = buildStudyRoomCards(roomData);
+  const targetCard = cards.find((card) => String(card?.uid || "").trim() === safeTargetUid);
+  if (!targetCard) return false;
+
+  const ownUid = String(currentUser?.uid || "").trim();
+  const nextCardHtml = renderStudyRoomUserCard(targetCard, {
+    ownUid,
+    roomId: activeRoomId,
+    creatorUid: roomData.createdByUid || ""
+  });
+
+  const currentCardElement = Array.from(
+    boardGridElement.querySelectorAll("[data-study-room-card-uid]")
+  ).find((element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    return String(element.dataset.studyRoomCardUid || "").trim() === safeTargetUid;
+  });
+
+  if (currentCardElement instanceof HTMLElement) {
+    currentCardElement.outerHTML = nextCardHtml;
+    bindStudyRoomTaskSwipeInteractions(scope);
+    return true;
+  }
+
+  // Fallback: si por algún motivo no encontramos la tarjeta, solo repintamos el grid.
+  boardGridElement.innerHTML = renderStudyRoomCardsGrid(cards, {
+    ownUid,
+    roomId: activeRoomId,
+    creatorUid: roomData.createdByUid || ""
+  });
+  bindStudyRoomTaskSwipeInteractions(scope);
+  return true;
+}
+
+function ensureStudyRoomsListSubscription(){
+  if (studyRoomsState.roomsUnsub || !currentUser?.uid) return;
+
+  studyRoomsState.roomsLoading = true;
+  studyRoomsState.roomsError = "";
+  studyRoomsState.roomsSource = "primary";
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    patchStudyRoomsListUI();
+  }
+
+  const roomsQuery = query(
+    collection(db, STUDY_ROOMS_COLLECTION),
+    orderBy("updatedAt", "desc"),
+    limit(STUDY_ROOMS_LIST_LIMIT)
+  );
+
+  studyRoomsState.roomsUnsub = onSnapshot(
+    roomsQuery,
+    (snapshot) => {
+      const nextRooms = [];
+      snapshot.forEach((docSnap) => {
+        if (!docSnap.exists()) return;
+        const normalized = normalizeStudyRoomData(docSnap.data() || {}, docSnap.id);
+        if (!normalized || !normalized.isActive) return;
+        nextRooms.push(normalized);
+      });
+
+      nextRooms.sort((a, b) => {
+        const byUpdated = (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0);
+        if (byUpdated !== 0) return byUpdated;
+        return String(a.title || "").localeCompare(String(b.title || ""), "es", { sensitivity: "base" });
+      });
+
+      studyRoomsState.rooms = nextRooms;
+      studyRoomsState.roomsLoading = false;
+      studyRoomsState.roomsError = "";
+      studyRoomsState.roomsSource = "primary";
+
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        patchStudyRoomsListUI();
+      }
+    },
+    (err) => {
+      if (isFirestorePermissionError(err) && studyRoomsState.roomsSource !== "public-index") {
+        stopStudyRoomsListListener();
+        ensureStudyRoomsPublicListSubscription();
+        return;
+      }
+
+      studyRoomsState.roomsLoading = false;
+      studyRoomsState.roomsError = "No se pudieron cargar las salas de estudio.";
+
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        patchStudyRoomsListUI();
+      }
+    }
+  );
+}
+
+function ensureStudyRoomsPublicListSubscription(){
+  if (studyRoomsState.roomsUnsub || !currentUser?.uid) return;
+
+  studyRoomsState.roomsLoading = true;
+  studyRoomsState.roomsError = "";
+  studyRoomsState.roomsSource = "public-index";
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    patchStudyRoomsListUI();
+  }
+
+  const publicRoomsQuery = query(
+    collection(db, "leaderboard"),
+    orderBy(documentId(), "asc"),
+    limit(Math.max(STUDY_ROOMS_LIST_LIMIT * 8, 320))
+  );
+
+  studyRoomsState.roomsUnsub = onSnapshot(
+    publicRoomsQuery,
+    (snapshot) => {
+      const byRoomId = new Map();
+
+      snapshot.forEach((docSnap) => {
+        if (!docSnap.exists()) return;
+        const normalized = normalizePublicStudyRoomFromLeaderboard(docSnap.data() || {}, docSnap.id);
+        if (!normalized || !normalized.isActive) return;
+
+        const previous = byRoomId.get(normalized.id);
+        if (!previous || Number(normalized.updatedAt) > Number(previous.updatedAt)) {
+          byRoomId.set(normalized.id, normalized);
+        }
+      });
+
+      const nextRooms = Array.from(byRoomId.values());
+      nextRooms.sort((a, b) => {
+        const byUpdated = (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0);
+        if (byUpdated !== 0) return byUpdated;
+        return String(a.title || "").localeCompare(String(b.title || ""), "es", { sensitivity: "base" });
+      });
+
+      studyRoomsState.rooms = nextRooms.slice(0, STUDY_ROOMS_LIST_LIMIT);
+      studyRoomsState.roomsLoading = false;
+      studyRoomsState.roomsError = "";
+      studyRoomsState.roomsSource = "public-index";
+
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        patchStudyRoomsListUI();
+      }
+    },
+    (_err) => {
+      studyRoomsState.roomsLoading = false;
+      studyRoomsState.roomsError = "No se pudieron cargar las salas públicas.";
+
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        patchStudyRoomsListUI();
+      }
+    }
+  );
+}
+
+async function ensureStudyRoomMembership(roomData = null){
+  const safeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  if (!safeRoomId || !currentUser?.uid) return false;
+
+  const room = roomData && typeof roomData === "object"
+    ? roomData
+    : studyRoomsState.activeRoomData;
+  if (!room || typeof room !== "object") return false;
+  if (String(room.id || "").trim() !== safeRoomId) return false;
+  if (!room.isActive) return false;
+
+  const identity = getStudyRoomIdentity();
+  if (!identity?.uid) return false;
+  const access = canCurrentUserAccessStudyRoom(room);
+  if (!access.allowed) return false;
+  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  if (activeRoomSource === "owned") {
+    return false;
+  }
+
+  const participantsByUid = room.participantsByUid instanceof Map
+    ? room.participantsByUid
+    : new Map();
+  const boardsByUid = room.boardsByUid instanceof Map
+    ? room.boardsByUid
+    : new Map();
+  const participantEntry = participantsByUid.get(identity.uid);
+  const boardEntry = boardsByUid.get(identity.uid);
+  const alreadySynced = studyRoomsState.presenceSyncedByRoomId.has(safeRoomId);
+  const needsParticipantSync =
+    !participantEntry ||
+    String(participantEntry.name || "") !== identity.name ||
+    String(participantEntry.photo || "") !== identity.photo;
+  const needsBoard = !boardEntry;
+
+  if (!needsParticipantSync && !needsBoard && alreadySynced) {
+    return false;
+  }
+
+  const now = Date.now();
+  const payload = {
+    updatedAt: now
+  };
+  payload[`participants.${identity.uid}`] = {
+    uid: identity.uid,
+    name: identity.name,
+    photo: identity.photo,
+    joinedAt: Math.max(0, Number(participantEntry?.joinedAt) || now),
+    updatedAt: now
+  };
+
+  if (needsBoard) {
+    payload[`boards.${identity.uid}`] = {
+      uid: identity.uid,
+      name: identity.name,
+      photo: identity.photo,
+      tasks: {},
+      updatedAt: now
+    };
+  }
+
+  try {
+    await setDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), payload, { merge: true });
+    studyRoomsState.presenceSyncedByRoomId.add(safeRoomId);
+    return true;
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo registrar presencia en sala de estudio.", err);
+    }
+    return false;
+  }
+}
+
+function subscribeActiveOwnedStudyRoom(ownerUid){
+  const safeOwnerUid = String(ownerUid || "").trim();
+  if (!safeOwnerUid || !currentUser?.uid) return;
+  if (safeOwnerUid !== String(currentUser.uid || "").trim()) return;
+
+  stopStudyRoomActiveListener();
+  studyRoomsState.activeRoomId = safeOwnerUid;
+  studyRoomsState.activeRoomSource = "owned";
+  studyRoomsState.activeRoomData = null;
+  studyRoomsState.activeRoomLoading = true;
+  studyRoomsState.activeRoomError = "";
+  studyRoomsState.presenceSyncedByRoomId.delete(safeOwnerUid);
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    patchStudyRoomsUI();
+  }
+
+  const ownerRef = doc(db, "users", safeOwnerUid);
+  studyRoomsState.activeRoomUnsub = onSnapshot(
+    ownerRef,
+    (snapshot) => {
+      if (String(studyRoomsState.activeRoomId || "") !== safeOwnerUid) return;
+      if (String(studyRoomsState.activeRoomSource || "") !== "owned") return;
+      const previousActiveRoomData = studyRoomsState.activeRoomData;
+
+      const ownedRoom = snapshot.exists()
+        ? normalizeOwnedStudyRoomFromUserData(snapshot.data() || {}, safeOwnerUid)
+        : null;
+
+      if (!ownedRoom) {
+        studyRoomsState.activeRoomData = null;
+        studyRoomsState.activeRoomLoading = false;
+        studyRoomsState.activeRoomError = "Tu sala ya no está activa.";
+        clearStoredStudyRoomActiveSession(currentUser?.uid);
+        if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+          patchStudyRoomsUI();
+        }
+        return;
+      }
+
+      const access = canCurrentUserAccessStudyRoom(ownedRoom);
+      if (!access.allowed) {
+        studyRoomsState.activeRoomData = null;
+        studyRoomsState.activeRoomLoading = false;
+        studyRoomsState.activeRoomError = "Necesitás invitación del creador para entrar a esta sala.";
+        clearStoredStudyRoomActiveSession(currentUser?.uid);
+        if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+          patchStudyRoomsUI();
+        }
+        return;
+      }
+
+      studyRoomsState.activeRoomData = ownedRoom;
+      studyRoomsState.activeRoomLoading = false;
+      studyRoomsState.activeRoomError = "";
+      persistStudyRoomActiveSession(safeOwnerUid, currentUser?.uid);
+      void upsertCurrentUserStudyRoomPublicSummary(ownedRoom);
+
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        if (areStudyRoomRenderStatesEqual(previousActiveRoomData, ownedRoom)) {
+          return;
+        }
+        const patchedIncremental = patchStudyRoomWorkspaceIncremental(previousActiveRoomData, ownedRoom);
+        if (!patchedIncremental) {
+          patchStudyRoomsUI();
+        }
+      }
+    },
+    (err) => {
+      if (String(studyRoomsState.activeRoomId || "") !== safeOwnerUid) return;
+      if (String(studyRoomsState.activeRoomSource || "") !== "owned") return;
+
+      studyRoomsState.activeRoomData = null;
+      studyRoomsState.activeRoomLoading = false;
+      studyRoomsState.activeRoomError = isFirestorePermissionError(err)
+        ? "No hay permisos para abrir tu sala."
+        : "No se pudo abrir la sala.";
+      if (isFirestorePermissionError(err)) {
+        clearStoredStudyRoomActiveSession(currentUser?.uid);
+      }
+
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        patchStudyRoomsUI();
+      }
+    }
+  );
+}
+
+function subscribeActiveStudyRoom(roomId){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId || !currentUser?.uid) return;
+
+  stopStudyRoomActiveListener();
+  studyRoomsState.activeRoomId = safeRoomId;
+  studyRoomsState.activeRoomSource = "primary";
+  studyRoomsState.activeRoomData = null;
+  studyRoomsState.activeRoomLoading = true;
+  studyRoomsState.activeRoomError = "";
+  studyRoomsState.presenceSyncedByRoomId.delete(safeRoomId);
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    patchStudyRoomsUI();
+  }
+
+  const roomRef = doc(db, STUDY_ROOMS_COLLECTION, safeRoomId);
+  studyRoomsState.activeRoomUnsub = onSnapshot(
+    roomRef,
+    (snapshot) => {
+      if (String(studyRoomsState.activeRoomId || "") !== safeRoomId) return;
+      const previousActiveRoomData = studyRoomsState.activeRoomData;
+
+      if (!snapshot.exists()) {
+        studyRoomsState.activeRoomData = null;
+        studyRoomsState.activeRoomLoading = false;
+        studyRoomsState.activeRoomError = "La sala ya no está disponible.";
+        clearStoredStudyRoomActiveSession(currentUser?.uid);
+        if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+          patchStudyRoomsUI();
+        }
+        return;
+      }
+
+      const normalized = normalizeStudyRoomData(snapshot.data() || {}, snapshot.id);
+      if (!normalized) {
+        studyRoomsState.activeRoomData = null;
+        studyRoomsState.activeRoomLoading = false;
+        studyRoomsState.activeRoomError = "No se pudo leer la sala.";
+        clearStoredStudyRoomActiveSession(currentUser?.uid);
+        if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+          patchStudyRoomsUI();
+        }
+        return;
+      }
+
+      const access = canCurrentUserAccessStudyRoom(normalized);
+      if (!access.allowed) {
+        studyRoomsState.activeRoomData = null;
+        studyRoomsState.activeRoomLoading = false;
+        studyRoomsState.activeRoomError = "Necesitás invitación del creador para entrar a esta sala.";
+        clearStoredStudyRoomActiveSession(currentUser?.uid);
+        if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+          patchStudyRoomsUI();
+        }
+        return;
+      }
+
+      studyRoomsState.activeRoomData = normalized;
+      studyRoomsState.activeRoomLoading = false;
+      studyRoomsState.activeRoomError = normalized.isActive ? "" : "Esta sala de estudio finalizó.";
+      if (normalized.isActive) {
+        persistStudyRoomActiveSession(safeRoomId, currentUser?.uid);
+      } else {
+        clearStoredStudyRoomActiveSession(currentUser?.uid);
+      }
+
+      if (normalized.isActive) {
+        void ensureStudyRoomMembership(normalized);
+        if (String(normalized.createdByUid || "") === String(currentUser?.uid || "")) {
+          void upsertCurrentUserStudyRoomPublicSummary(normalized);
+        }
+      } else if (String(normalized.createdByUid || "") === String(currentUser?.uid || "")) {
+        void clearCurrentUserStudyRoomPublicSummary();
+      }
+
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        if (areStudyRoomRenderStatesEqual(previousActiveRoomData, normalized)) {
+          return;
+        }
+        const patchedIncremental = patchStudyRoomWorkspaceIncremental(previousActiveRoomData, normalized);
+        if (!patchedIncremental) {
+          patchStudyRoomsUI();
+        }
+      }
+    },
+    (err) => {
+      if (String(studyRoomsState.activeRoomId || "") !== safeRoomId) return;
+
+      if (
+        isFirestorePermissionError(err) &&
+        safeRoomId === String(currentUser?.uid || "").trim()
+      ) {
+        subscribeActiveOwnedStudyRoom(safeRoomId);
+        return;
+      }
+
+      studyRoomsState.activeRoomData = null;
+      studyRoomsState.activeRoomLoading = false;
+      studyRoomsState.activeRoomError = isFirestorePermissionError(err)
+        ? "Necesitás invitación del creador para entrar a esta sala."
+        : "No se pudo abrir la sala.";
+      if (isFirestorePermissionError(err)) {
+        clearStoredStudyRoomActiveSession(currentUser?.uid);
+      }
+
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        patchStudyRoomsUI();
+      }
+    }
+  );
+}
+
+async function openStudyRoomSession(roomId){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId || !currentUser?.uid) return false;
+
+  ensureStudyRoomsListSubscription();
+
+  const roomFromList = studyRoomsState.rooms.find((entry) => String(entry?.id || "") === safeRoomId);
+  if (roomFromList) {
+    const access = canCurrentUserAccessStudyRoom(roomFromList);
+    if (!access.allowed) {
+      showToast("Necesitás invitación del creador para entrar.");
+      return false;
+    }
+  }
+
+  if (studyRoomsState.activeRoomId === safeRoomId && typeof studyRoomsState.activeRoomUnsub === "function") {
+    persistStudyRoomActiveSession(safeRoomId, currentUser?.uid);
+    startStudyRoomSessionTracking(safeRoomId);
+    if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+      patchStudyRoomsUI();
+    }
+    return true;
+  }
+
+  const leftPrevious = await leaveStudyRoomSession({ silent: true });
+  if (!leftPrevious) return false;
+  persistStudyRoomActiveSession(safeRoomId, currentUser?.uid);
+  subscribeActiveStudyRoom(safeRoomId);
+  startStudyRoomSessionTracking(safeRoomId);
+  return true;
+}
+
+async function leaveStudyRoomSession({ silent = false } = {}){
+  const safeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const activeRoomData = studyRoomsState.activeRoomData && typeof studyRoomsState.activeRoomData === "object"
+    ? studyRoomsState.activeRoomData
+    : null;
+  const ownUid = String(currentUser?.uid || "").trim();
+
+  const clearLocalActiveRoomState = () => {
+    stopStudyRoomActiveListener();
+    if (safeRoomId) {
+      clearStoredStudyRoomActiveSession(ownUid);
+      studyRoomsState.presenceSyncedByRoomId.delete(safeRoomId);
+      if (studyRoomsState.taskDraftByRoomId instanceof Map) {
+        studyRoomsState.taskDraftByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.chatDraftByRoomId instanceof Map) {
+        studyRoomsState.chatDraftByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicSearchDraftByRoomId instanceof Map) {
+        studyRoomsState.musicSearchDraftByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicSearchResultsByRoomId instanceof Map) {
+        studyRoomsState.musicSearchResultsByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicSearchLoadingByRoomId instanceof Map) {
+        studyRoomsState.musicSearchLoadingByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicSearchErrorByRoomId instanceof Map) {
+        studyRoomsState.musicSearchErrorByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicSearchTokenByRoomId instanceof Map) {
+        studyRoomsState.musicSearchTokenByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicSearchDebounceTimerByRoomId instanceof Map) {
+        const timerId = studyRoomsState.musicSearchDebounceTimerByRoomId.get(safeRoomId);
+        if (timerId) {
+          try {
+            clearTimeout(timerId);
+          } catch (_error) {}
+        }
+        studyRoomsState.musicSearchDebounceTimerByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicIframeSignatureByRoomId instanceof Map) {
+        studyRoomsState.musicIframeSignatureByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicIframePendingStateByRoomId instanceof Map) {
+        studyRoomsState.musicIframePendingStateByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicIframePendingSeekByRoomId instanceof Map) {
+        studyRoomsState.musicIframePendingSeekByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicIframeSeekSyncDraftByRoomId instanceof Map) {
+        studyRoomsState.musicIframeSeekSyncDraftByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicIframeSeekSyncLastByRoomId instanceof Map) {
+        studyRoomsState.musicIframeSeekSyncLastByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicIframeSeekObservedByRoomId instanceof Map) {
+        studyRoomsState.musicIframeSeekObservedByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicIframeSeekSyncTimerByRoomId instanceof Map) {
+        const seekTimerId = studyRoomsState.musicIframeSeekSyncTimerByRoomId.get(safeRoomId);
+        if (seekTimerId) {
+          try {
+            clearTimeout(seekTimerId);
+          } catch (_error) {}
+        }
+        studyRoomsState.musicIframeSeekSyncTimerByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.musicIframeSeekSyncInFlightByRoomId instanceof Set) {
+        studyRoomsState.musicIframeSeekSyncInFlightByRoomId.delete(safeRoomId);
+      }
+    }
+    studyRoomsState.activeRoomId = "";
+    studyRoomsState.activeRoomSource = "primary";
+    studyRoomsState.activeRoomData = null;
+    studyRoomsState.activeRoomLoading = false;
+    studyRoomsState.activeRoomError = "";
+    clearStudyRoomSessionTracking();
+
+    if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+      patchStudyRoomsUI();
+    }
+  };
+
+  if (!safeRoomId || !ownUid) {
+    clearLocalActiveRoomState();
+    return true;
+  }
+
+  const now = Date.now();
+  const isCreatedByCurrentUser =
+    String(activeRoomData?.createdByUid || "").trim() === ownUid ||
+    safeRoomId === ownUid;
+  const shouldCloseRoom = isCreatedByCurrentUser;
+  const closureActorName = String(
+    getStudyRoomIdentity()?.name ||
+    activeRoomData?.createdByName ||
+    currentUser?.displayName ||
+    "Creador"
+  ).trim() || "Creador";
+  let roomUpdated = false;
+
+  if (shouldCloseRoom) {
+    if (activeRoomData && typeof activeRoomData === "object") {
+      try {
+        await broadcastStudyRoomClosureSummary(activeRoomData, {
+          closedByUid: ownUid,
+          closedByName: closureActorName
+        });
+      } catch (closureSummaryError) {
+        console.warn("No se pudo generar o enviar el resumen de cierre de sala.", closureSummaryError);
+      }
+    }
+
+    if (activeRoomSource === "owned") {
+      try {
+        await updateDoc(doc(db, "users", ownUid), {
+          [STUDY_ROOM_OWNED_FIELD]: deleteField()
+        });
+        roomUpdated = true;
+      } catch (err) {
+        if (isFirestoreNotFoundError(err)) {
+          roomUpdated = true;
+        } else if (isFirestorePermissionError(err)) {
+          if (!silent && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+            showToast("No hay permisos para cerrar tu sala.");
+          }
+        } else {
+          console.warn("No se pudo cerrar la sala local del creador.", err);
+        }
+      }
+    } else {
+      try {
+        await deleteDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId));
+        roomUpdated = true;
+      } catch (err) {
+        if (isFirestoreNotFoundError(err)) {
+          roomUpdated = true;
+        } else if (isFirestorePermissionError(err)) {
+          if (!silent && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+            showToast("No hay permisos para cerrar tu sala.");
+          }
+        } else {
+          console.warn("No se pudo eliminar la sala de estudio.", err);
+        }
+      }
+    }
+
+    if (!roomUpdated) {
+      return false;
+    }
+
+    if (activeRoomSource !== "owned") {
+      try {
+        await updateDoc(doc(db, "users", ownUid), {
+          [STUDY_ROOM_OWNED_FIELD]: deleteField()
+        });
+      } catch (ownedCleanupErr) {
+        if (!isFirestorePermissionError(ownedCleanupErr) && !isFirestoreNotFoundError(ownedCleanupErr)) {
+          console.warn("No se pudo limpiar el respaldo local de la sala cerrada.", ownedCleanupErr);
+        }
+      }
+    }
+
+    studyRoomsState.rooms = studyRoomsState.rooms.filter((roomEntry) => {
+      return String(roomEntry?.id || "").trim() !== safeRoomId;
+    });
+    void clearCurrentUserStudyRoomPublicSummary();
+    await finalizeStudyRoomSessionTracking(safeRoomId, now);
+    clearLocalActiveRoomState();
+
+    if (!silent && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+      showToast("Sala cerrada. Se borraron chat, tareas y participantes.");
+    }
+    return true;
+  }
+
+  if (activeRoomSource === "owned") {
+    roomUpdated = true;
+  } else {
+    const updates = {
+      [`participants.${ownUid}`]: deleteField(),
+      [`boards.${ownUid}`]: deleteField(),
+      updatedAt: now
+    };
+
+    try {
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), updates);
+      roomUpdated = true;
+    } catch (err) {
+      if (isFirestoreNotFoundError(err)) {
+        roomUpdated = true;
+      } else if (isFirestorePermissionError(err)) {
+        if (!silent && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+          showToast("No hay permisos para salir de la sala.");
+        }
+      } else {
+        console.warn("No se pudo actualizar salida de sala de estudio.", err);
+      }
+    }
+  }
+
+  if (!roomUpdated) {
+    return false;
+  }
+
+  await finalizeStudyRoomSessionTracking(safeRoomId, now);
+  clearLocalActiveRoomState();
+  return true;
+}
+
+async function resolveCurrentUserInvitableStudyRoom(){
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!ownUid) return null;
+
+  const activeRoom = studyRoomsState.activeRoomData;
+  if (
+    activeRoom &&
+    typeof activeRoom === "object" &&
+    activeRoom.isActive &&
+    String(activeRoom.createdByUid || "").trim() === ownUid
+  ) {
+    return activeRoom;
+  }
+
+  const ownRoomFromList = studyRoomsState.rooms.find((room) => (
+    room &&
+    room.isActive &&
+    String(room.createdByUid || "").trim() === ownUid
+  ));
+  if (ownRoomFromList) return ownRoomFromList;
+
+  try {
+    const ownRoomsQuery = query(
+      collection(db, STUDY_ROOMS_COLLECTION),
+      where("createdByUid", "==", ownUid),
+      limit(8)
+    );
+    const ownRoomsSnapshot = await getDocs(ownRoomsQuery);
+    const candidates = [];
+    ownRoomsSnapshot.forEach((docSnap) => {
+      if (!docSnap.exists()) return;
+      const normalized = normalizeStudyRoomData(docSnap.data() || {}, docSnap.id);
+      if (!normalized || !normalized.isActive) return;
+      candidates.push(normalized);
+    });
+    candidates.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+    if (candidates.length) return candidates[0];
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo consultar salas activas propias para invitaciones.", err);
+    }
+  }
+
+  try {
+    const ownLeaderboardSnapshot = await getDoc(doc(db, "leaderboard", ownUid));
+    if (!ownLeaderboardSnapshot.exists()) return null;
+    const normalized = normalizePublicStudyRoomFromLeaderboard(
+      ownLeaderboardSnapshot.data() || {},
+      ownUid
+    );
+    if (!normalized || !normalized.isActive) return null;
+    if (String(normalized.createdByUid || "").trim() !== ownUid) return null;
+    return normalized;
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo consultar la sala activa para enviar invitación.", err);
+    }
+    return null;
+  }
+}
+
+async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
+  const safeTargetUid = String(targetUid || "").trim();
+  const safeTargetName = String(targetName || "usuario").trim() || "usuario";
+  const identity = getStudyRoomIdentity();
+
+  if (!identity?.uid) {
+    showToast("Iniciá sesión para invitar a una sala.");
+    return false;
+  }
+
+  if (!safeTargetUid) {
+    showToast("No se pudo identificar a quién invitar.");
+    return false;
+  }
+
+  if (safeTargetUid === identity.uid) {
+    showToast("No podés invitarte a vos.");
+    return false;
+  }
+
+  const ownRoom = await resolveCurrentUserInvitableStudyRoom();
+  if (!ownRoom) {
+    const shouldOpenStudyRooms = await openStudyRoomActionConfirmDialog({
+      title: "No hay sala activa",
+      message: "Para invitar desde el chat primero necesitás abrir una sala de estudio. ¿Querés ir ahora?",
+      confirmLabel: "Ir a salas",
+      cancelLabel: "Cancelar"
+    });
+    if (shouldOpenStudyRooms) {
+      await setViewMode(VIEW_MODE_STUDY_ROOMS);
+      showToast("Abrí una sala y luego volvé a enviar la invitación.");
+    } else {
+      showToast("Primero abrí una sala para poder invitar.");
+    }
+    return false;
+  }
+
+  const roomId = String(ownRoom.id || "").trim();
+  const roomTitle = String(ownRoom.title || "Sala de estudio").trim() || "Sala de estudio";
+  if (!roomId) {
+    showToast("No se pudo identificar la sala activa.");
+    return false;
+  }
+
+  if (String(ownRoom.createdByUid || "").trim() !== identity.uid) {
+    showToast("Solo el creador de la sala puede enviar invitaciones.");
+    return false;
+  }
+
+  const now = Date.now();
+  let invitationPersisted = false;
+  try {
+    await setDoc(
+      doc(db, STUDY_ROOMS_COLLECTION, roomId),
+      {
+        [`invited.${safeTargetUid}`]: {
+          uid: safeTargetUid,
+          invitedAt: now,
+          invitedByUid: identity.uid,
+          invitedByName: identity.name
+        },
+        updatedAt: now
+      },
+      { merge: true }
+    );
+    invitationPersisted = true;
+  } catch (err) {
+    if (isFirestorePermissionError(err)) {
+      try {
+        await updateDoc(
+          doc(db, "users", identity.uid),
+          {
+            [`${STUDY_ROOM_OWNED_FIELD}.invited.${safeTargetUid}`]: {
+              uid: safeTargetUid,
+              invitedAt: now,
+              invitedByUid: identity.uid,
+              invitedByName: identity.name
+            },
+            [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+          },
+        );
+        invitationPersisted = true;
+      } catch (ownedErr) {
+        if (isFirestorePermissionError(ownedErr)) {
+          showToast("No hay permisos para invitar a esta sala.");
+          return false;
+        }
+        console.error("No se pudo enviar invitación a sala de estudio local.", ownedErr);
+        showToast("No se pudo enviar la invitación.");
+        return false;
+      }
+    } else {
+      console.error("No se pudo enviar invitación a sala de estudio.", err);
+      showToast("No se pudo enviar la invitación.");
+      return false;
+    }
+  }
+
+  if (!invitationPersisted) {
+    showToast("No se pudo enviar la invitación.");
+    return false;
+  }
+
+  let chatMessageSent = false;
+  try {
+    chatMessageSent = await sendSocialChatStudyRoomInviteMessage(safeTargetUid, {
+      roomId,
+      roomTitle,
+      inviterName: identity.name
+    });
+  } catch (chatErr) {
+    console.error("No se pudo publicar la invitación en chat social.", chatErr);
+  }
+
+  if (!chatMessageSent) {
+    showToast(`Invitación enviada a ${safeTargetName}, pero no se pudo publicar el mensaje en el chat.`);
+    return true;
+  }
+
+  showToast(`Invitación enviada a ${safeTargetName}.`);
+  return true;
+}
+
+async function createStudyRoomSession(rawTitle = ""){
+  const identity = getStudyRoomIdentity();
+  if (!identity?.uid) {
+    showToast("Iniciá sesión para crear una sala.");
+    return false;
+  }
+
+  const title = String(rawTitle || "").trim().slice(0, STUDY_ROOM_MAX_TITLE_LENGTH);
+  if (!title) {
+    showToast("Escribí un título para tu sala.");
+    return false;
+  }
+
+  const activeRoomFromState = getCurrentUserOwnedActiveStudyRoom();
+  if (activeRoomFromState?.isActive) {
+    showToast("Ya tenés una sala activa. Cerrala para crear otra.");
+    await openStudyRoomSession(activeRoomFromState.id);
+    return false;
+  }
+
+  let activeRoomFromFirestore = null;
+  let activeOwnedRoomFromFirestore = null;
+  const [ownRoomResult, ownUserResult] = await Promise.allSettled([
+    getDoc(doc(db, STUDY_ROOMS_COLLECTION, identity.uid)),
+    getDoc(doc(db, "users", identity.uid))
+  ]);
+
+  if (ownRoomResult.status === "fulfilled") {
+    const ownRoomSnapshot = ownRoomResult.value;
+    if (ownRoomSnapshot.exists()) {
+      const normalizedOwnRoom = normalizeStudyRoomData(ownRoomSnapshot.data() || {}, ownRoomSnapshot.id);
+      if (normalizedOwnRoom?.isActive) {
+        activeRoomFromFirestore = normalizedOwnRoom;
+      }
+    }
+  } else if (!isFirestorePermissionError(ownRoomResult.reason)) {
+    console.warn("No se pudo validar sala activa en studyRooms antes de crear.", ownRoomResult.reason);
+  }
+
+  if (ownUserResult.status === "fulfilled") {
+    const ownUserSnapshot = ownUserResult.value;
+    if (ownUserSnapshot.exists()) {
+      const normalizedOwnedRoom = normalizeOwnedStudyRoomFromUserData(
+        ownUserSnapshot.data() || {},
+        identity.uid
+      );
+      if (normalizedOwnedRoom?.isActive) {
+        activeOwnedRoomFromFirestore = normalizedOwnedRoom;
+      }
+    }
+  } else if (!isFirestorePermissionError(ownUserResult.reason)) {
+    console.warn("No se pudo validar sala activa local antes de crear.", ownUserResult.reason);
+  }
+
+  if (activeRoomFromFirestore?.isActive) {
+    showToast("Ya tenés una sala activa. Cerrala para crear otra.");
+    await openStudyRoomSession(activeRoomFromFirestore.id);
+    return false;
+  }
+
+  if (activeOwnedRoomFromFirestore?.isActive) {
+    showToast("Ya tenés una sala activa. Cerrala para crear otra.");
+    await openStudyRoomSession(activeOwnedRoomFromFirestore.id);
+    return false;
+  }
+
+  const now = Date.now();
+  const roomRef = doc(db, STUDY_ROOMS_COLLECTION, identity.uid);
+  const participants = {
+    [identity.uid]: {
+      uid: identity.uid,
+      name: identity.name,
+      photo: identity.photo,
+      joinedAt: now,
+      updatedAt: now
+    }
+  };
+  const boards = {
+    [identity.uid]: {
+      uid: identity.uid,
+      name: identity.name,
+      photo: identity.photo,
+      tasks: {},
+      updatedAt: now
+    }
+  };
+  const invited = {
+    [identity.uid]: {
+      uid: identity.uid,
+      invitedAt: now,
+      invitedByUid: identity.uid,
+      invitedByName: identity.name
+    }
+  };
+
+  const roomPayload = {
+    id: roomRef.id,
+    title,
+    titleSearch: normalizeTextForSearch(title),
+    createdAt: now,
+    updatedAt: now,
+    isActive: true,
+    createdByUid: identity.uid,
+    createdByName: identity.name,
+    createdByPhoto: identity.photo,
+    invited,
+    participants,
+    boards,
+    music: createEmptyStudyRoomMusicState()
+  };
+
+  let createdSource = "primary";
+  try {
+    await setDoc(roomRef, roomPayload);
+    try {
+      await setDoc(
+        doc(db, "users", identity.uid),
+        {
+          [STUDY_ROOM_OWNED_FIELD]: roomPayload
+        },
+        { merge: true }
+      );
+    } catch (backupErr) {
+      if (!isFirestorePermissionError(backupErr)) {
+        console.warn("No se pudo guardar respaldo local de la sala creada.", backupErr);
+      }
+    }
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.error("No se pudo crear la sala de estudio.", err);
+      showToast("No se pudo crear la sala.");
+      return false;
+    }
+
+    try {
+      createdSource = "owned";
+      await setDoc(
+        doc(db, "users", identity.uid),
+        {
+          [STUDY_ROOM_OWNED_FIELD]: roomPayload
+        },
+        { merge: true }
+      );
+    } catch (ownedErr) {
+      if (isFirestorePermissionError(ownedErr)) {
+        showToast("No hay permisos para crear salas de estudio.");
+        return false;
+      }
+      console.error("No se pudo crear la sala de estudio en respaldo local.", ownedErr);
+      showToast("No se pudo crear la sala.");
+      return false;
+    }
+  }
+
+  void upsertCurrentUserStudyRoomPublicSummary({
+    id: identity.uid,
+    title,
+    createdByUid: identity.uid,
+    createdByName: identity.name,
+    createdByPhoto: identity.photo,
+    createdAt: now,
+    updatedAt: now,
+    participantsCount: 1
+  });
+
+  if (createdSource === "owned") {
+    const normalizedOwnedRoom = normalizeStudyRoomData(roomPayload, identity.uid);
+    if (normalizedOwnedRoom) {
+      const mergedRooms = [];
+      const seen = new Set();
+      [normalizedOwnedRoom, ...studyRoomsState.rooms].forEach((roomEntry) => {
+        const safeId = String(roomEntry?.id || "").trim();
+        if (!safeId || seen.has(safeId)) return;
+        seen.add(safeId);
+        mergedRooms.push(roomEntry);
+      });
+      mergedRooms.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+      studyRoomsState.rooms = mergedRooms.slice(0, STUDY_ROOMS_LIST_LIMIT);
+    }
+  }
+
+  studyRoomsState.createTitleDraft = "";
+  setStudyRoomTaskDraft(identity.uid, "");
+  setStudyRoomChatDraft(identity.uid, "");
+  ensureStudyRoomsListSubscription();
+  if (createdSource === "owned") {
+    const leftPrevious = await leaveStudyRoomSession({ silent: true });
+    if (!leftPrevious) return false;
+    subscribeActiveOwnedStudyRoom(identity.uid);
+    startStudyRoomSessionTracking(identity.uid);
+  } else {
+    const opened = await openStudyRoomSession(identity.uid);
+    if (!opened) return false;
+  }
+
+  void registerCollaborativeProgress("totalStudyRoomsCreated", 1, {
+    silentAchievements: false
+  });
+
+  showToast(`Sala "${title}" creada.`);
+  return true;
+}
+
+async function addStudyRoomTask(roomId, rawTask){
+  const safeRoomId = String(roomId || "").trim();
+  const identity = getStudyRoomIdentity();
+  if (!safeRoomId || !identity?.uid) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+
+  const taskText = String(rawTask || "").trim().slice(0, STUDY_ROOM_MAX_TASK_LENGTH);
+  if (!taskText) return false;
+
+  await ensureStudyRoomMembership(studyRoomsState.activeRoomData);
+
+  const now = Date.now();
+  const taskId = `t_${now}_${Math.random().toString(36).slice(2, 8)}`;
+  const payload = {
+    id: taskId,
+    text: taskText,
+    createdAt: now,
+    done: false,
+    expGiven: false
+  };
+
+  if (activeRoomSource === "owned") {
+    try {
+      await updateDoc(doc(db, "users", identity.uid), {
+        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${taskId}`]: payload,
+        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+      });
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para actualizar la sala.");
+        return false;
+      }
+      console.error("No se pudo agregar tarea en sala de estudio local.", err);
+      showToast("No se pudo agregar la tarea.");
+      return false;
+    }
+  } else {
+    try {
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
+        [`boards.${identity.uid}.tasks.${taskId}`]: payload,
+        [`boards.${identity.uid}.updatedAt`]: now,
+        [`participants.${identity.uid}.updatedAt`]: now,
+        updatedAt: now
+      });
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para actualizar la sala.");
+        return false;
+      }
+      console.error("No se pudo agregar tarea en sala de estudio.", err);
+      showToast("No se pudo agregar la tarea.");
+      return false;
+    }
+  }
+
+  const activeRoomData = studyRoomsState.activeRoomData;
+  if (
+    activeRoomData &&
+    typeof activeRoomData === "object" &&
+    String(activeRoomData.id || "").trim() === safeRoomId
+  ) {
+    const previousBoards = Array.isArray(activeRoomData.boards) ? activeRoomData.boards : [];
+    let hasOwnBoard = false;
+    let changed = false;
+
+    let nextBoards = previousBoards.map((boardEntry) => {
+      if (String(boardEntry?.uid || "").trim() !== identity.uid) return boardEntry;
+      hasOwnBoard = true;
+      changed = true;
+      const previousTasks = Array.isArray(boardEntry?.tasks) ? boardEntry.tasks : [];
+      const nextTasks = previousTasks.filter((taskEntry) => {
+        return String(taskEntry?.id || "").trim() !== taskId;
+      });
+      nextTasks.push(payload);
+      sortTaskList(nextTasks);
+      return {
+        ...boardEntry,
+        name: identity.name,
+        photo: identity.photo,
+        updatedAt: Math.max(Number(boardEntry?.updatedAt) || 0, now),
+        tasks: nextTasks
+      };
+    });
+
+    if (!hasOwnBoard) {
+      changed = true;
+      nextBoards = [
+        ...nextBoards,
+        {
+          uid: identity.uid,
+          name: identity.name,
+          photo: identity.photo,
+          joinedAt: now,
+          updatedAt: now,
+          tasks: [payload]
+        }
+      ];
+    }
+
+    if (changed) {
+      activeRoomData.boards = nextBoards;
+      activeRoomData.boardsByUid = new Map(nextBoards.map((entry) => [entry.uid, entry]));
+      activeRoomData.updatedAt = Math.max(Number(activeRoomData.updatedAt) || 0, now);
+    }
+  }
+
+  setStudyRoomTaskDraft(safeRoomId, "");
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    const patched = patchStudyRoomTaskCardUI(identity.uid);
+    if (!patched) {
+      const patchedBoards = patchStudyRoomBoardsUI();
+      if (!patchedBoards) {
+        patchStudyRoomsUI();
+      }
+    }
+  }
+  return true;
+}
+
+async function updateStudyRoomTaskText(roomId, taskId, rawText){
+  const safeRoomId = String(roomId || "").trim();
+  const safeTaskId = String(taskId || "").trim();
+  const identity = getStudyRoomIdentity();
+  if (!safeRoomId || !safeTaskId || !identity?.uid) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const roomData = studyRoomsState.activeRoomData;
+  if (!roomData || typeof roomData !== "object") return false;
+  const access = canCurrentUserAccessStudyRoom(roomData);
+  if (!access.allowed) return false;
+
+  const ownBoard = roomData.boardsByUid instanceof Map
+    ? roomData.boardsByUid.get(identity.uid)
+    : null;
+  const ownTasks = Array.isArray(ownBoard?.tasks) ? ownBoard.tasks : [];
+  const ownTask = ownTasks.find((entry) => String(entry?.id || "").trim() === safeTaskId);
+  if (!ownTask) return false;
+
+  const nextText = String(rawText || "").trim().slice(0, STUDY_ROOM_MAX_TASK_LENGTH);
+  if (!nextText) return false;
+  if (nextText === String(ownTask.text || "")) return true;
+
+  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const now = Date.now();
+
+  if (activeRoomSource === "owned") {
+    try {
+      await updateDoc(doc(db, "users", identity.uid), {
+        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.text`]: nextText,
+        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+      });
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para editar esa tarea.");
+        return false;
+      }
+      console.error("No se pudo editar tarea en sala local.", err);
+      showToast("No se pudo editar la tarea.");
+      return false;
+    }
+  } else {
+    try {
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
+        [`boards.${identity.uid}.tasks.${safeTaskId}.text`]: nextText,
+        [`boards.${identity.uid}.updatedAt`]: now,
+        [`participants.${identity.uid}.updatedAt`]: now,
+        updatedAt: now
+      });
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para editar esa tarea.");
+        return false;
+      }
+      console.error("No se pudo editar tarea en sala de estudio.", err);
+      showToast("No se pudo editar la tarea.");
+      return false;
+    }
+  }
+
+  const activeRoomData = studyRoomsState.activeRoomData;
+  if (
+    activeRoomData &&
+    typeof activeRoomData === "object" &&
+    String(activeRoomData.id || "").trim() === safeRoomId
+  ) {
+    const previousBoards = Array.isArray(activeRoomData.boards) ? activeRoomData.boards : [];
+    let changed = false;
+    const nextBoards = previousBoards.map((boardEntry) => {
+      if (String(boardEntry?.uid || "").trim() !== identity.uid) return boardEntry;
+      const previousTasks = Array.isArray(boardEntry?.tasks) ? boardEntry.tasks : [];
+      const nextTasks = previousTasks.map((taskEntry) => {
+        if (String(taskEntry?.id || "").trim() !== safeTaskId) return taskEntry;
+        changed = true;
+        return {
+          ...taskEntry,
+          text: nextText
+        };
+      });
+      if (!changed) return boardEntry;
+      sortTaskList(nextTasks);
+      return {
+        ...boardEntry,
+        updatedAt: Math.max(Number(boardEntry?.updatedAt) || 0, now),
+        tasks: nextTasks
+      };
+    });
+
+    if (changed) {
+      activeRoomData.boards = nextBoards;
+      activeRoomData.boardsByUid = new Map(nextBoards.map((entry) => [entry.uid, entry]));
+      activeRoomData.updatedAt = Math.max(Number(activeRoomData.updatedAt) || 0, now);
+    }
+  }
+
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    const patched = patchStudyRoomTaskCardUI(identity.uid);
+    if (!patched) {
+      const patchedBoards = patchStudyRoomBoardsUI();
+      if (!patchedBoards) {
+        patchStudyRoomsUI();
+      }
+    }
+  }
+  return true;
+}
+
+async function setStudyRoomTaskDone(
+  roomId,
+  taskId,
+  nextDone,
+  {
+    toggleElement = null
+  } = {}
+){
+  const safeRoomId = String(roomId || "").trim();
+  const safeTaskId = String(taskId || "").trim();
+  const identity = getStudyRoomIdentity();
+  if (!safeRoomId || !safeTaskId || !identity?.uid) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const roomData = studyRoomsState.activeRoomData;
+  if (!roomData || typeof roomData !== "object") return false;
+  const access = canCurrentUserAccessStudyRoom(roomData);
+  if (!access.allowed) return false;
+
+  const ownBoard = roomData.boardsByUid instanceof Map
+    ? roomData.boardsByUid.get(identity.uid)
+    : null;
+  const ownTasks = Array.isArray(ownBoard?.tasks) ? ownBoard.tasks : [];
+  const ownTask = ownTasks.find((entry) => String(entry?.id || "").trim() === safeTaskId);
+  if (!ownTask) return false;
+
+  const desiredDone = !!nextDone;
+  if (!!ownTask.done === desiredDone) return true;
+  const shouldMarkExpGiven = desiredDone && ownTask.expGiven !== true;
+
+  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const now = Date.now();
+
+  if (activeRoomSource === "owned") {
+    try {
+      const payload = {
+        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.done`]: desiredDone,
+        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+      };
+      if (shouldMarkExpGiven) {
+        payload[`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.expGiven`] = true;
+      }
+      await updateDoc(doc(db, "users", identity.uid), payload);
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para actualizar esa tarea.");
+        return false;
+      }
+      console.error("No se pudo actualizar estado de tarea en sala local.", err);
+      showToast("No se pudo actualizar la tarea.");
+      return false;
+    }
+  } else {
+    try {
+      const payload = {
+        [`boards.${identity.uid}.tasks.${safeTaskId}.done`]: desiredDone,
+        [`boards.${identity.uid}.updatedAt`]: now,
+        [`participants.${identity.uid}.updatedAt`]: now,
+        updatedAt: now
+      };
+      if (shouldMarkExpGiven) {
+        payload[`boards.${identity.uid}.tasks.${safeTaskId}.expGiven`] = true;
+      }
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), payload);
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para actualizar esa tarea.");
+        return false;
+      }
+      console.error("No se pudo actualizar estado de tarea en sala de estudio.", err);
+      showToast("No se pudo actualizar la tarea.");
+      return false;
+    }
+  }
+
+  const activeRoomData = studyRoomsState.activeRoomData;
+  if (
+    activeRoomData &&
+    typeof activeRoomData === "object" &&
+    String(activeRoomData.id || "").trim() === safeRoomId
+  ) {
+    const previousBoards = Array.isArray(activeRoomData.boards) ? activeRoomData.boards : [];
+    let changed = false;
+    const nextBoards = previousBoards.map((boardEntry) => {
+      if (String(boardEntry?.uid || "").trim() !== identity.uid) return boardEntry;
+      const previousTasks = Array.isArray(boardEntry?.tasks) ? boardEntry.tasks : [];
+      const nextTasks = previousTasks.map((taskEntry) => {
+        if (String(taskEntry?.id || "").trim() !== safeTaskId) return taskEntry;
+        changed = true;
+        return {
+          ...taskEntry,
+          done: desiredDone,
+          expGiven: shouldMarkExpGiven ? true : taskEntry?.expGiven === true
+        };
+      });
+      if (!changed) return boardEntry;
+      sortTaskList(nextTasks);
+      return {
+        ...boardEntry,
+        updatedAt: Math.max(Number(boardEntry?.updatedAt) || 0, now),
+        tasks: nextTasks
+      };
+    });
+
+    if (changed) {
+      activeRoomData.boards = nextBoards;
+      activeRoomData.boardsByUid = new Map(nextBoards.map((entry) => [entry.uid, entry]));
+      activeRoomData.updatedAt = Math.max(Number(activeRoomData.updatedAt) || 0, now);
+    }
+  }
+
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    const patched = patchStudyRoomTaskCardUI(identity.uid);
+    if (!patched) {
+      const patchedBoards = patchStudyRoomBoardsUI();
+      if (!patchedBoards) {
+        patchStudyRoomsUI();
+      }
+    }
+  }
+
+  let shouldSavePlayer = false;
+  let rewarded = false;
+
+  if (shouldMarkExpGiven) {
+    player.totalCompletedTasks = Math.max(
+      0,
+      Number(player.totalCompletedTasks) || 0
+    ) + 1;
+    player.totalStudyRoomTasksCompleted = Math.max(
+      0,
+      Number(player.totalStudyRoomTasksCompleted) || 0
+    ) + 1;
+    player.updatedAt = Date.now();
+    shouldSavePlayer = true;
+
+    rewarded = rewardExp();
+    if (rewarded) {
+      shouldSavePlayer = true;
+      const rewardAnchor = toggleElement instanceof Element
+        ? toggleElement
+        : null;
+      showExpGain(rewardAnchor, 100);
+    } else if (!player.dailyLimitShown) {
+      player.dailyLimitShown = true;
+      player.updatedAt = Date.now();
+      shouldSavePlayer = true;
+      showToast("Límite diario de EXP alcanzado");
+    }
+  }
+
+  if (shouldSavePlayer) {
+    const achievementChanged = checkAchievements({ silent: false });
+    if (!achievementChanged) {
+      await save({ includePlayer: true });
+    }
+  }
+
+  return true;
+}
+
+async function deleteStudyRoomTask(roomId, taskId){
+  const safeRoomId = String(roomId || "").trim();
+  const safeTaskId = String(taskId || "").trim();
+  const identity = getStudyRoomIdentity();
+  if (!safeRoomId || !safeTaskId || !identity?.uid) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const roomData = studyRoomsState.activeRoomData;
+  if (!roomData || typeof roomData !== "object") return false;
+  const access = canCurrentUserAccessStudyRoom(roomData);
+  if (!access.allowed) return false;
+
+  const ownBoard = roomData.boardsByUid instanceof Map
+    ? roomData.boardsByUid.get(identity.uid)
+    : null;
+  const ownTasks = Array.isArray(ownBoard?.tasks) ? ownBoard.tasks : [];
+  const hasTask = ownTasks.some((entry) => String(entry?.id || "").trim() === safeTaskId);
+  if (!hasTask) return false;
+
+  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const now = Date.now();
+
+  if (activeRoomSource === "owned") {
+    try {
+      await updateDoc(doc(db, "users", identity.uid), {
+        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}`]: deleteField(),
+        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+      });
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para borrar esa tarea.");
+        return false;
+      }
+      console.error("No se pudo borrar tarea en sala local.", err);
+      showToast("No se pudo borrar la tarea.");
+      return false;
+    }
+  } else {
+    try {
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
+        [`boards.${identity.uid}.tasks.${safeTaskId}`]: deleteField(),
+        [`boards.${identity.uid}.updatedAt`]: now,
+        [`participants.${identity.uid}.updatedAt`]: now,
+        updatedAt: now
+      });
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para borrar esa tarea.");
+        return false;
+      }
+      console.error("No se pudo borrar tarea en sala de estudio.", err);
+      showToast("No se pudo borrar la tarea.");
+      return false;
+    }
+  }
+
+  const activeRoomData = studyRoomsState.activeRoomData;
+  if (
+    activeRoomData &&
+    typeof activeRoomData === "object" &&
+    String(activeRoomData.id || "").trim() === safeRoomId
+  ) {
+    const previousBoards = Array.isArray(activeRoomData.boards) ? activeRoomData.boards : [];
+    let changed = false;
+    const nextBoards = previousBoards.map((boardEntry) => {
+      if (String(boardEntry?.uid || "").trim() !== identity.uid) return boardEntry;
+      const previousTasks = Array.isArray(boardEntry?.tasks) ? boardEntry.tasks : [];
+      const nextTasks = previousTasks.filter((taskEntry) => {
+        const shouldKeep = String(taskEntry?.id || "").trim() !== safeTaskId;
+        if (!shouldKeep) changed = true;
+        return shouldKeep;
+      });
+      if (!changed) return boardEntry;
+      sortTaskList(nextTasks);
+      return {
+        ...boardEntry,
+        updatedAt: Math.max(Number(boardEntry?.updatedAt) || 0, now),
+        tasks: nextTasks
+      };
+    });
+
+    if (changed) {
+      activeRoomData.boards = nextBoards;
+      activeRoomData.boardsByUid = new Map(nextBoards.map((entry) => [entry.uid, entry]));
+      activeRoomData.updatedAt = Math.max(Number(activeRoomData.updatedAt) || 0, now);
+    }
+  }
+
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    const patched = patchStudyRoomTaskCardUI(identity.uid);
+    if (!patched) {
+      const patchedBoards = patchStudyRoomBoardsUI();
+      if (!patchedBoards) {
+        patchStudyRoomsUI();
+      }
+    }
+  }
+  return true;
+}
+
+function normalizeStudyRoomChatMessageKind(value = ""){
+  return String(value || "").trim().toLowerCase() === "system"
+    ? "system"
+    : "message";
+}
+
+async function addStudyRoomSystemMessage(roomId, rawMessage){
+  return addStudyRoomChatMessage(roomId, rawMessage, { kind: "system" });
+}
+
+async function addStudyRoomChatMessage(roomId, rawMessage, { kind = "message" } = {}){
+  const safeRoomId = String(roomId || "").trim();
+  const identity = getStudyRoomIdentity();
+  if (!safeRoomId || !identity?.uid) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const roomData = studyRoomsState.activeRoomData;
+  if (!roomData || typeof roomData !== "object") return false;
+  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const access = canCurrentUserAccessStudyRoom(roomData);
+  if (!access.allowed) return false;
+
+  const text = String(rawMessage || "").trim().slice(0, STUDY_ROOM_CHAT_MAX_LENGTH);
+  if (!text) return false;
+  const safeKind = normalizeStudyRoomChatMessageKind(kind);
+
+  await ensureStudyRoomMembership(roomData);
+
+  const now = Date.now();
+  const messageId = `sc_${now}_${Math.random().toString(36).slice(2, 8)}`;
+  const payload = {
+    id: messageId,
+    uid: identity.uid,
+    name: identity.name,
+    photo: identity.photo,
+    kind: safeKind,
+    text,
+    createdAt: now
+  };
+
+  if (activeRoomSource === "owned") {
+    try {
+      await updateDoc(doc(db, "users", identity.uid), {
+        [`${STUDY_ROOM_OWNED_FIELD}.chat.${messageId}`]: payload,
+        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+      });
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para enviar mensajes en esta sala.");
+        return false;
+      }
+      console.error("No se pudo enviar mensaje de sala (local).", err);
+      showToast("No se pudo enviar el mensaje.");
+      return false;
+    }
+  } else {
+    try {
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
+        [`chat.${messageId}`]: payload,
+        [`participants.${identity.uid}.updatedAt`]: now,
+        updatedAt: now
+      });
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para enviar mensajes en esta sala.");
+        return false;
+      }
+      console.error("No se pudo enviar mensaje de sala.", err);
+      showToast("No se pudo enviar el mensaje.");
+      return false;
+    }
+  }
+
+  if (safeKind !== "system") {
+    setStudyRoomChatDraft(safeRoomId, "");
+  }
+  const activeRoomData = studyRoomsState.activeRoomData;
+  if (
+    activeRoomData &&
+    typeof activeRoomData === "object" &&
+    String(activeRoomData.id || "").trim() === safeRoomId
+  ) {
+    const previousMessages = Array.isArray(activeRoomData.chatMessages)
+      ? activeRoomData.chatMessages
+      : [];
+    const nextMessages = previousMessages.filter((entry) => {
+      return String(entry?.id || "").trim() !== messageId;
+    });
+    nextMessages.push(payload);
+    nextMessages.sort((a, b) => {
+      const byCreatedAt = (Number(a?.createdAt) || 0) - (Number(b?.createdAt) || 0);
+      if (byCreatedAt !== 0) return byCreatedAt;
+      return String(a?.id || "").localeCompare(String(b?.id || ""), "es", { sensitivity: "base" });
+    });
+    activeRoomData.chatMessages = nextMessages;
+    activeRoomData.chatById = new Map(nextMessages.map((entry) => [entry.id, entry]));
+  }
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    patchStudyRoomChatUI();
+  }
+  if (safeKind === "message") {
+    void registerCollaborativeProgress("totalMessagesSent", 1, {
+      silentAchievements: false
+    });
+  }
+  return true;
+}
+
+async function persistStudyRoomMusicState(roomId, nextMusic = {}){
+  const safeRoomId = String(roomId || "").trim();
+  const identity = getStudyRoomIdentity();
+  if (!safeRoomId || !identity?.uid) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const roomData = studyRoomsState.activeRoomData;
+  if (!roomData || typeof roomData !== "object") return false;
+  const access = canCurrentUserAccessStudyRoom(roomData);
+  if (!access.allowed) return false;
+
+  await ensureStudyRoomMembership(roomData);
+
+  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const now = Math.max(0, Number(nextMusic.updatedAt) || Date.now());
+  const normalizedMusic = normalizeStudyRoomMusicData({
+    ...nextMusic,
+    updatedAt: now,
+    updatedByUid: identity.uid
+  });
+
+  if (activeRoomSource === "owned") {
+    try {
+      await updateDoc(doc(db, "users", identity.uid), {
+        [`${STUDY_ROOM_OWNED_FIELD}.music`]: normalizedMusic,
+        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+      });
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para controlar la música de esta sala.");
+        return false;
+      }
+      console.error("No se pudo sincronizar música de sala (local).", err);
+      showToast("No se pudo actualizar la música.");
+      return false;
+    }
+  } else {
+    try {
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
+        music: normalizedMusic,
+        [`participants.${identity.uid}.updatedAt`]: now,
+        updatedAt: now
+      });
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para controlar la música de esta sala.");
+        return false;
+      }
+      console.error("No se pudo sincronizar música de sala.", err);
+      showToast("No se pudo actualizar la música.");
+      return false;
+    }
+  }
+
+  if (
+    studyRoomsState.activeRoomData &&
+    typeof studyRoomsState.activeRoomData === "object" &&
+    String(studyRoomsState.activeRoomData.id || "").trim() === safeRoomId
+  ) {
+    studyRoomsState.activeRoomData.music = normalizedMusic;
+    studyRoomsState.activeRoomData.updatedAt = Math.max(
+      Number(studyRoomsState.activeRoomData.updatedAt) || 0,
+      now
+    );
+  }
+  return true;
+}
+
+async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {}, rawSystemText = ""){
+  const safeRoomId = String(roomId || "").trim();
+  const identity = getStudyRoomIdentity();
+  if (!safeRoomId || !identity?.uid) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const roomData = studyRoomsState.activeRoomData;
+  if (!roomData || typeof roomData !== "object") return false;
+  const access = canCurrentUserAccessStudyRoom(roomData);
+  if (!access.allowed) return false;
+
+  await ensureStudyRoomMembership(roomData);
+
+  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const now = Math.max(0, Number(nextMusic.updatedAt) || Date.now());
+  const normalizedMusic = normalizeStudyRoomMusicData({
+    ...nextMusic,
+    updatedAt: now,
+    updatedByUid: identity.uid
+  });
+
+  const safeSystemText = String(rawSystemText || "").trim().slice(0, STUDY_ROOM_CHAT_MAX_LENGTH);
+  const shouldAppendSystemMessage = !!safeSystemText;
+  const messageId = shouldAppendSystemMessage
+    ? `sc_${now}_${Math.random().toString(36).slice(2, 8)}`
+    : "";
+  const systemPayload = shouldAppendSystemMessage
+    ? {
+      id: messageId,
+      uid: identity.uid,
+      name: identity.name,
+      photo: identity.photo,
+      kind: "system",
+      text: safeSystemText,
+      createdAt: now
+    }
+    : null;
+
+  if (activeRoomSource === "owned") {
+    const ownedUpdates = {
+      [`${STUDY_ROOM_OWNED_FIELD}.music`]: normalizedMusic,
+      [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
+      [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+    };
+    if (systemPayload) {
+      ownedUpdates[`${STUDY_ROOM_OWNED_FIELD}.chat.${messageId}`] = systemPayload;
+      ownedUpdates[`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`] = now;
+    }
+
+    try {
+      await updateDoc(doc(db, "users", identity.uid), ownedUpdates);
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para controlar la música de esta sala.");
+        return false;
+      }
+      console.error("No se pudo sincronizar música/chat de sala (local).", err);
+      showToast("No se pudo actualizar la música.");
+      return false;
+    }
+  } else {
+    const roomUpdates = {
+      music: normalizedMusic,
+      [`participants.${identity.uid}.updatedAt`]: now,
+      updatedAt: now
+    };
+    if (systemPayload) {
+      roomUpdates[`chat.${messageId}`] = systemPayload;
+    }
+
+    try {
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), roomUpdates);
+    } catch (err) {
+      if (isFirestorePermissionError(err)) {
+        showToast("No hay permisos para controlar la música de esta sala.");
+        return false;
+      }
+      console.error("No se pudo sincronizar música/chat de sala.", err);
+      showToast("No se pudo actualizar la música.");
+      return false;
+    }
+  }
+
+  if (
+    studyRoomsState.activeRoomData &&
+    typeof studyRoomsState.activeRoomData === "object" &&
+    String(studyRoomsState.activeRoomData.id || "").trim() === safeRoomId
+  ) {
+    studyRoomsState.activeRoomData.music = normalizedMusic;
+    studyRoomsState.activeRoomData.updatedAt = Math.max(
+      Number(studyRoomsState.activeRoomData.updatedAt) || 0,
+      now
+    );
+
+    if (systemPayload) {
+      const previousMessages = Array.isArray(studyRoomsState.activeRoomData.chatMessages)
+        ? studyRoomsState.activeRoomData.chatMessages
+        : [];
+      const nextMessages = previousMessages.filter((entry) => {
+        return String(entry?.id || "").trim() !== messageId;
+      });
+      nextMessages.push(systemPayload);
+      nextMessages.sort((a, b) => {
+        const byCreatedAt = (Number(a?.createdAt) || 0) - (Number(b?.createdAt) || 0);
+        if (byCreatedAt !== 0) return byCreatedAt;
+        return String(a?.id || "").localeCompare(String(b?.id || ""), "es", { sensitivity: "base" });
+      });
+      studyRoomsState.activeRoomData.chatMessages = nextMessages;
+      studyRoomsState.activeRoomData.chatById = new Map(nextMessages.map((entry) => [entry.id, entry]));
+    }
+  }
+
+  return true;
+}
+
+function queueStudyRoomMusicLiveSearch(roomId, rawQuery){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return;
+
+  if (!(studyRoomsState.musicSearchDebounceTimerByRoomId instanceof Map)) {
+    studyRoomsState.musicSearchDebounceTimerByRoomId = new Map();
+  }
+
+  const previousTimerId = studyRoomsState.musicSearchDebounceTimerByRoomId.get(safeRoomId);
+  if (previousTimerId) {
+    try {
+      clearTimeout(previousTimerId);
+    } catch (_error) {}
+  }
+
+  const queryText = String(rawQuery || "").trim();
+  if (!queryText || queryText.length < STUDY_ROOM_MUSIC_SEARCH_MIN_LENGTH) {
+    bumpStudyRoomMusicSearchToken(safeRoomId);
+    setStudyRoomMusicSearchLoading(safeRoomId, false);
+    setStudyRoomMusicSearchResults(safeRoomId, []);
+    setStudyRoomMusicSearchError(safeRoomId, "");
+    if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+      patchStudyRoomMusicUI();
+    }
+    studyRoomsState.musicSearchDebounceTimerByRoomId.delete(safeRoomId);
+    return;
+  }
+
+  const timeoutId = setTimeout(() => {
+    if (studyRoomsState.musicSearchDebounceTimerByRoomId instanceof Map) {
+      studyRoomsState.musicSearchDebounceTimerByRoomId.delete(safeRoomId);
+    }
+    void searchStudyRoomMusic(safeRoomId, queryText, {
+      showMinLengthError: false,
+      showFailureError: false
+    });
+  }, STUDY_ROOM_MUSIC_SEARCH_DEBOUNCE_MS);
+
+  studyRoomsState.musicSearchDebounceTimerByRoomId.set(safeRoomId, timeoutId);
+}
+
+async function searchStudyRoomMusic(
+  roomId,
+  rawQuery,
+  { showMinLengthError = true, showFailureError = true } = {}
+){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const queryText = String(rawQuery || "").trim();
+  setStudyRoomMusicSearchDraft(safeRoomId, queryText);
+
+  const currentToken = bumpStudyRoomMusicSearchToken(safeRoomId);
+  if (!queryText || queryText.length < STUDY_ROOM_MUSIC_SEARCH_MIN_LENGTH) {
+    setStudyRoomMusicSearchResults(safeRoomId, []);
+    setStudyRoomMusicSearchError(
+      safeRoomId,
+      showMinLengthError
+        ? `Escribí al menos ${STUDY_ROOM_MUSIC_SEARCH_MIN_LENGTH} caracteres para buscar.`
+        : ""
+    );
+    setStudyRoomMusicSearchLoading(safeRoomId, false);
+    if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+      patchStudyRoomMusicUI();
+    }
+    return false;
+  }
+
+  setStudyRoomMusicSearchLoading(safeRoomId, true);
+  setStudyRoomMusicSearchError(safeRoomId, "");
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    patchStudyRoomMusicUI();
+  }
+
+  try {
+    const results = await searchYouTubeMusicVideos(queryText);
+    if (currentToken !== getStudyRoomMusicSearchToken(safeRoomId)) {
+      return false;
+    }
+
+    setStudyRoomMusicSearchResults(safeRoomId, results);
+    if (!results.length) {
+      setStudyRoomMusicSearchError(
+        safeRoomId,
+        "No encontré resultados. Probá otro término o pegá un link de YouTube."
+      );
+    } else {
+      setStudyRoomMusicSearchError(safeRoomId, "");
+    }
+  } catch (_error) {
+    if (currentToken !== getStudyRoomMusicSearchToken(safeRoomId)) {
+      return false;
+    }
+    if (showFailureError) {
+      setStudyRoomMusicSearchResults(safeRoomId, []);
+      setStudyRoomMusicSearchError(
+        safeRoomId,
+        "No se pudo buscar ahora. Probá en unos segundos o pegá un link directo."
+      );
+    } else {
+      setStudyRoomMusicSearchResults(safeRoomId, []);
+      setStudyRoomMusicSearchError(safeRoomId, "");
+    }
+  } finally {
+    if (currentToken === getStudyRoomMusicSearchToken(safeRoomId)) {
+      setStudyRoomMusicSearchLoading(safeRoomId, false);
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        patchStudyRoomMusicUI();
+      }
+    }
+  }
+
+  return true;
+}
+
+async function setStudyRoomMusicPlaybackState(roomId, desiredState = "paused"){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const roomData = studyRoomsState.activeRoomData;
+  if (!roomData || typeof roomData !== "object") return false;
+  const currentMusic = normalizeStudyRoomMusicData(roomData.music);
+  if (!currentMusic.videoId) {
+    showToast("No hay un video activo para controlar.");
+    return false;
+  }
+
+  const safeDesiredState = String(desiredState || "").trim().toLowerCase() === "playing"
+    ? "playing"
+    : "paused";
+  if (safeDesiredState === currentMusic.state) {
+    return true;
+  }
+
+  const now = Date.now();
+  const currentPosition = Math.max(0, getStudyRoomMusicCurrentPosition(currentMusic, now));
+  const nextMusic = normalizeStudyRoomMusicData({
+    ...currentMusic,
+    state: safeDesiredState,
+    positionSeconds: currentPosition,
+    startedAt: safeDesiredState === "playing" ? now : 0,
+    updatedAt: now
+  });
+
+  const identity = getStudyRoomIdentity();
+  const actorName = String(identity?.name || "Alguien").trim() || "Alguien";
+  const systemText = safeDesiredState === "playing"
+    ? `${actorName} ha reanudado la reproduccion`
+    : `${actorName} ha pausado la reproduccion`;
+
+  const persisted = await persistStudyRoomMusicStateWithSystemMessage(safeRoomId, nextMusic, systemText);
+  if (!persisted) return false;
+
+  const pendingIframeState = studyRoomsState.musicIframePendingStateByRoomId instanceof Map
+    ? String(studyRoomsState.musicIframePendingStateByRoomId.get(safeRoomId) || "").trim()
+    : "";
+  const shouldSkipImmediateMusicPatch = pendingIframeState === safeDesiredState;
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    patchStudyRoomChatUI();
+    if (!shouldSkipImmediateMusicPatch) {
+      patchStudyRoomMusicUI();
+    }
+  }
+  return true;
+}
+
+async function setStudyRoomMusicTrack(roomId, track = null){
+  const safeRoomId = String(roomId || "").trim();
+  const normalizedTrack = normalizeStudyRoomMusicSearchItem(track || {});
+  if (!safeRoomId || !normalizedTrack?.videoId) return false;
+  if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
+
+  const now = Date.now();
+  const nextMusic = normalizeStudyRoomMusicData({
+    ...normalizedTrack,
+    state: "playing",
+    positionSeconds: 0,
+    startedAt: now,
+    updatedAt: now
+  });
+
+  const identity = getStudyRoomIdentity();
+  const actorName = String(identity?.name || "Alguien").trim() || "Alguien";
+  const safeTitle = String(normalizedTrack.title || "un video").replace(/\s+/g, " ").trim() || "un video";
+
+  const persisted = await persistStudyRoomMusicStateWithSystemMessage(
+    safeRoomId,
+    nextMusic,
+    `${actorName} reprodujo ${safeTitle}`
+  );
+  if (!persisted) return false;
+
+  void registerCollaborativeProgress("totalStudyRoomMediaShared", 1, {
+    silentAchievements: false
+  });
+
+  setStudyRoomMusicSearchError(safeRoomId, "");
+  setStudyRoomMusicSearchDraft(safeRoomId, "");
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    patchStudyRoomMusicUI();
+    patchStudyRoomChatUI();
+  }
+  return true;
+}
+
+function bindStudyRoomsEvents(scope = board){
+  const root = scope.querySelector(".study-dashboard");
+  if (!(root instanceof HTMLElement)) return;
+
+  const closeStudyRoomTaskMenus = () => {
+    root.querySelectorAll("[data-study-task-actions-anchor].open").forEach((anchor) => {
+      anchor.classList.remove("open");
+      anchor.classList.remove("open-upwards");
+      anchor.classList.remove("schedule-open");
+      anchor.classList.remove("tag-open");
+      anchor.classList.remove("tag-create-open");
+      anchor.classList.remove("postpone-open");
+      anchor.closest(".task")?.classList.remove("menu-open");
+    });
+  };
+
+  const closeStudyRoomInviteMenus = () => {
+    root.querySelectorAll("[data-study-room-invite-wrap].open").forEach((wrap) => {
+      wrap.classList.remove("open");
+    });
+    root.querySelectorAll("[data-study-room-invite-menu].open").forEach((menu) => {
+      menu.classList.remove("open");
+    });
+    root.querySelectorAll("[data-study-room-invite-toggle][aria-expanded='true']").forEach((toggle) => {
+      toggle.setAttribute("aria-expanded", "false");
+    });
+  };
+
+  root.addEventListener("input", (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+
+    if (input.id === "studyRoomTitleInput") {
+      studyRoomsState.createTitleDraft = String(input.value || "");
+      return;
+    }
+
+    if (input.hasAttribute("data-study-task-input")) {
+      const safeRoomId = String(input.dataset.studyRoomId || "").trim();
+      if (!safeRoomId) return;
+      setStudyRoomTaskDraft(safeRoomId, String(input.value || ""));
+      return;
+    }
+
+    if (input.hasAttribute("data-study-room-chat-input")) {
+      const safeRoomId = String(input.dataset.studyRoomId || "").trim();
+      if (!safeRoomId) return;
+      setStudyRoomChatDraft(safeRoomId, String(input.value || ""));
+      return;
+    }
+
+    if (input.hasAttribute("data-study-room-music-link-input")) {
+      const safeRoomId = String(input.dataset.studyRoomId || "").trim();
+      if (!safeRoomId) return;
+      setStudyRoomMusicSearchDraft(safeRoomId, String(input.value || ""));
+    }
+  });
+
+  root.addEventListener("click", async (event) => {
+    if (!(event.target instanceof Element)) return;
+
+    const insideTaskActions = !!event.target.closest("[data-study-task-actions-anchor]");
+    if (!insideTaskActions) {
+      closeStudyRoomTaskMenus();
+    }
+    const insideInviteMenu = !!event.target.closest("[data-study-room-invite-wrap]");
+    if (!insideInviteMenu) {
+      closeStudyRoomInviteMenus();
+    }
+
+    const inviteToggleButton = event.target.closest("[data-study-room-invite-toggle]");
+    if (inviteToggleButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const wrap = inviteToggleButton.closest("[data-study-room-invite-wrap]");
+      const menu = wrap?.querySelector?.("[data-study-room-invite-menu]");
+      if (!(wrap instanceof HTMLElement) || !(menu instanceof HTMLElement)) return;
+
+      const shouldOpen = !menu.classList.contains("open");
+      closeStudyRoomInviteMenus();
+      if (shouldOpen) {
+        wrap.classList.add("open");
+        menu.classList.add("open");
+        inviteToggleButton.setAttribute("aria-expanded", "true");
+      }
+      return;
+    }
+
+    const inviteFriendButton = event.target.closest("[data-study-room-invite-friend]");
+    if (inviteFriendButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (inviteFriendButton.dataset.busy === "1") return;
+
+      const friendUid = String(inviteFriendButton.dataset.socialFriendUid || "").trim();
+      const friendName = String(inviteFriendButton.dataset.socialFriendName || "usuario").trim() || "usuario";
+      if (!friendUid) return;
+
+      inviteFriendButton.dataset.busy = "1";
+      inviteFriendButton.disabled = true;
+      try {
+        await sendStudyRoomInvitation(friendUid, friendName);
+        closeStudyRoomInviteMenus();
+      } finally {
+        inviteFriendButton.dataset.busy = "0";
+        if (inviteFriendButton.isConnected) {
+          inviteFriendButton.disabled = false;
+        }
+      }
+      return;
+    }
+
+    const completionToggleButton = event.target.closest("[data-completed-toggle-scope='study-room']");
+    if (completionToggleButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      const safeRoomId = String(completionToggleButton.dataset.studyRoomId || "").trim();
+      const safeCardUid = String(completionToggleButton.dataset.studyCardUid || "").trim();
+      if (!safeRoomId || !safeCardUid) return;
+
+      const completionStateKey = buildTaskCompletionStateKeyForStudyRoom(safeRoomId, safeCardUid);
+      if (!completionStateKey) return;
+      const nextCollapsed = !isTaskCompletionSectionCollapsed(completionStateKey);
+      setTaskCompletionSectionCollapsed(completionStateKey, nextCollapsed);
+
+      const patched = patchStudyRoomTaskCardUI(safeCardUid);
+      if (!patched) {
+        const patchedBoards = patchStudyRoomBoardsUI();
+        if (!patchedBoards) {
+          patchStudyRoomsUI();
+        }
+      }
+      return;
+    }
+
+    const taskMenuToggleButton = event.target.closest("[data-study-task-menu-toggle]");
+    if (taskMenuToggleButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      const anchor = taskMenuToggleButton.closest("[data-study-task-actions-anchor]");
+      const taskElement = taskMenuToggleButton.closest("[data-study-task-item]");
+      if (!(anchor instanceof HTMLElement) || !(taskElement instanceof HTMLElement)) return;
+
+      const shouldOpen = !anchor.classList.contains("open");
+      closeStudyRoomTaskMenus();
+      if (shouldOpen) {
+        closeTaskActionMenu();
+        anchor.classList.add("open");
+        taskElement.classList.add("menu-open");
+        positionTaskActionMenu(anchor);
+        requestAnimationFrame(() => positionTaskActionMenu(anchor));
+      }
+      return;
+    }
+
+    const toggleTaskButton = event.target.closest("[data-study-task-toggle]");
+    if (toggleTaskButton instanceof HTMLElement) {
+      event.preventDefault();
+      if (toggleTaskButton.dataset.busy === "1") return;
+      const safeRoomId = String(toggleTaskButton.dataset.studyRoomId || "").trim();
+      const safeTaskId = String(toggleTaskButton.dataset.studyTaskId || "").trim();
+      if (!safeRoomId || !safeTaskId) return;
+
+      const nextDone = String(toggleTaskButton.dataset.studyTaskDone || "").trim() !== "1";
+      toggleTaskButton.dataset.busy = "1";
+      toggleTaskButton.setAttribute("aria-disabled", "true");
+      try {
+        const updated = await setStudyRoomTaskDone(
+          safeRoomId,
+          safeTaskId,
+          nextDone,
+          { toggleElement: toggleTaskButton }
+        );
+        if (updated && nextDone && soundEnabled) {
+          playRewardSound();
+        }
+      } finally {
+        toggleTaskButton.dataset.busy = "0";
+        if (toggleTaskButton.isConnected) {
+          toggleTaskButton.removeAttribute("aria-disabled");
+        }
+      }
+      return;
+    }
+
+    const deleteTaskButton = event.target.closest("[data-study-task-delete]");
+    if (deleteTaskButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      if (deleteTaskButton.dataset.busy === "1") return;
+      const safeRoomId = String(deleteTaskButton.dataset.studyRoomId || "").trim();
+      const safeTaskId = String(deleteTaskButton.dataset.studyTaskId || "").trim();
+      if (!safeRoomId || !safeTaskId) return;
+
+      closeStudyRoomTaskMenus();
+      deleteTaskButton.dataset.busy = "1";
+      deleteTaskButton.disabled = true;
+      try {
+        const deleted = await deleteStudyRoomTask(safeRoomId, safeTaskId);
+        if (deleted && soundEnabled) {
+          playDeleteTaskSound();
+        }
+      } finally {
+        deleteTaskButton.dataset.busy = "0";
+        if (deleteTaskButton.isConnected) {
+          deleteTaskButton.disabled = false;
+        }
+      }
+      return;
+    }
+
+    const joinButton = event.target.closest("[data-study-room-join]");
+    if (joinButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      const safeRoomId = String(joinButton.dataset.studyRoomId || "").trim();
+      if (!safeRoomId) return;
+      if (joinButton.dataset.busy === "1") return;
+
+      const roomFromList = studyRoomsState.rooms.find((entry) => String(entry?.id || "") === safeRoomId);
+      if (roomFromList) {
+        const access = canCurrentUserAccessStudyRoom(roomFromList);
+        if (!access.allowed) {
+          showToast("Necesitás invitación del creador para entrar.");
+          return;
+        }
+      }
+
+      const activeRoom = studyRoomsState.activeRoomData;
+      const ownUid = String(currentUser?.uid || "").trim();
+      const isSwitchingRoom = !!(
+        activeRoom &&
+        typeof activeRoom === "object" &&
+        String(activeRoom.id || "").trim() &&
+        String(activeRoom.id || "").trim() !== safeRoomId
+      );
+      const isOwnerSwitchingFromOwnRoom = !!(
+        isSwitchingRoom &&
+        String(activeRoom.createdByUid || "").trim() === ownUid
+      );
+      if (isOwnerSwitchingFromOwnRoom) {
+        const confirmClose = await openStudyRoomActionConfirmDialog({
+          title: "Cerrar sala actual",
+          message: "Si entrás a otra sala, tu sala actual se va a cerrar para todos y se van a borrar tareas, chat, título e integrantes.",
+          confirmLabel: "Cerrar y entrar",
+          cancelLabel: "Cancelar"
+        });
+        if (!confirmClose) {
+          return;
+        }
+      }
+
+      joinButton.dataset.busy = "1";
+      joinButton.disabled = true;
+      try {
+        await openStudyRoomSession(safeRoomId);
+      } finally {
+        joinButton.dataset.busy = "0";
+        if (joinButton.isConnected) {
+          joinButton.disabled = false;
+        }
+      }
+      return;
+    }
+
+    const leaveButton = event.target.closest("[data-study-room-leave]");
+    if (leaveButton instanceof HTMLButtonElement) {
+      event.preventDefault();
+      if (leaveButton.dataset.busy === "1") return;
+
+      const activeRoom = studyRoomsState.activeRoomData;
+      const ownUid = String(currentUser?.uid || "").trim();
+      const isOwnerLeavingOwnRoom = !!(
+        activeRoom &&
+        typeof activeRoom === "object" &&
+        String(activeRoom.createdByUid || "").trim() === ownUid
+      );
+
+      if (isOwnerLeavingOwnRoom) {
+        const confirmClose = await openStudyRoomActionConfirmDialog({
+          title: "Cerrar sala",
+          message: "Si cerrás la sala, se va a cerrar para todos. Se van a borrar tareas pendientes, chat, título e integrantes.",
+          confirmLabel: "Cerrar sala",
+          cancelLabel: "Cancelar"
+        });
+        if (!confirmClose) {
+          return;
+        }
+      }
+
+      leaveButton.dataset.busy = "1";
+      leaveButton.disabled = true;
+      try {
+        await leaveStudyRoomSession({ silent: false });
+      } finally {
+        leaveButton.dataset.busy = "0";
+        if (leaveButton.isConnected) {
+          leaveButton.disabled = false;
+        }
+      }
+    }
+  });
+
+  root.addEventListener("dblclick", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const taskTextElement = event.target.closest("[data-study-task-text]");
+    if (!(taskTextElement instanceof HTMLElement)) return;
+
+    const safeRoomId = String(taskTextElement.dataset.studyRoomId || "").trim();
+    const safeTaskId = String(taskTextElement.dataset.studyTaskId || "").trim();
+    if (!safeRoomId || !safeTaskId) return;
+
+    closeStudyRoomTaskMenus();
+    event.preventDefault();
+    event.stopPropagation();
+
+    const originalText = String(taskTextElement.textContent || "");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "edit-input";
+    input.maxLength = STUDY_ROOM_MAX_TASK_LENGTH;
+    input.value = originalText;
+
+    taskTextElement.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let handled = false;
+    const restoreTextElement = (textValue) => {
+      if (!input.isConnected) return;
+      const replacement = document.createElement("div");
+      replacement.className = "ttext";
+      replacement.dataset.studyTaskText = "";
+      replacement.dataset.studyRoomId = safeRoomId;
+      replacement.dataset.studyTaskId = safeTaskId;
+      replacement.textContent = textValue;
+      input.replaceWith(replacement);
+    };
+
+    const cancelEdit = () => {
+      if (handled) return;
+      handled = true;
+      restoreTextElement(originalText);
+    };
+
+    const saveEdit = async () => {
+      if (handled) return;
+      handled = true;
+      const nextText = String(input.value || "").trim().slice(0, STUDY_ROOM_MAX_TASK_LENGTH);
+      if (!nextText) {
+        restoreTextElement(originalText);
+        return;
+      }
+      if (nextText === String(originalText || "").trim()) {
+        restoreTextElement(nextText);
+        return;
+      }
+
+      const updated = await updateStudyRoomTaskText(safeRoomId, safeTaskId, nextText);
+      if (input.isConnected) {
+        restoreTextElement(updated ? nextText : originalText);
+      }
+    };
+
+    input.addEventListener("keydown", (keyEvent) => {
+      if (keyEvent.key === "Enter") {
+        keyEvent.preventDefault();
+        void saveEdit();
+      } else if (keyEvent.key === "Escape") {
+        keyEvent.preventDefault();
+        cancelEdit();
+      }
+    });
+
+    input.addEventListener("blur", () => {
+      void saveEdit();
+    });
+  });
+
+  root.addEventListener("keydown", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const toggleTaskButton = event.target.closest("[data-study-task-toggle]");
+    if (!(toggleTaskButton instanceof HTMLElement)) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    toggleTaskButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+
+  root.addEventListener("submit", async (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+
+    if (form.hasAttribute("data-study-create-form")) {
+      event.preventDefault();
+      const input = form.querySelector("#studyRoomTitleInput");
+      const submitButton = form.querySelector("[data-study-create-submit]");
+      if (!(input instanceof HTMLInputElement)) return;
+      if (!(submitButton instanceof HTMLButtonElement)) return;
+      if (form.dataset.sending === "1") return;
+
+      const title = String(input.value || "");
+      form.dataset.sending = "1";
+      submitButton.disabled = true;
+      try {
+        const created = await createStudyRoomSession(title);
+        if (created) {
+          input.value = "";
+          studyRoomsState.createTitleDraft = "";
+        }
+      } finally {
+        if (form.isConnected) {
+          form.dataset.sending = "0";
+        }
+        if (submitButton.isConnected) {
+          submitButton.disabled = false;
+        }
+      }
+      return;
+    }
+
+    if (form.hasAttribute("data-study-task-form")) {
+      event.preventDefault();
+      const safeRoomId = String(form.dataset.studyRoomId || "").trim();
+      const input = form.querySelector("[data-study-task-input]");
+      if (!(input instanceof HTMLInputElement)) return;
+      if (!safeRoomId) return;
+      if (form.dataset.sending === "1") return;
+
+      const text = String(input.value || "");
+      form.dataset.sending = "1";
+      input.disabled = true;
+      try {
+        const added = await addStudyRoomTask(safeRoomId, text);
+        if (added) {
+          if (soundEnabled) {
+            playAddTaskSound();
+          }
+          input.value = "";
+        }
+      } finally {
+        if (form.isConnected) {
+          form.dataset.sending = "0";
+        }
+        if (input.isConnected) {
+          input.disabled = false;
+        }
+      }
+      return;
+    }
+
+    if (form.hasAttribute("data-study-room-music-link-form")) {
+      event.preventDefault();
+      const safeRoomId = String(form.dataset.studyRoomId || "").trim();
+      const input = form.querySelector("[data-study-room-music-link-input]");
+      const submitButton = form.querySelector("button[type='submit']");
+      if (!(input instanceof HTMLInputElement)) return;
+      if (!(submitButton instanceof HTMLButtonElement)) return;
+      if (!safeRoomId) return;
+      if (form.dataset.sending === "1") return;
+
+      const query = String(input.value || "").trim();
+      form.dataset.sending = "1";
+      submitButton.disabled = true;
+      try {
+        if (!query) {
+          setStudyRoomMusicSearchError(safeRoomId, "Pegá un link válido de YouTube.");
+          if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+            patchStudyRoomMusicUI();
+          }
+          return;
+        }
+
+        const parsedVideoId = parseYouTubeVideoId(query) || extractYouTubeVideoIdLoose(query);
+        if (!parsedVideoId) {
+          setStudyRoomMusicSearchError(safeRoomId, "Pegá un link válido de YouTube.");
+          if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+            patchStudyRoomMusicUI();
+          }
+          return;
+        }
+
+        const resolvedTrack = await resolveStudyRoomMusicVideoById(parsedVideoId);
+        if (!resolvedTrack?.videoId) {
+          setStudyRoomMusicSearchError(
+            safeRoomId,
+            "No pude leer ese video. Probá con otro link de YouTube."
+          );
+          if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+            patchStudyRoomMusicUI();
+          }
+          return;
+        }
+
+        setStudyRoomMusicSearchError(safeRoomId, "");
+        const applied = await setStudyRoomMusicTrack(safeRoomId, resolvedTrack);
+        if (applied) {
+          input.value = "";
+          setStudyRoomMusicSearchDraft(safeRoomId, "");
+        }
+      } finally {
+        if (form.isConnected) {
+          form.dataset.sending = "0";
+        }
+        if (submitButton.isConnected) {
+          submitButton.disabled = false;
+        }
+      }
+      return;
+    }
+
+    if (!form.hasAttribute("data-study-room-chat-form")) return;
+
+    event.preventDefault();
+    const safeRoomId = String(form.dataset.studyRoomId || "").trim();
+    const input = form.querySelector("[data-study-room-chat-input]");
+    const submitButton = form.querySelector("button[type='submit']");
+    if (!(input instanceof HTMLInputElement)) return;
+    if (!(submitButton instanceof HTMLButtonElement)) return;
+    if (!safeRoomId) return;
+    if (form.dataset.sending === "1") return;
+
+    const text = String(input.value || "");
+    form.dataset.sending = "1";
+    submitButton.disabled = true;
+    try {
+      const sent = await addStudyRoomChatMessage(safeRoomId, text);
+      if (sent) {
+        input.value = "";
+      }
+    } finally {
+      if (form.isConnected) {
+        form.dataset.sending = "0";
+      }
+      if (submitButton.isConnected) {
+        submitButton.disabled = false;
+      }
+    }
+  });
+}
+
+function renderStudyRoomsView(){
+  const safeName = String(currentUser?.displayName || "Usuario").trim() || "Usuario";
+  const safeNameHtml = escapeHtml(safeName);
+  const safePillNameHtml = escapeHtml(formatSummaryPillName(safeName));
+  const avatarSrc = String(currentUser?.photoURL || getLeaderboardFallbackPhoto(safeName));
+  const avatarFallbackSrc = getLeaderboardFallbackPhoto(safeName);
+  const safeAvatarHtml = escapeHtml(avatarSrc);
+  const safeAvatarFallbackHtml = escapeHtml(avatarFallbackSrc);
+  const activeRoomsCount = studyRoomsState.rooms.length;
+
+  board.innerHTML = `
+    <section class="summary-dashboard social-dashboard study-dashboard" aria-label="Salas de estudio">
+      <div class="summary-topbar">
+        <div class="summary-brand">
+          <img class="summary-brand-mark summary-brand-logo" src="/icons/flav-icon.png" alt="" aria-hidden="true">
+          <span class="summary-brand-text" aria-label="MULTITAREAS"><span>MULTI</span><span>TAREAS</span></span>
+          <span class="summary-brand-meta" aria-label="Version de la app">
+            <span class="summary-brand-beta">BETA</span>
+            <span class="summary-brand-version" data-app-version></span>
+          </span>
+        </div>
+        <button
+          class="summary-top-focus-mobile-btn"
+          type="button"
+          data-open-focus-mode="1"
+          aria-label="Abrir sesión de enfoque"
+        >
+          <span class="summary-top-focus-mobile-icon" aria-hidden="true"></span>
+        </button>
+        <button
+          class="summary-top-study-mobile-btn active"
+          type="button"
+          data-open-study-rooms="1"
+          aria-label="Abrir salas de estudio"
+          aria-current="page"
+        >
+          <span class="summary-top-study-mobile-icon" aria-hidden="true"></span>
+        </button>
+        <div class="summary-nav-row">
+          <nav class="summary-nav" aria-label="Secciones del dashboard">
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_SUMMARY}">Resumen</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_TASKS}">Tareas diarias</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_PROJECTS}">Proyectos</button>
+            <button class="summary-nav-item" type="button" data-view="${VIEW_MODE_SOCIAL}">Social</button>
+          </nav>
+          <button
+            class="summary-top-study-btn active"
+            type="button"
+            data-open-study-rooms="1"
+            aria-label="Abrir salas de estudio"
+            aria-current="page"
+          >
+            <span class="summary-top-study-icon" aria-hidden="true"></span>
+            <span class="summary-top-study-label">Salas</span>
+          </button>
+          <button
+            class="summary-mobile-plus-btn"
+            type="button"
+            aria-label="Ir a resumen y escribir tarea"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+          <button
+            class="summary-top-focus-btn"
+            type="button"
+            data-open-focus-mode="1"
+            aria-label="Abrir sesión de enfoque"
+          >
+            <span class="summary-top-focus-icon" aria-hidden="true"></span>
+            <span class="summary-top-focus-label">Enfoque</span>
+          </button>
+        </div>
+        <div class="summary-mobile-status-user-row">
+          <div class="summary-action-btn primary summary-status-pill-mobile" role="status" aria-live="polite">
+            <span id="summaryStatusTextMobile"></span>
+          </div>
+          <button class="summary-user-pill" type="button" aria-label="Abrir menú de perfil" aria-haspopup="menu" aria-expanded="false">
+            <img
+              src="${safeAvatarHtml}"
+              alt="Foto de ${safeNameHtml}"
+              onerror="this.src='${safeAvatarFallbackHtml}'"
+            >
+            <div>
+              <strong>${safePillNameHtml}</strong>
+              <span>${formatSettingsStat(activeRoomsCount)} salas activas</span>
+            </div>
+            <svg class="summary-user-pill-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="summary-hero social-hero">
+        <div class="summary-hero-copy">
+          <h2>Salas de estudio</h2>
+          <p class="social-hero-subtitle">Creá una sala visible para todos, invitá participantes y compartí tu tablero de tareas de la sesión.</p>
+        </div>
+      </div>
+
+      <div class="study-grid">
+        <article class="summary-card social-card study-card-list">
+          <div class="social-card-head">
+            <h3>Salas en curso</h3>
+            <span class="social-count" id="studyRoomsActiveCount">${formatSettingsStat(activeRoomsCount)}</span>
+          </div>
+          <div id="studyRoomsCreateFormSlot">${renderStudyRoomsCreateForm()}</div>
+          <div class="social-user-list" id="studyRoomsActiveList">
+            ${renderStudyRoomsActiveList()}
+          </div>
+        </article>
+
+        <article class="summary-card social-card study-room-workspace" id="studyRoomWorkspace">
+          ${renderStudyRoomWorkspace()}
+        </article>
+      </div>
+      <div class="social-messenger-host" id="socialMessengerHost">
+        ${renderSocialMessengerWidget()}
+      </div>
+    </section>
+  `;
+
+  syncAppVersionLabels();
+  bindSummaryNavEvents();
+  bindSummaryUserPillMenu();
+  bindSummaryTopStudyRoomsButton();
+  bindSummaryTopFocusButton();
+  bindSummaryMobilePlusButton();
+  bindSocialChatEvents();
+  bindStudyRoomsEvents();
+  bindStudyRoomTaskSwipeInteractions();
+  syncStudyRoomMusicIframe();
+  syncStudyRoomChatHeightWithMusicPlayer();
+  syncSummaryStatusText();
+  ensureStudyRoomsListSubscription();
+
+  const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  if (activeRoomId && typeof studyRoomsState.activeRoomUnsub !== "function") {
+    subscribeActiveStudyRoom(activeRoomId);
+  }
 }
 
 
@@ -10520,7 +23531,6 @@ function init() {
     lastCarryDate = todayStr;
   }
 
-  board.innerHTML = "";
   updateViewButtons();
 
   if(currentViewMode === VIEW_MODE_SUMMARY){
@@ -10540,6 +23550,20 @@ function init() {
 
   if(currentViewMode === VIEW_MODE_PROJECTS){
     renderProjectsView();
+    renderMiniCalendar();
+    scheduleTaskNotifications();
+    return;
+  }
+
+  if(currentViewMode === VIEW_MODE_SOCIAL){
+    renderSocialView();
+    renderMiniCalendar();
+    scheduleTaskNotifications();
+    return;
+  }
+
+  if(currentViewMode === VIEW_MODE_STUDY_ROOMS){
+    renderStudyRoomsView();
     renderMiniCalendar();
     scheduleTaskNotifications();
     return;
@@ -10953,7 +23977,6 @@ function showToast(message) {
   toast.id = "appToast";
   toast.className = "app-toast";
   toast.textContent = message;
-
   document.body.appendChild(toast);
 
   requestAnimationFrame(() => {
@@ -11672,7 +24695,9 @@ function carryOverPendings() {
 
     if (dateKey < today) {
 
-      const pending = tasks[dateKey].filter(t => !t.done);
+      const dayTasks = Array.isArray(tasks[dateKey]) ? tasks[dateKey] : [];
+      captureDailyCompletionSnapshot(dateKey, dayTasks);
+      const pending = dayTasks.filter(t => !t.done);
 
       if (pending.length > 0) {
 
@@ -11693,11 +24718,11 @@ function carryOverPendings() {
           changed = true;
         }
 
-        tasks[dateKey] = tasks[dateKey].filter(t => t.done);
+        tasks[dateKey] = dayTasks.filter(t => t.done);
       }
 
       // 🔥 si ya no quedan tareas en ese día → eliminar
-      if (tasks[dateKey].length === 0) {
+      if (!Array.isArray(tasks[dateKey]) || tasks[dateKey].length === 0) {
         delete tasks[dateKey];
       }
 
@@ -12697,7 +25722,13 @@ async function openLeaderboard(){
       });
     });
 
-    const usersWithName = users.filter((entry) => String(entry.name || "").trim().length > 0);
+    const usersWithName = users.filter((entry) => {
+      const safeName = String(entry.name || "").trim();
+      if (!safeName) return false;
+
+      const normalizedName = normalizeTextForSearch(safeName).replace(/\s+/g, " ");
+      return normalizedName !== "gustavo cerati";
+    });
     showLeaderboardModal(usersWithName);
   } catch (err) {
     console.error("No se pudo cargar leaderboard.", err);
@@ -12819,6 +25850,18 @@ window.mt = {
   async tasks(){
     await setViewMode(VIEW_MODE_TASKS);
   },
+  async social(){
+    await setViewMode(VIEW_MODE_SOCIAL);
+  },
+  async salas(){
+    await setViewMode(VIEW_MODE_STUDY_ROOMS);
+  },
+  async salasEstudio(){
+    await setViewMode(VIEW_MODE_STUDY_ROOMS);
+  },
+  async salasdeestudio(){
+    await setViewMode(VIEW_MODE_STUDY_ROOMS);
+  },
   logros(){
     openAchievementsMenu();
   },
@@ -12834,6 +25877,10 @@ window.mt = {
 window.logros = openAchievementsMenu;
 window.cerrarLogros = closeAchievementsMenu;
 window.testLogros = previewAchievementUnlocks;
+window.social = () => setViewMode(VIEW_MODE_SOCIAL);
+window.salas = () => setViewMode(VIEW_MODE_STUDY_ROOMS);
+window.salasEstudio = () => setViewMode(VIEW_MODE_STUDY_ROOMS);
+window.salasdeestudio = () => setViewMode(VIEW_MODE_STUDY_ROOMS);
 
 function updateViewButtons(){
 
@@ -12845,8 +25892,12 @@ function updateViewButtons(){
   const modeIndex = {
     [VIEW_MODE_SUMMARY]: 0,
     [VIEW_MODE_TASKS]: 1,
-    [VIEW_MODE_PROJECTS]: 2
+    [VIEW_MODE_PROJECTS]: 2,
+    [VIEW_MODE_SOCIAL]: 1,
+    [VIEW_MODE_STUDY_ROOMS]: 1
   };
+  const isSocialMode = normalizedMode === VIEW_MODE_SOCIAL;
+  const isStudyRoomsMode = normalizedMode === VIEW_MODE_STUDY_ROOMS;
 
   currentViewMode = normalizedMode;
 
@@ -12873,12 +25924,16 @@ function updateViewButtons(){
       normalizedMode === VIEW_MODE_SUMMARY
         || normalizedMode === VIEW_MODE_TASKS
         || normalizedMode === VIEW_MODE_PROJECTS
+        || normalizedMode === VIEW_MODE_SOCIAL
+        || normalizedMode === VIEW_MODE_STUDY_ROOMS
     );
   }
 
   document.body.classList.toggle("summary-page-mode", normalizedMode === VIEW_MODE_SUMMARY);
-  document.body.classList.toggle("tasks-page-mode", normalizedMode === VIEW_MODE_TASKS);
+  document.body.classList.toggle("tasks-page-mode", normalizedMode === VIEW_MODE_TASKS || isSocialMode || isStudyRoomsMode);
   document.body.classList.toggle("projects-page-mode", normalizedMode === VIEW_MODE_PROJECTS);
+  document.body.classList.toggle("social-page-mode", isSocialMode);
+  document.body.classList.toggle("study-page-mode", isStudyRoomsMode);
 
 }
 
@@ -12896,6 +25951,7 @@ async function syncLocalData(){
   const localTasks = localData.tasks || {};
   const localProjects = localData.projects || {};
   const localProjectOrder = Array.isArray(localData.projectOrder) ? localData.projectOrder : [];
+  const localDailyHistory = normalizeDailyCompletionHistory(localData.dailyHistory || {});
 
   try{
 
@@ -12907,6 +25963,7 @@ async function syncLocalData(){
     const cloudTasks = data.tasks || {};
     const cloudProjects = data.projects || {};
     const cloudProjectOrder = Array.isArray(data.projectOrder) ? data.projectOrder : [];
+    const cloudDailyHistory = normalizeDailyCompletionHistory(data.dailyHistory || {});
 
     // merge tareas
     const mergedTasks = { ...cloudTasks };
@@ -12938,13 +25995,18 @@ async function syncLocalData(){
       cloudProjectOrder.length ? cloudProjectOrder : localProjectOrder,
       mergedProjects
     );
+    const mergedDailyHistory = mergeDailyCompletionHistory(
+      cloudDailyHistory,
+      localDailyHistory
+    );
 
     await setDoc(
       userRef,
       {
         tasks: mergedTasks,
         projects: mergedProjects,
-        projectOrder: mergedProjectOrder
+        projectOrder: mergedProjectOrder,
+        dailyHistory: mergedDailyHistory
       },
       { merge:true }
     );
