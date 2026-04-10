@@ -374,6 +374,7 @@ const pomodoroState = {
 };
 let studyRoomMusicIframeMessageListenerBound = false;
 let changelogModalPromptedVersion = "";
+let changelogUpdateModalViewportSyncCleanup = null;
 let guidedTutorialCompletedForCurrentUser = false;
 let guidedTutorialAutoStartQueued = false;
 let guidedTutorialAutoStartInFlight = false;
@@ -1085,6 +1086,7 @@ function ensureChangelogUpdateModalStyles(){
       display: grid;
       place-items: center;
       padding: 18px;
+      overflow: hidden;
       background: rgba(4, 6, 12, .78);
       opacity: 0;
       pointer-events: none;
@@ -1097,20 +1099,21 @@ function ensureChangelogUpdateModalStyles(){
     }
 
     .changelog-update-card{
+      --changelog-update-scale: 1;
       position: relative;
       width: min(368px, calc(100vw - 18px));
-      max-height: min(88vh, 460px);
-      overflow: hidden auto;
+      overflow: hidden;
       border-radius: 18px;
       border: 1px solid rgba(255,255,255,.1);
       background: #090b11;
       box-shadow: 0 24px 58px rgba(0,0,0,.72);
-      transform: translateY(8px) scale(.985);
+      transform-origin: center center;
+      transform: translateY(8px) scale(calc(.985 * var(--changelog-update-scale)));
       transition: transform .24s cubic-bezier(.22, .91, .25, 1);
     }
 
     .changelog-update-overlay.open .changelog-update-card{
-      transform: translateY(0) scale(1);
+      transform: translateY(0) scale(var(--changelog-update-scale));
     }
 
     .changelog-update-hero{
@@ -1233,7 +1236,6 @@ function ensureChangelogUpdateModalStyles(){
 
       .changelog-update-card{
         width: min(368px, calc(100vw - 12px));
-        max-height: min(90vh, 520px);
         border-radius: 16px;
       }
 
@@ -1266,7 +1268,78 @@ function ensureChangelogUpdateModalStyles(){
   document.head.appendChild(style);
 }
 
+function stopChangelogUpdateModalViewportSync(){
+  if (typeof changelogUpdateModalViewportSyncCleanup === "function") {
+    try {
+      changelogUpdateModalViewportSyncCleanup();
+    } catch (_error) {}
+  }
+  changelogUpdateModalViewportSyncCleanup = null;
+}
+
+function fitChangelogUpdateModalToViewport(overlay = document.getElementById("changelogUpdateOverlay")){
+  if (!(overlay instanceof HTMLElement)) return;
+  const card = overlay.querySelector(".changelog-update-card");
+  if (!(card instanceof HTMLElement)) return;
+
+  card.style.setProperty("--changelog-update-scale", "1");
+
+  const overlayStyle = window.getComputedStyle(overlay);
+  const paddingX =
+    (Number.parseFloat(overlayStyle.paddingLeft) || 0) +
+    (Number.parseFloat(overlayStyle.paddingRight) || 0);
+  const paddingY =
+    (Number.parseFloat(overlayStyle.paddingTop) || 0) +
+    (Number.parseFloat(overlayStyle.paddingBottom) || 0);
+
+  const availableWidth = Math.max(1, window.innerWidth - paddingX);
+  const availableHeight = Math.max(1, window.innerHeight - paddingY);
+  const naturalWidth = Math.max(1, card.offsetWidth || 1);
+  const naturalHeight = Math.max(1, card.scrollHeight || card.offsetHeight || 1);
+
+  const scaleByWidth = availableWidth / naturalWidth;
+  const scaleByHeight = availableHeight / naturalHeight;
+  const nextScale = Math.min(1, scaleByWidth, scaleByHeight);
+
+  card.style.setProperty("--changelog-update-scale", String(Math.max(0.01, nextScale)));
+}
+
+function bindChangelogUpdateModalViewportSync(overlay){
+  stopChangelogUpdateModalViewportSync();
+  if (!(overlay instanceof HTMLElement)) return;
+
+  const applyFit = () => {
+    fitChangelogUpdateModalToViewport(overlay);
+  };
+
+  const handleViewportChange = () => {
+    requestAnimationFrame(applyFit);
+  };
+
+  window.addEventListener("resize", handleViewportChange);
+  window.addEventListener("orientationchange", handleViewportChange);
+
+  const visualViewport = window.visualViewport;
+  if (visualViewport) {
+    visualViewport.addEventListener("resize", handleViewportChange);
+  }
+
+  changelogUpdateModalViewportSyncCleanup = () => {
+    window.removeEventListener("resize", handleViewportChange);
+    window.removeEventListener("orientationchange", handleViewportChange);
+    if (visualViewport) {
+      visualViewport.removeEventListener("resize", handleViewportChange);
+    }
+  };
+
+  requestAnimationFrame(() => {
+    applyFit();
+    requestAnimationFrame(applyFit);
+  });
+}
+
 function closeChangelogUpdateModal(){
+  stopChangelogUpdateModalViewportSync();
   document.getElementById("changelogUpdateOverlay")?.remove();
 }
 
@@ -1311,6 +1384,7 @@ function openChangelogUpdateModal(){
   });
 
   document.body.appendChild(overlay);
+  bindChangelogUpdateModalViewportSync(overlay);
 
   requestAnimationFrame(() => {
     overlay.classList.add("open");
