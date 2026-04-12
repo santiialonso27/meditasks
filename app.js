@@ -8175,12 +8175,78 @@ function buildSocialConversationMessages(friendUid, { ownData = {}, friendData =
   });
 }
 
+function syncStudyRoomInviteAccessFromIncomingChatInvites(
+  friendUid,
+  {
+    friendData = {}
+  } = {}
+){
+  const safeFriendUid = String(friendUid || "").trim();
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!safeFriendUid || !ownUid) return 0;
+
+  const incomingThread = parseSocialChatThread(
+    getSocialChatThreadFromDoc(friendData, ownUid),
+    { fromUid: safeFriendUid, toUid: ownUid }
+  );
+  if (!incomingThread.length) return 0;
+
+  let grantsApplied = 0;
+  incomingThread.forEach((message) => {
+    if (!isSocialChatStudyRoomInviteMessage(message)) return;
+
+    const invitePayload = normalizeSocialChatStudyRoomInvitePayload(message?.studyRoomInvite, {
+      roomId: message?.roomId,
+      roomTitle: message?.roomTitle,
+      invitedByUid: message?.fromUid || safeFriendUid,
+      invitedByName: message?.invitedByName,
+      roomAccessSource: message?.roomAccessSource || message?.roomSource
+    });
+    const roomId = String(invitePayload.roomId || "").trim();
+    const invitedByUid = String(invitePayload.invitedByUid || safeFriendUid).trim();
+    const roomTitle = String(invitePayload.roomTitle || "Sala de estudio").trim() || "Sala de estudio";
+    const roomAccessSource = String(invitePayload.roomAccessSource || "").trim();
+    if (!roomId) return;
+
+    const existingAccess = getCurrentUserAcceptedStudyRoomInviteAccessEntry(roomId, invitedByUid);
+    const hasEquivalentAccess = !!(
+      existingAccess &&
+      String(existingAccess.invitedByUid || "").trim() === invitedByUid &&
+      String(existingAccess.roomTitle || "Sala de estudio").trim() === roomTitle &&
+      String(existingAccess.roomAccessSource || "").trim() === roomAccessSource
+    );
+    if (hasEquivalentAccess) return;
+
+    const granted = grantCurrentUserStudyRoomInviteAccess(roomId, {
+      invitedByUid,
+      roomTitle,
+      roomAccessSource
+    });
+    if (granted) {
+      grantsApplied += 1;
+    }
+  });
+
+  if (grantsApplied > 0) {
+    logStudyRoomInviteDebug("WHT-01", "Whitelist local actualizada desde invitaciones entrantes de chat.", {
+      friendUid: safeFriendUid,
+      grantsApplied
+    }, "ok");
+  }
+
+  return grantsApplied;
+}
+
 function refreshSocialActiveChatMessages(){
   const activeFriendUid = String(socialState.chatActiveFriendUid || "").trim();
   if (!activeFriendUid || !currentUser?.uid) {
     socialState.chatMessages = [];
     return;
   }
+
+  syncStudyRoomInviteAccessFromIncomingChatInvites(activeFriendUid, {
+    friendData: socialState.chatFriendDocData || {}
+  });
 
   socialState.chatMessages = buildSocialConversationMessages(activeFriendUid, {
     ownData: socialState.chatOwnDocData || {},
