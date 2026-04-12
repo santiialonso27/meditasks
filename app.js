@@ -9003,6 +9003,38 @@ async function resolveStudyRoomInvitationTargetRoom(roomId, inviterUid = ""){
 
   if (safeInviterUid) {
     try {
+      const inviterUserSnapshot = await getDoc(doc(db, "users", safeInviterUid));
+      if (inviterUserSnapshot.exists()) {
+        const normalizedOwnedRoom = normalizeOwnedStudyRoomFromUserData(
+          inviterUserSnapshot.data() || {},
+          safeInviterUid
+        );
+        if (normalizedOwnedRoom && String(normalizedOwnedRoom.id || "").trim() === safeRoomId) {
+          logStudyRoomInviteDebug("RES-09A", "Sala resuelta desde users/{owner}.studyRoomOwned.", {
+            roomId: safeRoomId,
+            inviterUid: safeInviterUid
+          }, "ok");
+          return {
+            isActive: normalizedOwnedRoom.isActive !== false,
+            reason: normalizedOwnedRoom.isActive === false ? "closed-owned" : "owned",
+            roomData: normalizedOwnedRoom
+          };
+        }
+      }
+    } catch (err) {
+      logStudyRoomInviteDebug("RES-09B", "Error leyendo users del creador para invitación.", {
+        roomId: safeRoomId,
+        inviterUid: safeInviterUid,
+        permissionDenied: isFirestorePermissionError(err),
+        code: String(err?.code || "").trim(),
+        message: String(err?.message || "").trim()
+      }, isFirestorePermissionError(err) ? "warn" : "error");
+      if (!isFirestorePermissionError(err)) {
+        console.warn("No se pudo verificar sala de invitación en users del creador.", err);
+      }
+    }
+
+    try {
       const inviterSnapshot = await getDoc(doc(db, "leaderboard", safeInviterUid));
       if (inviterSnapshot.exists()) {
         const normalizedPublicRoom = normalizePublicStudyRoomFromLeaderboard(
@@ -9125,6 +9157,12 @@ async function claimStudyRoomInviteMembership(
   const payload = {
     updatedAt: now
   };
+  payload[`allowed.${identity.uid}`] = {
+    uid: identity.uid,
+    addedAt: now,
+    invitedByUid: safeInvitedByUid,
+    invitedByName: safeInvitedByName
+  };
   payload[`invited.${identity.uid}`] = {
     uid: identity.uid,
     invitedAt: now,
@@ -9159,6 +9197,12 @@ async function claimStudyRoomInviteMembership(
   }
 
   const ownedPayload = {
+    [`${STUDY_ROOM_OWNED_FIELD}.allowed.${identity.uid}`]: {
+      uid: identity.uid,
+      addedAt: now,
+      invitedByUid: safeInvitedByUid,
+      invitedByName: safeInvitedByName
+    },
     [`${STUDY_ROOM_OWNED_FIELD}.invited.${identity.uid}`]: {
       uid: identity.uid,
       invitedAt: now,
@@ -18321,6 +18365,21 @@ function normalizeStudyRoomInvite(entry = {}, fallbackUid = ""){
   };
 }
 
+function normalizeStudyRoomAllowedEntry(entry = {}, fallbackUid = ""){
+  const uid = String(entry?.uid || fallbackUid || "").trim();
+  if (!uid) return null;
+
+  return {
+    uid,
+    addedAt: Math.max(
+      0,
+      Number(entry?.addedAt || entry?.invitedAt || entry?.updatedAt) || 0
+    ),
+    invitedByUid: String(entry?.invitedByUid || "").trim(),
+    invitedByName: String(entry?.invitedByName || "").trim()
+  };
+}
+
 function canCurrentUserAccessStudyRoom(roomData = null){
   const ownUid = String(currentUser?.uid || "").trim();
   if (!ownUid) {
@@ -18337,6 +18396,13 @@ function canCurrentUserAccessStudyRoom(roomData = null){
 
   if (String(roomData.createdByUid || "").trim() === ownUid) {
     return { allowed: true, reason: "owner" };
+  }
+
+  const allowedByUid = roomData.allowedByUid instanceof Map
+    ? roomData.allowedByUid
+    : new Map();
+  if (allowedByUid.has(ownUid)) {
+    return { allowed: true, reason: "allowed" };
   }
 
   const participantsByUid = roomData.participantsByUid instanceof Map
@@ -18966,6 +19032,48 @@ function normalizeStudyRoomData(data = {}, fallbackId = ""){
   });
   const invitedByUid = new Map(invited.map((entry) => [entry.uid, entry]));
 
+  const allowed = [];
+  const allowedRaw = data?.allowed;
+  if (allowedRaw && typeof allowedRaw === "object" && !Array.isArray(allowedRaw)) {
+    Object.entries(allowedRaw).forEach(([uid, value]) => {
+      const normalizedAllowed = normalizeStudyRoomAllowedEntry(value, uid);
+      if (!normalizedAllowed) return;
+      allowed.push(normalizedAllowed);
+    });
+  }
+  if (!allowed.length && invited.length) {
+    invited.forEach((entry) => {
+      const normalizedAllowed = normalizeStudyRoomAllowedEntry(
+        {
+          uid: entry.uid,
+          addedAt: entry.invitedAt,
+          invitedByUid: entry.invitedByUid,
+          invitedByName: entry.invitedByName
+        },
+        entry.uid
+      );
+      if (!normalizedAllowed) return;
+      allowed.push(normalizedAllowed);
+    });
+  }
+  if (createdByUid) {
+    const alreadyAllowedCreator = allowed.some((entry) => String(entry?.uid || "").trim() === createdByUid);
+    if (!alreadyAllowedCreator) {
+      allowed.push({
+        uid: createdByUid,
+        addedAt: createdAt || updatedAt || Date.now(),
+        invitedByUid: createdByUid,
+        invitedByName: createdByName
+      });
+    }
+  }
+  allowed.sort((a, b) => {
+    const byAddedAt = (Number(a.addedAt) || 0) - (Number(b.addedAt) || 0);
+    if (byAddedAt !== 0) return byAddedAt;
+    return String(a.uid || "").localeCompare(String(b.uid || ""), "es", { sensitivity: "base" });
+  });
+  const allowedByUid = new Map(allowed.map((entry) => [entry.uid, entry]));
+
   const boards = [];
   const boardsRaw = data?.boards;
   if (boardsRaw && typeof boardsRaw === "object" && !Array.isArray(boardsRaw)) {
@@ -19008,6 +19116,8 @@ function normalizeStudyRoomData(data = {}, fallbackId = ""){
     participants,
     participantsCount,
     participantsByUid,
+    allowed,
+    allowedByUid,
     invited,
     invitedByUid,
     boards,
@@ -22070,10 +22180,14 @@ async function ensureStudyRoomMembership(roomData = null){
   const participantsByUid = room.participantsByUid instanceof Map
     ? room.participantsByUid
     : new Map();
+  const allowedByUid = room.allowedByUid instanceof Map
+    ? room.allowedByUid
+    : new Map();
   const boardsByUid = room.boardsByUid instanceof Map
     ? room.boardsByUid
     : new Map();
   const participantEntry = participantsByUid.get(identity.uid);
+  const allowedEntry = allowedByUid.get(identity.uid);
   const boardEntry = boardsByUid.get(identity.uid);
   const alreadySynced = studyRoomsState.presenceSyncedByRoomId.has(safeRoomId);
   if (!(studyRoomsState.joinAnnouncementSyncedByRoomId instanceof Set)) {
@@ -22084,15 +22198,32 @@ async function ensureStudyRoomMembership(roomData = null){
     !participantEntry ||
     String(participantEntry.name || "") !== identity.name ||
     String(participantEntry.photo || "") !== identity.photo;
+  const needsAllowedSync = !allowedEntry;
   const needsBoard = !boardEntry;
 
-  if (!needsParticipantSync && !needsBoard && alreadySynced) {
+  if (!needsParticipantSync && !needsAllowedSync && !needsBoard && alreadySynced) {
     return false;
   }
 
   const now = Date.now();
+  const allowedInvitedByUid = String(
+    allowedEntry?.invitedByUid ||
+    room.createdByUid ||
+    identity.uid
+  ).trim() || identity.uid;
+  const allowedInvitedByName = String(
+    allowedEntry?.invitedByName ||
+    room.createdByName ||
+    "Usuario"
+  ).trim() || "Usuario";
   const payload = {
     updatedAt: now
+  };
+  payload[`allowed.${identity.uid}`] = {
+    uid: identity.uid,
+    addedAt: Math.max(0, Number(allowedEntry?.addedAt) || now),
+    invitedByUid: allowedInvitedByUid,
+    invitedByName: allowedInvitedByName
   };
   payload[`participants.${identity.uid}`] = {
     uid: identity.uid,
@@ -22969,6 +23100,12 @@ async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
     await setDoc(
       doc(db, STUDY_ROOMS_COLLECTION, roomId),
       {
+        [`allowed.${safeTargetUid}`]: {
+          uid: safeTargetUid,
+          addedAt: now,
+          invitedByUid: identity.uid,
+          invitedByName: identity.name
+        },
         [`invited.${safeTargetUid}`]: {
           uid: safeTargetUid,
           invitedAt: now,
@@ -22997,6 +23134,12 @@ async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
         await updateDoc(
           doc(db, "users", identity.uid),
           {
+            [`${STUDY_ROOM_OWNED_FIELD}.allowed.${safeTargetUid}`]: {
+              uid: safeTargetUid,
+              addedAt: now,
+              invitedByUid: identity.uid,
+              invitedByName: identity.name
+            },
             [`${STUDY_ROOM_OWNED_FIELD}.invited.${safeTargetUid}`]: {
               uid: safeTargetUid,
               invitedAt: now,
@@ -23173,6 +23316,14 @@ async function createStudyRoomSession(rawTitle = ""){
       invitedByName: identity.name
     }
   };
+  const allowed = {
+    [identity.uid]: {
+      uid: identity.uid,
+      addedAt: now,
+      invitedByUid: identity.uid,
+      invitedByName: identity.name
+    }
+  };
 
   const roomPayload = {
     id: roomRef.id,
@@ -23184,6 +23335,7 @@ async function createStudyRoomSession(rawTitle = ""){
     createdByUid: identity.uid,
     createdByName: identity.name,
     createdByPhoto: identity.photo,
+    allowed,
     invited,
     participants,
     boards,
