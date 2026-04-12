@@ -112,7 +112,10 @@ const LEGACY_PLAYER_MIGRATION_DONE_KEY = "mt_player_legacy_migration_done_v1";
 const LEGACY_PLAYER_PAYLOAD_READY_KEY = "mt_player_legacy_payload_ready_v1";
 const LEGACY_PLAYER_CLAIMED_UID_KEY = "mt_player_legacy_claimed_uid_v1";
 const STUDY_ROOM_ACTIVE_SESSION_STORAGE_PREFIX = "mt_study_room_active_session_v1_";
+const STUDY_ROOM_INVITE_ACCESS_STORAGE_PREFIX = "mt_study_room_invite_access_v1_";
 const STUDY_ROOM_CLOSURE_SUMMARY_SEEN_STORAGE_PREFIX = "mt_study_room_closure_seen_v1_";
+const STUDY_ROOM_INVITE_ACCESS_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
+const STUDY_ROOM_INVITE_ACCESS_MAX_ENTRIES = 120;
 const ADMIN_CONSOLE_CREDENTIALS = Object.freeze({
   username: "admin",
   password: "admin01"
@@ -317,6 +320,8 @@ const studyRoomsState = {
   activeRoomLoading: false,
   activeRoomError: "",
   activeRoomUnsub: null,
+  inviteAccessByRoomId: new Map(),
+  inviteAccessLoadedUid: "",
   createTitleDraft: "",
   taskDraftByRoomId: new Map(),
   chatDraftByRoomId: new Map(),
@@ -6571,16 +6576,17 @@ onAuthStateChanged(auth, async (user) => {
 
 	  if (user) {
 
-	    await leaveStudyRoomSession({ silent: true });
-		    currentUser = user;
+		    await leaveStudyRoomSession({ silent: true });
+			    currentUser = user;
         playerHydratedForSession = false;
         player = claimLegacyPlayerForUserIfNeeded(user.uid);
-	      resetGuidedTutorialAutostartState();
-	      guidedTutorialCompletedForCurrentUser = getStoredGuidedTutorialCompleted(user.uid);
-		    resetSocialState();
-		    resetStudyRoomsState();
+		      resetGuidedTutorialAutostartState();
+		      guidedTutorialCompletedForCurrentUser = getStoredGuidedTutorialCompleted(user.uid);
+			    resetSocialState();
+			    resetStudyRoomsState();
+        ensureStudyRoomInviteAccessHydrated(user.uid);
         lastHandledStudyRoomClosureSummaryId = "";
-	    void restoreStudyRoomActiveSessionFromStorage();
+		    void restoreStudyRoomActiveSessionFromStorage();
     document.body.classList.remove("logged-out");
     authGate?.classList.remove("open");
     resetAuthGateStyles();
@@ -7219,6 +7225,8 @@ function resetStudyRoomsState(){
   studyRoomsState.activeRoomLoading = false;
   studyRoomsState.activeRoomError = "";
   studyRoomsState.activeRoomUnsub = null;
+  studyRoomsState.inviteAccessByRoomId = new Map();
+  studyRoomsState.inviteAccessLoadedUid = "";
   studyRoomsState.createTitleDraft = "";
   studyRoomsState.taskDraftByRoomId = new Map();
   studyRoomsState.chatDraftByRoomId = new Map();
@@ -7245,6 +7253,199 @@ function getStudyRoomActiveSessionStorageKey(uid = ""){
   const safeUid = String(uid || currentUser?.uid || "").trim();
   if (!safeUid) return "";
   return `${STUDY_ROOM_ACTIVE_SESSION_STORAGE_PREFIX}${safeUid}`;
+}
+
+function getStudyRoomInviteAccessStorageKey(uid = ""){
+  const safeUid = String(uid || currentUser?.uid || "").trim();
+  if (!safeUid) return "";
+  return `${STUDY_ROOM_INVITE_ACCESS_STORAGE_PREFIX}${safeUid}`;
+}
+
+function normalizeStudyRoomInviteAccessEntry(entry = {}, fallbackRoomId = ""){
+  const source = entry && typeof entry === "object" && !Array.isArray(entry)
+    ? entry
+    : {};
+  const roomId = String(source.roomId || fallbackRoomId || "").trim();
+  if (!roomId) return null;
+
+  const grantedAt = Math.max(
+    0,
+    Number(source.grantedAt || source.updatedAt || source.acceptedAt) || 0
+  );
+  if (!grantedAt) return null;
+
+  return {
+    roomId,
+    invitedByUid: String(source.invitedByUid || source.inviterUid || "").trim(),
+    roomTitle: String(source.roomTitle || source.title || "Sala de estudio").trim() || "Sala de estudio",
+    grantedAt
+  };
+}
+
+function readStoredStudyRoomInviteAccessMap(uid = ""){
+  const key = getStudyRoomInviteAccessStorageKey(uid);
+  if (!key) return new Map();
+
+  let raw = "";
+  try {
+    raw = String(localStorage.getItem(key) || "").trim();
+  } catch {
+    return new Map();
+  }
+  if (!raw) return new Map();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return new Map();
+  }
+
+  const candidates = [];
+  if (Array.isArray(parsed)) {
+    parsed.forEach((entry) => candidates.push(entry));
+  } else if (parsed && typeof parsed === "object") {
+    Object.entries(parsed).forEach(([roomId, entry]) => {
+      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+        candidates.push({
+          ...entry,
+          roomId: String(entry.roomId || roomId || "").trim()
+        });
+      } else {
+        candidates.push({
+          roomId: String(roomId || "").trim(),
+          grantedAt: 0
+        });
+      }
+    });
+  } else {
+    return new Map();
+  }
+
+  const now = Date.now();
+  const map = new Map();
+  candidates.forEach((entry) => {
+    const normalizedEntry = normalizeStudyRoomInviteAccessEntry(entry, entry?.roomId);
+    if (!normalizedEntry) return;
+    if ((now - normalizedEntry.grantedAt) > STUDY_ROOM_INVITE_ACCESS_MAX_AGE_MS) return;
+    const previous = map.get(normalizedEntry.roomId);
+    if (!previous || normalizedEntry.grantedAt >= Number(previous.grantedAt || 0)) {
+      map.set(normalizedEntry.roomId, normalizedEntry);
+    }
+  });
+
+  if (map.size <= STUDY_ROOM_INVITE_ACCESS_MAX_ENTRIES) {
+    return map;
+  }
+
+  const trimmed = Array.from(map.values())
+    .sort((a, b) => (Number(b.grantedAt) || 0) - (Number(a.grantedAt) || 0))
+    .slice(0, STUDY_ROOM_INVITE_ACCESS_MAX_ENTRIES);
+  return new Map(trimmed.map((entry) => [entry.roomId, entry]));
+}
+
+function persistStoredStudyRoomInviteAccessMap(accessByRoomId = new Map(), uid = ""){
+  const key = getStudyRoomInviteAccessStorageKey(uid);
+  if (!key) return;
+
+  const safeMap = accessByRoomId instanceof Map
+    ? accessByRoomId
+    : new Map();
+  const now = Date.now();
+  const normalizedEntries = Array.from(safeMap.values())
+    .map((entry) => normalizeStudyRoomInviteAccessEntry(entry, entry?.roomId))
+    .filter((entry) => {
+      if (!entry) return false;
+      return (now - entry.grantedAt) <= STUDY_ROOM_INVITE_ACCESS_MAX_AGE_MS;
+    })
+    .sort((a, b) => (Number(b.grantedAt) || 0) - (Number(a.grantedAt) || 0))
+    .slice(0, STUDY_ROOM_INVITE_ACCESS_MAX_ENTRIES);
+
+  try {
+    if (!normalizedEntries.length) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify(normalizedEntries));
+  } catch {}
+}
+
+function ensureStudyRoomInviteAccessHydrated(uid = ""){
+  const safeUid = String(uid || currentUser?.uid || "").trim();
+  if (!safeUid) {
+    studyRoomsState.inviteAccessByRoomId = new Map();
+    studyRoomsState.inviteAccessLoadedUid = "";
+    return studyRoomsState.inviteAccessByRoomId;
+  }
+
+  if (
+    studyRoomsState.inviteAccessLoadedUid === safeUid &&
+    studyRoomsState.inviteAccessByRoomId instanceof Map
+  ) {
+    return studyRoomsState.inviteAccessByRoomId;
+  }
+
+  const loaded = readStoredStudyRoomInviteAccessMap(safeUid);
+  studyRoomsState.inviteAccessByRoomId = loaded;
+  studyRoomsState.inviteAccessLoadedUid = safeUid;
+  persistStoredStudyRoomInviteAccessMap(loaded, safeUid);
+  return loaded;
+}
+
+function hasCurrentUserAcceptedStudyRoomInviteAccess(roomData = null, roomId = ""){
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (!ownUid) return false;
+
+  const accessByRoomId = ensureStudyRoomInviteAccessHydrated(ownUid);
+  if (!(accessByRoomId instanceof Map) || !accessByRoomId.size) return false;
+
+  const safeRoomId = String(roomData?.id || roomId || "").trim();
+  if (!safeRoomId) return false;
+
+  const localAccessEntry = accessByRoomId.get(safeRoomId);
+  if (!localAccessEntry || typeof localAccessEntry !== "object") return false;
+
+  const safeCreatedByUid = String(roomData?.createdByUid || "").trim();
+  const safeInvitedByUid = String(localAccessEntry.invitedByUid || "").trim();
+  if (safeCreatedByUid && safeInvitedByUid && safeInvitedByUid !== safeCreatedByUid) {
+    return false;
+  }
+
+  return true;
+}
+
+function grantCurrentUserStudyRoomInviteAccess(
+  roomId,
+  {
+    invitedByUid = "",
+    roomTitle = ""
+  } = {}
+){
+  const ownUid = String(currentUser?.uid || "").trim();
+  const safeRoomId = String(roomId || "").trim();
+  if (!ownUid || !safeRoomId) return false;
+
+  const accessByRoomId = ensureStudyRoomInviteAccessHydrated(ownUid);
+  if (!(accessByRoomId instanceof Map)) {
+    studyRoomsState.inviteAccessByRoomId = new Map();
+  }
+  const targetMap = studyRoomsState.inviteAccessByRoomId instanceof Map
+    ? studyRoomsState.inviteAccessByRoomId
+    : new Map();
+  const previous = targetMap.get(safeRoomId);
+  const now = Date.now();
+
+  targetMap.set(safeRoomId, {
+    roomId: safeRoomId,
+    invitedByUid: String(invitedByUid || previous?.invitedByUid || "").trim(),
+    roomTitle: String(roomTitle || previous?.roomTitle || "Sala de estudio").trim() || "Sala de estudio",
+    grantedAt: now
+  });
+
+  studyRoomsState.inviteAccessByRoomId = targetMap;
+  studyRoomsState.inviteAccessLoadedUid = ownUid;
+  persistStoredStudyRoomInviteAccessMap(targetMap, ownUid);
+  return true;
 }
 
 function readStoredStudyRoomActiveSession(uid = ""){
@@ -8716,7 +8917,8 @@ async function openStudyRoomSessionFromInvite(
       const roomError = String(joinResult.error || "").trim();
       const ownUid = String(currentUser?.uid || "").trim();
       const canTryOwnedFallback = !!safeInvitedByUid && safeInvitedByUid !== ownUid;
-      if (canTryOwnedFallback) {
+      const hasAcceptedInviteAccess = hasCurrentUserAcceptedStudyRoomInviteAccess(null, safeRoomId);
+      if (canTryOwnedFallback && !hasAcceptedInviteAccess) {
         persistStudyRoomActiveSession(safeInvitedByUid, currentUser?.uid);
         subscribeActiveOwnedStudyRoom(safeInvitedByUid);
         startStudyRoomSessionTracking(safeInvitedByUid);
@@ -8789,6 +8991,11 @@ async function respondToSocialChatStudyRoomInvite(friendUid, messageId, action =
     showToast(`La sala ${roomTitle} ya fue cerrada.`);
     return false;
   }
+
+  grantCurrentUserStudyRoomInviteAccess(roomId, {
+    invitedByUid: invitePayload.invitedByUid || safeFriendUid,
+    roomTitle
+  });
 
   await claimStudyRoomInviteMembership(roomId, {
     invitedByUid: invitePayload.invitedByUid || safeFriendUid,
@@ -17558,6 +17765,11 @@ function canCurrentUserAccessStudyRoom(roomData = null){
     : new Map();
   if (invitedByUid.has(ownUid)) {
     return { allowed: true, reason: "invited" };
+  }
+
+  const hasAcceptedInviteAccess = hasCurrentUserAcceptedStudyRoomInviteAccess(roomData);
+  if (hasAcceptedInviteAccess) {
+    return { allowed: true, reason: "accepted-invite" };
   }
 
   return { allowed: false, reason: "invite-required" };
