@@ -7414,6 +7414,27 @@ function hasCurrentUserAcceptedStudyRoomInviteAccess(roomData = null, roomId = "
   return true;
 }
 
+function getCurrentUserAcceptedStudyRoomInviteAccessEntry(roomId = ""){
+  const ownUid = String(currentUser?.uid || "").trim();
+  const safeRoomId = String(roomId || "").trim();
+  if (!ownUid || !safeRoomId) return null;
+
+  const accessByRoomId = ensureStudyRoomInviteAccessHydrated(ownUid);
+  if (!(accessByRoomId instanceof Map)) return null;
+  const entry = accessByRoomId.get(safeRoomId);
+  if (!entry || typeof entry !== "object") return null;
+
+  const normalized = normalizeStudyRoomInviteAccessEntry(entry, safeRoomId);
+  if (!normalized) return null;
+  if ((Date.now() - normalized.grantedAt) > STUDY_ROOM_INVITE_ACCESS_MAX_AGE_MS) {
+    accessByRoomId.delete(safeRoomId);
+    persistStoredStudyRoomInviteAccessMap(accessByRoomId, ownUid);
+    return null;
+  }
+
+  return normalized;
+}
+
 function grantCurrentUserStudyRoomInviteAccess(
   roomId,
   {
@@ -8917,8 +8938,7 @@ async function openStudyRoomSessionFromInvite(
       const roomError = String(joinResult.error || "").trim();
       const ownUid = String(currentUser?.uid || "").trim();
       const canTryOwnedFallback = !!safeInvitedByUid && safeInvitedByUid !== ownUid;
-      const hasAcceptedInviteAccess = hasCurrentUserAcceptedStudyRoomInviteAccess(null, safeRoomId);
-      if (canTryOwnedFallback && !hasAcceptedInviteAccess) {
+      if (canTryOwnedFallback) {
         persistStudyRoomActiveSession(safeInvitedByUid, currentUser?.uid);
         subscribeActiveOwnedStudyRoom(safeInvitedByUid);
         startStudyRoomSessionTracking(safeInvitedByUid);
@@ -21787,6 +21807,16 @@ function subscribeActiveStudyRoom(roomId){
       ) {
         subscribeActiveOwnedStudyRoom(safeRoomId);
         return;
+      }
+
+      if (isFirestorePermissionError(err)) {
+        const acceptedInviteAccess = getCurrentUserAcceptedStudyRoomInviteAccessEntry(safeRoomId);
+        const fallbackOwnerUid = String(acceptedInviteAccess?.invitedByUid || "").trim();
+        const ownUid = String(currentUser?.uid || "").trim();
+        if (fallbackOwnerUid && fallbackOwnerUid !== ownUid) {
+          subscribeActiveOwnedStudyRoom(fallbackOwnerUid);
+          return;
+        }
       }
 
       studyRoomsState.activeRoomData = null;
