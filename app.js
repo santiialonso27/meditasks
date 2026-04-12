@@ -320,6 +320,7 @@ const studyRoomsState = {
   taskDraftByRoomId: new Map(),
   chatDraftByRoomId: new Map(),
   presenceSyncedByRoomId: new Set(),
+  joinAnnouncementSyncedByRoomId: new Set(),
   musicSearchDraftByRoomId: new Map(),
   musicSearchResultsByRoomId: new Map(),
   musicSearchLoadingByRoomId: new Map(),
@@ -7220,6 +7221,7 @@ function resetStudyRoomsState(){
   studyRoomsState.taskDraftByRoomId = new Map();
   studyRoomsState.chatDraftByRoomId = new Map();
   studyRoomsState.presenceSyncedByRoomId = new Set();
+  studyRoomsState.joinAnnouncementSyncedByRoomId = new Set();
   studyRoomsState.musicSearchDraftByRoomId = new Map();
   studyRoomsState.musicSearchResultsByRoomId = new Map();
   studyRoomsState.musicSearchLoadingByRoomId = new Map();
@@ -8570,7 +8572,9 @@ async function openStudyRoomSessionFromInvite(roomId, { roomTitle = "Sala de est
     }
   }
 
-  const opened = await openStudyRoomSession(safeRoomId);
+  const opened = await openStudyRoomSession(safeRoomId, {
+    skipListAccessCheck: true
+  });
   if (!opened) return false;
 
   await setViewMode(VIEW_MODE_STUDY_ROOMS);
@@ -21105,6 +21109,10 @@ async function ensureStudyRoomMembership(roomData = null){
   const participantEntry = participantsByUid.get(identity.uid);
   const boardEntry = boardsByUid.get(identity.uid);
   const alreadySynced = studyRoomsState.presenceSyncedByRoomId.has(safeRoomId);
+  if (!(studyRoomsState.joinAnnouncementSyncedByRoomId instanceof Set)) {
+    studyRoomsState.joinAnnouncementSyncedByRoomId = new Set();
+  }
+  const alreadyAnnouncedJoin = studyRoomsState.joinAnnouncementSyncedByRoomId.has(safeRoomId);
   const needsParticipantSync =
     !participantEntry ||
     String(participantEntry.name || "") !== identity.name ||
@@ -21137,11 +21145,64 @@ async function ensureStudyRoomMembership(roomData = null){
     };
   }
 
+  const shouldAnnounceJoin = !participantEntry && !alreadyAnnouncedJoin;
+  let joinMessageId = "";
+  if (shouldAnnounceJoin) {
+    joinMessageId = `sc_${now}_${Math.random().toString(36).slice(2, 8)}`;
+    payload[`chat.${joinMessageId}`] = {
+      id: joinMessageId,
+      uid: identity.uid,
+      name: identity.name,
+      photo: identity.photo,
+      kind: "system",
+      text: `${identity.name} se ha unido a la sala`,
+      createdAt: now
+    };
+    studyRoomsState.joinAnnouncementSyncedByRoomId.add(safeRoomId);
+  }
+
   try {
     await setDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), payload, { merge: true });
     studyRoomsState.presenceSyncedByRoomId.add(safeRoomId);
+    if (shouldAnnounceJoin && joinMessageId) {
+      const activeRoomData = studyRoomsState.activeRoomData;
+      if (
+        activeRoomData &&
+        typeof activeRoomData === "object" &&
+        String(activeRoomData.id || "").trim() === safeRoomId
+      ) {
+        const previousMessages = Array.isArray(activeRoomData.chatMessages)
+          ? activeRoomData.chatMessages
+          : [];
+        const nextMessages = previousMessages.filter((entry) => {
+          return String(entry?.id || "").trim() !== joinMessageId;
+        });
+        nextMessages.push({
+          id: joinMessageId,
+          uid: identity.uid,
+          name: identity.name,
+          photo: identity.photo,
+          kind: "system",
+          text: `${identity.name} se ha unido a la sala`,
+          createdAt: now
+        });
+        nextMessages.sort((a, b) => {
+          const byCreatedAt = (Number(a?.createdAt) || 0) - (Number(b?.createdAt) || 0);
+          if (byCreatedAt !== 0) return byCreatedAt;
+          return String(a?.id || "").localeCompare(String(b?.id || ""), "es", { sensitivity: "base" });
+        });
+        activeRoomData.chatMessages = nextMessages;
+        activeRoomData.chatById = new Map(nextMessages.map((entry) => [entry.id, entry]));
+      }
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        patchStudyRoomChatUI();
+      }
+    }
     return true;
   } catch (err) {
+    if (shouldAnnounceJoin) {
+      studyRoomsState.joinAnnouncementSyncedByRoomId.delete(safeRoomId);
+    }
     if (!isFirestorePermissionError(err)) {
       console.warn("No se pudo registrar presencia en sala de estudio.", err);
     }
@@ -21161,6 +21222,7 @@ function subscribeActiveOwnedStudyRoom(ownerUid){
   studyRoomsState.activeRoomLoading = true;
   studyRoomsState.activeRoomError = "";
   studyRoomsState.presenceSyncedByRoomId.delete(safeOwnerUid);
+  studyRoomsState.joinAnnouncementSyncedByRoomId.delete(safeOwnerUid);
   if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
     patchStudyRoomsUI();
   }
@@ -21247,6 +21309,7 @@ function subscribeActiveStudyRoom(roomId){
   studyRoomsState.activeRoomLoading = true;
   studyRoomsState.activeRoomError = "";
   studyRoomsState.presenceSyncedByRoomId.delete(safeRoomId);
+  studyRoomsState.joinAnnouncementSyncedByRoomId.delete(safeRoomId);
   if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
     patchStudyRoomsUI();
   }
@@ -21348,18 +21411,20 @@ function subscribeActiveStudyRoom(roomId){
   );
 }
 
-async function openStudyRoomSession(roomId){
+async function openStudyRoomSession(roomId, { skipListAccessCheck = false } = {}){
   const safeRoomId = String(roomId || "").trim();
   if (!safeRoomId || !currentUser?.uid) return false;
 
   ensureStudyRoomsListSubscription();
 
-  const roomFromList = studyRoomsState.rooms.find((entry) => String(entry?.id || "") === safeRoomId);
-  if (roomFromList) {
-    const access = canCurrentUserAccessStudyRoom(roomFromList);
-    if (!access.allowed) {
-      showToast("Necesitás invitación del creador para entrar.");
-      return false;
+  if (!skipListAccessCheck) {
+    const roomFromList = studyRoomsState.rooms.find((entry) => String(entry?.id || "") === safeRoomId);
+    if (roomFromList) {
+      const access = canCurrentUserAccessStudyRoom(roomFromList);
+      if (!access.allowed) {
+        showToast("Necesitás invitación del creador para entrar.");
+        return false;
+      }
     }
   }
 
@@ -21393,6 +21458,7 @@ async function leaveStudyRoomSession({ silent = false } = {}){
     if (safeRoomId) {
       clearStoredStudyRoomActiveSession(ownUid);
       studyRoomsState.presenceSyncedByRoomId.delete(safeRoomId);
+      studyRoomsState.joinAnnouncementSyncedByRoomId.delete(safeRoomId);
       if (studyRoomsState.taskDraftByRoomId instanceof Map) {
         studyRoomsState.taskDraftByRoomId.delete(safeRoomId);
       }
