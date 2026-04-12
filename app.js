@@ -312,6 +312,7 @@ const studyRoomsState = {
   roomsSource: "primary",
   activeRoomId: "",
   activeRoomSource: "primary",
+  activeRoomOwnerUid: "",
   activeRoomData: null,
   activeRoomLoading: false,
   activeRoomError: "",
@@ -7213,6 +7214,7 @@ function resetStudyRoomsState(){
   studyRoomsState.roomsSource = "primary";
   studyRoomsState.activeRoomId = "";
   studyRoomsState.activeRoomSource = "primary";
+  studyRoomsState.activeRoomOwnerUid = "";
   studyRoomsState.activeRoomData = null;
   studyRoomsState.activeRoomLoading = false;
   studyRoomsState.activeRoomError = "";
@@ -8609,16 +8611,74 @@ async function claimStudyRoomInviteMembership(
     }
     return true;
   } catch (err) {
-    if (!isFirestorePermissionError(err)) {
-      console.warn("No se pudo confirmar membresía al aceptar invitación de sala.", err);
+    const shouldTryOwnedFallback = isFirestorePermissionError(err) || isFirestoreNotFoundError(err);
+    if (!shouldTryOwnedFallback || !safeInvitedByUid) {
+      if (!isFirestorePermissionError(err)) {
+        console.warn("No se pudo confirmar membresía al aceptar invitación de sala.", err);
+      }
+      return false;
     }
-    return false;
+
+    const ownedPayload = {
+      [`${STUDY_ROOM_OWNED_FIELD}.invited.${identity.uid}`]: {
+        uid: identity.uid,
+        invitedAt: now,
+        invitedByUid: safeInvitedByUid,
+        invitedByName: safeInvitedByName
+      },
+      [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}`]: {
+        uid: identity.uid,
+        name: identity.name,
+        photo: identity.photo,
+        joinedAt: now,
+        updatedAt: now
+      },
+      [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}`]: {
+        uid: identity.uid,
+        name: identity.name,
+        photo: identity.photo,
+        tasks: {},
+        updatedAt: now
+      },
+      [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+    };
+    if (shouldAppendJoinMessage && joinMessageId) {
+      ownedPayload[`${STUDY_ROOM_OWNED_FIELD}.chat.${joinMessageId}`] = {
+        id: joinMessageId,
+        uid: identity.uid,
+        name: identity.name,
+        photo: identity.photo,
+        kind: "system",
+        text: `${identity.name} se ha unido a la sala`,
+        createdAt: now
+      };
+    }
+
+    try {
+      await updateDoc(doc(db, "users", safeInvitedByUid), ownedPayload);
+      if (shouldAppendJoinMessage) {
+        studyRoomsState.joinAnnouncementSyncedByRoomId.add(safeRoomId);
+      }
+      return true;
+    } catch (ownedErr) {
+      if (!isFirestorePermissionError(ownedErr)) {
+        console.warn("No se pudo confirmar membresía en sala local al aceptar invitación.", ownedErr);
+      }
+      return false;
+    }
   }
 }
 
-async function openStudyRoomSessionFromInvite(roomId, { roomTitle = "Sala de estudio" } = {}){
+async function openStudyRoomSessionFromInvite(
+  roomId,
+  {
+    roomTitle = "Sala de estudio",
+    invitedByUid = ""
+  } = {}
+){
   const safeRoomId = String(roomId || "").trim();
   if (!safeRoomId || !currentUser?.uid) return false;
+  const safeInvitedByUid = String(invitedByUid || "").trim();
 
   const activeRoom = studyRoomsState.activeRoomData;
   const ownUid = String(currentUser?.uid || "").trim();
@@ -8654,6 +8714,18 @@ async function openStudyRoomSessionFromInvite(roomId, { roomTitle = "Sala de est
   if (!joinResult.ready) {
     if (joinResult.reason === "error") {
       const roomError = String(joinResult.error || "").trim();
+      const ownUid = String(currentUser?.uid || "").trim();
+      const canTryOwnedFallback = !!safeInvitedByUid && safeInvitedByUid !== ownUid;
+      if (canTryOwnedFallback) {
+        persistStudyRoomActiveSession(safeInvitedByUid, currentUser?.uid);
+        subscribeActiveOwnedStudyRoom(safeInvitedByUid);
+        startStudyRoomSessionTracking(safeInvitedByUid);
+        const ownedJoinResult = await waitForStudyRoomSessionReady(safeInvitedByUid);
+        if (ownedJoinResult.ready) {
+          showToast(`Entraste a la sala ${String(roomTitle || "Sala de estudio").trim() || "Sala de estudio"}.`);
+          return true;
+        }
+      }
       if (roomError) {
         showToast(roomError);
       }
@@ -8723,7 +8795,10 @@ async function respondToSocialChatStudyRoomInvite(friendUid, messageId, action =
     invitedByName: invitePayload.invitedByName
   });
 
-  const joined = await openStudyRoomSessionFromInvite(roomId, { roomTitle });
+  const joined = await openStudyRoomSessionFromInvite(roomId, {
+    roomTitle,
+    invitedByUid: invitePayload.invitedByUid || safeFriendUid
+  });
   if (!joined) {
     return false;
   }
@@ -19062,7 +19137,10 @@ function getCurrentUserOwnedActiveStudyRoom(){
     activeRoomData &&
     typeof activeRoomData === "object" &&
     activeRoomData.isActive &&
-    String(activeRoomData.createdByUid || "").trim() === ownUid
+    (
+      String(activeRoomData.createdByUid || "").trim() === ownUid ||
+      String(studyRoomsState.activeRoomOwnerUid || "").trim() === ownUid
+    )
   ) {
     return activeRoomData;
   }
@@ -21157,6 +21235,20 @@ function ensureStudyRoomsPublicListSubscription(){
   );
 }
 
+function resolveActiveOwnedStudyRoomOwnerUid(roomId = "", roomData = null){
+  const stateOwnerUid = String(studyRoomsState.activeRoomOwnerUid || "").trim();
+  if (stateOwnerUid) return stateOwnerUid;
+
+  const room = roomData && typeof roomData === "object"
+    ? roomData
+    : studyRoomsState.activeRoomData;
+  const roomOwnerUid = String(room?.createdByUid || "").trim();
+  if (roomOwnerUid) return roomOwnerUid;
+
+  const safeRoomId = String(roomId || studyRoomsState.activeRoomId || "").trim();
+  return safeRoomId;
+}
+
 async function ensureStudyRoomMembership(roomData = null){
   const safeRoomId = String(studyRoomsState.activeRoomId || "").trim();
   if (!safeRoomId || !currentUser?.uid) return false;
@@ -21290,11 +21382,11 @@ async function ensureStudyRoomMembership(roomData = null){
 function subscribeActiveOwnedStudyRoom(ownerUid){
   const safeOwnerUid = String(ownerUid || "").trim();
   if (!safeOwnerUid || !currentUser?.uid) return;
-  if (safeOwnerUid !== String(currentUser.uid || "").trim()) return;
 
   stopStudyRoomActiveListener();
   studyRoomsState.activeRoomId = safeOwnerUid;
   studyRoomsState.activeRoomSource = "owned";
+  studyRoomsState.activeRoomOwnerUid = safeOwnerUid;
   studyRoomsState.activeRoomData = null;
   studyRoomsState.activeRoomLoading = true;
   studyRoomsState.activeRoomError = "";
@@ -21310,6 +21402,7 @@ function subscribeActiveOwnedStudyRoom(ownerUid){
     (snapshot) => {
       if (String(studyRoomsState.activeRoomId || "") !== safeOwnerUid) return;
       if (String(studyRoomsState.activeRoomSource || "") !== "owned") return;
+      if (String(studyRoomsState.activeRoomOwnerUid || "").trim() !== safeOwnerUid) return;
       const previousActiveRoomData = studyRoomsState.activeRoomData;
 
       const ownedRoom = snapshot.exists()
@@ -21319,7 +21412,7 @@ function subscribeActiveOwnedStudyRoom(ownerUid){
       if (!ownedRoom) {
         studyRoomsState.activeRoomData = null;
         studyRoomsState.activeRoomLoading = false;
-        studyRoomsState.activeRoomError = "Tu sala ya no está activa.";
+        studyRoomsState.activeRoomError = "La sala ya no está activa.";
         clearStoredStudyRoomActiveSession(currentUser?.uid);
         if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
           patchStudyRoomsUI();
@@ -21327,7 +21420,14 @@ function subscribeActiveOwnedStudyRoom(ownerUid){
         return;
       }
 
-      const access = canCurrentUserAccessStudyRoom(ownedRoom);
+      const normalizedOwnedRoom = {
+        ...ownedRoom,
+        createdByUid: String(ownedRoom.createdByUid || safeOwnerUid).trim() || safeOwnerUid
+      };
+      const isRoomOwner = safeOwnerUid === String(currentUser?.uid || "").trim();
+      const access = isRoomOwner
+        ? { allowed: true, reason: "owner" }
+        : canCurrentUserAccessStudyRoom(normalizedOwnedRoom);
       if (!access.allowed) {
         studyRoomsState.activeRoomData = null;
         studyRoomsState.activeRoomLoading = false;
@@ -21339,17 +21439,19 @@ function subscribeActiveOwnedStudyRoom(ownerUid){
         return;
       }
 
-      studyRoomsState.activeRoomData = ownedRoom;
+      studyRoomsState.activeRoomData = normalizedOwnedRoom;
       studyRoomsState.activeRoomLoading = false;
       studyRoomsState.activeRoomError = "";
       persistStudyRoomActiveSession(safeOwnerUid, currentUser?.uid);
-      void upsertCurrentUserStudyRoomPublicSummary(ownedRoom);
+      if (isRoomOwner) {
+        void upsertCurrentUserStudyRoomPublicSummary(normalizedOwnedRoom);
+      }
 
       if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
-        if (areStudyRoomRenderStatesEqual(previousActiveRoomData, ownedRoom)) {
+        if (areStudyRoomRenderStatesEqual(previousActiveRoomData, normalizedOwnedRoom)) {
           return;
         }
-        const patchedIncremental = patchStudyRoomWorkspaceIncremental(previousActiveRoomData, ownedRoom);
+        const patchedIncremental = patchStudyRoomWorkspaceIncremental(previousActiveRoomData, normalizedOwnedRoom);
         if (!patchedIncremental) {
           patchStudyRoomsUI();
         }
@@ -21358,11 +21460,12 @@ function subscribeActiveOwnedStudyRoom(ownerUid){
     (err) => {
       if (String(studyRoomsState.activeRoomId || "") !== safeOwnerUid) return;
       if (String(studyRoomsState.activeRoomSource || "") !== "owned") return;
+      if (String(studyRoomsState.activeRoomOwnerUid || "").trim() !== safeOwnerUid) return;
 
       studyRoomsState.activeRoomData = null;
       studyRoomsState.activeRoomLoading = false;
       studyRoomsState.activeRoomError = isFirestorePermissionError(err)
-        ? "No hay permisos para abrir tu sala."
+        ? "No hay permisos para abrir esta sala."
         : "No se pudo abrir la sala.";
       if (isFirestorePermissionError(err)) {
         clearStoredStudyRoomActiveSession(currentUser?.uid);
@@ -21382,6 +21485,7 @@ function subscribeActiveStudyRoom(roomId){
   stopStudyRoomActiveListener();
   studyRoomsState.activeRoomId = safeRoomId;
   studyRoomsState.activeRoomSource = "primary";
+  studyRoomsState.activeRoomOwnerUid = "";
   studyRoomsState.activeRoomData = null;
   studyRoomsState.activeRoomLoading = true;
   studyRoomsState.activeRoomError = "";
@@ -21435,6 +21539,7 @@ function subscribeActiveStudyRoom(roomId){
 
       studyRoomsState.activeRoomData = normalized;
       studyRoomsState.activeRoomLoading = false;
+      studyRoomsState.activeRoomOwnerUid = String(normalized.createdByUid || safeRoomId).trim();
       studyRoomsState.activeRoomError = normalized.isActive ? "" : "Esta sala de estudio finalizó.";
       if (normalized.isActive) {
         persistStudyRoomActiveSession(safeRoomId, currentUser?.uid);
@@ -21495,8 +21600,9 @@ async function openStudyRoomSession(roomId, { skipListAccessCheck = false } = {}
   ensureStudyRoomsListSubscription();
 
   if (!skipListAccessCheck) {
+    const ownUid = String(currentUser?.uid || "").trim();
     const roomFromList = studyRoomsState.rooms.find((entry) => String(entry?.id || "") === safeRoomId);
-    if (roomFromList) {
+    if (roomFromList && safeRoomId !== ownUid) {
       const access = canCurrentUserAccessStudyRoom(roomFromList);
       if (!access.allowed) {
         showToast("Necesitás invitación del creador para entrar.");
@@ -21509,6 +21615,8 @@ async function openStudyRoomSession(roomId, { skipListAccessCheck = false } = {}
     const activeRoomData = studyRoomsState.activeRoomData && typeof studyRoomsState.activeRoomData === "object"
       ? studyRoomsState.activeRoomData
       : null;
+    const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+    const activeRoomOwnerUid = String(studyRoomsState.activeRoomOwnerUid || "").trim();
     const activeRoomDataId = activeRoomData
       ? String(activeRoomData.id || "").trim()
       : "";
@@ -21526,6 +21634,14 @@ async function openStudyRoomSession(roomId, { skipListAccessCheck = false } = {}
       if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
         patchStudyRoomsUI();
       }
+      return true;
+    }
+
+    if (activeRoomSource === "owned") {
+      const targetOwnerUid = activeRoomOwnerUid || safeRoomId;
+      persistStudyRoomActiveSession(targetOwnerUid, currentUser?.uid);
+      subscribeActiveOwnedStudyRoom(targetOwnerUid);
+      startStudyRoomSessionTracking(targetOwnerUid);
       return true;
     }
 
@@ -21620,6 +21736,7 @@ async function leaveStudyRoomSession({ silent = false } = {}){
     }
     studyRoomsState.activeRoomId = "";
     studyRoomsState.activeRoomSource = "primary";
+    studyRoomsState.activeRoomOwnerUid = "";
     studyRoomsState.activeRoomData = null;
     studyRoomsState.activeRoomLoading = false;
     studyRoomsState.activeRoomError = "";
@@ -21636,7 +21753,9 @@ async function leaveStudyRoomSession({ silent = false } = {}){
   }
 
   const now = Date.now();
+  const roomOwnerUid = resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, activeRoomData);
   const isCreatedByCurrentUser =
+    roomOwnerUid === ownUid ||
     String(activeRoomData?.createdByUid || "").trim() === ownUid ||
     safeRoomId === ownUid;
   const shouldCloseRoom = isCreatedByCurrentUser;
@@ -21661,8 +21780,11 @@ async function leaveStudyRoomSession({ silent = false } = {}){
     }
 
     if (activeRoomSource === "owned") {
+      if (!roomOwnerUid) {
+        return false;
+      }
       try {
-        await updateDoc(doc(db, "users", ownUid), {
+        await updateDoc(doc(db, "users", roomOwnerUid), {
           [STUDY_ROOM_OWNED_FIELD]: deleteField()
         });
         roomUpdated = true;
@@ -21766,7 +21888,10 @@ async function resolveCurrentUserInvitableStudyRoom(){
     activeRoom &&
     typeof activeRoom === "object" &&
     activeRoom.isActive &&
-    String(activeRoom.createdByUid || "").trim() === ownUid
+    (
+      String(activeRoom.createdByUid || "").trim() === ownUid ||
+      String(studyRoomsState.activeRoomOwnerUid || "").trim() === ownUid
+    )
   ) {
     return activeRoom;
   }
@@ -21862,12 +21987,18 @@ async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
     return false;
   }
 
-  if (String(ownRoom.createdByUid || "").trim() !== identity.uid) {
+  const ownRoomOwnerUid = String(
+    ownRoom.createdByUid ||
+    studyRoomsState.activeRoomOwnerUid ||
+    roomId
+  ).trim();
+  if (ownRoomOwnerUid !== identity.uid) {
     showToast("Solo el creador de la sala puede enviar invitaciones.");
     return false;
   }
 
   const now = Date.now();
+  let invitationPersisted = false;
   try {
     await setDoc(
       doc(db, STUDY_ROOMS_COLLECTION, roomId),
@@ -21882,12 +22013,40 @@ async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
       },
       { merge: true }
     );
+    invitationPersisted = true;
   } catch (err) {
     if (isFirestorePermissionError(err)) {
-      showToast("No hay permisos para invitar a esta sala.");
+      try {
+        await updateDoc(
+          doc(db, "users", identity.uid),
+          {
+            [`${STUDY_ROOM_OWNED_FIELD}.invited.${safeTargetUid}`]: {
+              uid: safeTargetUid,
+              invitedAt: now,
+              invitedByUid: identity.uid,
+              invitedByName: identity.name
+            },
+            [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+          },
+        );
+        invitationPersisted = true;
+      } catch (ownedErr) {
+        if (isFirestorePermissionError(ownedErr)) {
+          showToast("No hay permisos para invitar a esta sala.");
+          return false;
+        }
+        console.error("No se pudo enviar invitación a sala de estudio local.", ownedErr);
+        showToast("No se pudo enviar la invitación.");
+        return false;
+      }
+    } else {
+      console.error("No se pudo enviar invitación a sala de estudio.", err);
+      showToast("No se pudo enviar la invitación.");
       return false;
     }
-    console.error("No se pudo enviar invitación a sala de estudio.", err);
+  }
+
+  if (!invitationPersisted) {
     showToast("No se pudo enviar la invitación.");
     return false;
   }
@@ -22121,6 +22280,9 @@ async function addStudyRoomTask(roomId, rawTask){
   if (!safeRoomId || !identity?.uid) return false;
   if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const ownedRoomOwnerUid = activeRoomSource === "owned"
+    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, studyRoomsState.activeRoomData)
+    : "";
 
   const taskText = String(rawTask || "").trim().slice(0, STUDY_ROOM_MAX_TASK_LENGTH);
   if (!taskText) return false;
@@ -22138,8 +22300,9 @@ async function addStudyRoomTask(roomId, rawTask){
   };
 
   if (activeRoomSource === "owned") {
+    if (!ownedRoomOwnerUid) return false;
     try {
-      await updateDoc(doc(db, "users", identity.uid), {
+      await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${taskId}`]: payload,
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
@@ -22261,11 +22424,15 @@ async function updateStudyRoomTaskText(roomId, taskId, rawText){
   if (nextText === String(ownTask.text || "")) return true;
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const ownedRoomOwnerUid = activeRoomSource === "owned"
+    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
+    : "";
   const now = Date.now();
 
   if (activeRoomSource === "owned") {
+    if (!ownedRoomOwnerUid) return false;
     try {
-      await updateDoc(doc(db, "users", identity.uid), {
+      await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.text`]: nextText,
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
@@ -22377,9 +22544,13 @@ async function setStudyRoomTaskDone(
   const shouldMarkExpGiven = desiredDone && ownTask.expGiven !== true;
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const ownedRoomOwnerUid = activeRoomSource === "owned"
+    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
+    : "";
   const now = Date.now();
 
   if (activeRoomSource === "owned") {
+    if (!ownedRoomOwnerUid) return false;
     try {
       const payload = {
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.done`]: desiredDone,
@@ -22390,7 +22561,7 @@ async function setStudyRoomTaskDone(
       if (shouldMarkExpGiven) {
         payload[`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.expGiven`] = true;
       }
-      await updateDoc(doc(db, "users", identity.uid), payload);
+      await updateDoc(doc(db, "users", ownedRoomOwnerUid), payload);
     } catch (err) {
       if (isFirestorePermissionError(err)) {
         showToast("No hay permisos para actualizar esa tarea.");
@@ -22529,11 +22700,15 @@ async function deleteStudyRoomTask(roomId, taskId){
   if (!hasTask) return false;
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const ownedRoomOwnerUid = activeRoomSource === "owned"
+    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
+    : "";
   const now = Date.now();
 
   if (activeRoomSource === "owned") {
+    if (!ownedRoomOwnerUid) return false;
     try {
-      await updateDoc(doc(db, "users", identity.uid), {
+      await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}`]: deleteField(),
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
@@ -22630,6 +22805,9 @@ async function addStudyRoomChatMessage(roomId, rawMessage, { kind = "message" } 
   const roomData = studyRoomsState.activeRoomData;
   if (!roomData || typeof roomData !== "object") return false;
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const ownedRoomOwnerUid = activeRoomSource === "owned"
+    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
+    : "";
   const access = canCurrentUserAccessStudyRoom(roomData);
   if (!access.allowed) return false;
 
@@ -22652,8 +22830,9 @@ async function addStudyRoomChatMessage(roomId, rawMessage, { kind = "message" } 
   };
 
   if (activeRoomSource === "owned") {
+    if (!ownedRoomOwnerUid) return false;
     try {
-      await updateDoc(doc(db, "users", identity.uid), {
+      await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
         [`${STUDY_ROOM_OWNED_FIELD}.chat.${messageId}`]: payload,
         [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
@@ -22735,6 +22914,9 @@ async function persistStudyRoomMusicState(roomId, nextMusic = {}){
   await ensureStudyRoomMembership(roomData);
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const ownedRoomOwnerUid = activeRoomSource === "owned"
+    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
+    : "";
   const now = Math.max(0, Number(nextMusic.updatedAt) || Date.now());
   const normalizedMusic = normalizeStudyRoomMusicData({
     ...nextMusic,
@@ -22743,8 +22925,9 @@ async function persistStudyRoomMusicState(roomId, nextMusic = {}){
   });
 
   if (activeRoomSource === "owned") {
+    if (!ownedRoomOwnerUid) return false;
     try {
-      await updateDoc(doc(db, "users", identity.uid), {
+      await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
         [`${STUDY_ROOM_OWNED_FIELD}.music`]: normalizedMusic,
         [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
@@ -22804,6 +22987,9 @@ async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {
   await ensureStudyRoomMembership(roomData);
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
+  const ownedRoomOwnerUid = activeRoomSource === "owned"
+    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
+    : "";
   const now = Math.max(0, Number(nextMusic.updatedAt) || Date.now());
   const normalizedMusic = normalizeStudyRoomMusicData({
     ...nextMusic,
@@ -22829,6 +23015,7 @@ async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {
     : null;
 
   if (activeRoomSource === "owned") {
+    if (!ownedRoomOwnerUid) return false;
     const ownedUpdates = {
       [`${STUDY_ROOM_OWNED_FIELD}.music`]: normalizedMusic,
       [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
@@ -22840,7 +23027,7 @@ async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {
     }
 
     try {
-      await updateDoc(doc(db, "users", identity.uid), ownedUpdates);
+      await updateDoc(doc(db, "users", ownedRoomOwnerUid), ownedUpdates);
     } catch (err) {
       if (isFirestorePermissionError(err)) {
         showToast("No hay permisos para controlar la música de esta sala.");
