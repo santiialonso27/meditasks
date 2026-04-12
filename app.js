@@ -7414,6 +7414,11 @@ function normalizeStudyRoomInviteAccessEntry(entry = {}, fallbackRoomId = ""){
     roomId,
     invitedByUid: String(source.invitedByUid || source.inviterUid || "").trim(),
     roomTitle: String(source.roomTitle || source.title || "Sala de estudio").trim() || "Sala de estudio",
+    roomAccessSource: normalizeStudyRoomInviteAccessSource(
+      source.roomAccessSource ||
+      source.roomSource ||
+      ""
+    ),
     grantedAt
   };
 }
@@ -7536,12 +7541,16 @@ function hasCurrentUserAcceptedStudyRoomInviteAccess(roomData = null, roomId = "
   if (!(accessByRoomId instanceof Map) || !accessByRoomId.size) return false;
 
   const safeRoomId = String(roomData?.id || roomId || "").trim();
-  if (!safeRoomId) return false;
+  const safeCreatedByUid = String(roomData?.createdByUid || "").trim();
+  if (!safeRoomId && !safeCreatedByUid) return false;
 
-  const localAccessEntry = accessByRoomId.get(safeRoomId);
+  const localAccessEntry = accessByRoomId.get(safeRoomId) || (
+    safeCreatedByUid
+      ? accessByRoomId.get(safeCreatedByUid)
+      : null
+  );
   if (!localAccessEntry || typeof localAccessEntry !== "object") return false;
 
-  const safeCreatedByUid = String(roomData?.createdByUid || "").trim();
   const safeInvitedByUid = String(localAccessEntry.invitedByUid || "").trim();
   if (safeCreatedByUid && safeInvitedByUid && safeInvitedByUid !== safeCreatedByUid) {
     return false;
@@ -7550,20 +7559,33 @@ function hasCurrentUserAcceptedStudyRoomInviteAccess(roomData = null, roomId = "
   return true;
 }
 
-function getCurrentUserAcceptedStudyRoomInviteAccessEntry(roomId = ""){
+function getCurrentUserAcceptedStudyRoomInviteAccessEntry(roomId = "", ownerUid = ""){
   const ownUid = String(currentUser?.uid || "").trim();
   const safeRoomId = String(roomId || "").trim();
-  if (!ownUid || !safeRoomId) return null;
+  const safeOwnerUid = String(ownerUid || "").trim();
+  if (!ownUid || (!safeRoomId && !safeOwnerUid)) return null;
 
   const accessByRoomId = ensureStudyRoomInviteAccessHydrated(ownUid);
   if (!(accessByRoomId instanceof Map)) return null;
-  const entry = accessByRoomId.get(safeRoomId);
+  const entry = accessByRoomId.get(safeRoomId) || (
+    safeOwnerUid
+      ? accessByRoomId.get(safeOwnerUid)
+      : null
+  );
   if (!entry || typeof entry !== "object") return null;
 
-  const normalized = normalizeStudyRoomInviteAccessEntry(entry, safeRoomId);
+  const normalized = normalizeStudyRoomInviteAccessEntry(
+    entry,
+    safeRoomId || safeOwnerUid
+  );
   if (!normalized) return null;
   if ((Date.now() - normalized.grantedAt) > STUDY_ROOM_INVITE_ACCESS_MAX_AGE_MS) {
-    accessByRoomId.delete(safeRoomId);
+    if (safeRoomId) {
+      accessByRoomId.delete(safeRoomId);
+    }
+    if (safeOwnerUid) {
+      accessByRoomId.delete(safeOwnerUid);
+    }
     persistStoredStudyRoomInviteAccessMap(accessByRoomId, ownUid);
     return null;
   }
@@ -7575,7 +7597,8 @@ function grantCurrentUserStudyRoomInviteAccess(
   roomId,
   {
     invitedByUid = "",
-    roomTitle = ""
+    roomTitle = "",
+    roomAccessSource = ""
   } = {}
 ){
   const ownUid = String(currentUser?.uid || "").trim();
@@ -7590,14 +7613,32 @@ function grantCurrentUserStudyRoomInviteAccess(
     ? studyRoomsState.inviteAccessByRoomId
     : new Map();
   const previous = targetMap.get(safeRoomId);
+  const safeInvitedByUid = String(invitedByUid || previous?.invitedByUid || "").trim();
+  const safeRoomTitle = String(roomTitle || previous?.roomTitle || "Sala de estudio").trim() || "Sala de estudio";
+  const safeRoomAccessSource = normalizeStudyRoomInviteAccessSource(
+    roomAccessSource ||
+    previous?.roomAccessSource ||
+    ""
+  );
   const now = Date.now();
 
   targetMap.set(safeRoomId, {
     roomId: safeRoomId,
-    invitedByUid: String(invitedByUid || previous?.invitedByUid || "").trim(),
-    roomTitle: String(roomTitle || previous?.roomTitle || "Sala de estudio").trim() || "Sala de estudio",
+    invitedByUid: safeInvitedByUid,
+    roomTitle: safeRoomTitle,
+    roomAccessSource: safeRoomAccessSource,
     grantedAt: now
   });
+  if (safeInvitedByUid && safeInvitedByUid !== safeRoomId) {
+    const ownerPrevious = targetMap.get(safeInvitedByUid);
+    targetMap.set(safeInvitedByUid, {
+      roomId: safeInvitedByUid,
+      invitedByUid: safeInvitedByUid,
+      roomTitle: safeRoomTitle || ownerPrevious?.roomTitle || "Sala de estudio",
+      roomAccessSource: safeRoomAccessSource || ownerPrevious?.roomAccessSource || "",
+      grantedAt: now
+    });
+  }
 
   studyRoomsState.inviteAccessByRoomId = targetMap;
   studyRoomsState.inviteAccessLoadedUid = ownUid;
@@ -7888,6 +7929,13 @@ function normalizeSocialChatStudyRoomInviteStatus(rawStatus = ""){
   return SOCIAL_CHAT_STUDY_ROOM_INVITE_STATUS_PENDING;
 }
 
+function normalizeStudyRoomInviteAccessSource(rawSource = ""){
+  const safeSource = String(rawSource || "").trim().toLowerCase();
+  if (safeSource === "owned") return "owned";
+  if (safeSource === "primary") return "primary";
+  return "";
+}
+
 function normalizeSocialChatStudyRoomInvitePayload(rawPayload = {}, defaults = {}){
   const source = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
     ? rawPayload
@@ -7926,12 +7974,20 @@ function normalizeSocialChatStudyRoomInvitePayload(rawPayload = {}, defaults = {
     fallback.inviterName ||
     ""
   ).trim();
+  const roomAccessSource = normalizeStudyRoomInviteAccessSource(
+    source.roomAccessSource ||
+    source.roomSource ||
+    fallback.roomAccessSource ||
+    fallback.roomSource ||
+    ""
+  );
 
   return {
     roomId,
     roomTitle,
     invitedByUid,
-    invitedByName
+    invitedByName,
+    roomAccessSource
   };
 }
 
@@ -7954,6 +8010,13 @@ function normalizeSocialChatStudyRoomInviteResponse(entry = {}, fallback = {}){
     roomTitle: String(source.roomTitle || fallbackEntry.roomTitle || "").trim() || "Sala de estudio",
     invitedByUid: String(source.invitedByUid || fallbackEntry.invitedByUid || "").trim(),
     invitedByName: String(source.invitedByName || fallbackEntry.invitedByName || "").trim(),
+    roomAccessSource: normalizeStudyRoomInviteAccessSource(
+      source.roomAccessSource ||
+      source.roomSource ||
+      fallbackEntry.roomAccessSource ||
+      fallbackEntry.roomSource ||
+      ""
+    ),
     updatedAt: Math.max(0, Number(source.updatedAt || source.respondedAt) || 0),
     respondedAt: Math.max(0, Number(source.respondedAt || source.updatedAt) || 0)
   };
@@ -8011,7 +8074,8 @@ function parseSocialChatThread(rawThread = {}, defaults = {}){
           roomId: value.roomId,
           roomTitle: value.roomTitle,
           invitedByUid: value.invitedByUid || fromUid,
-          invitedByName: value.invitedByName
+          invitedByName: value.invitedByName,
+          roomAccessSource: value.roomAccessSource || value.roomSource
         })
       : null;
 
@@ -8083,7 +8147,8 @@ function buildSocialConversationMessages(friendUid, { ownData = {}, friendData =
       roomId: safeMessage.roomId,
       roomTitle: safeMessage.roomTitle,
       invitedByUid: safeMessage.invitedByUid || safeMessage.fromUid,
-      invitedByName: safeMessage.invitedByName
+      invitedByName: safeMessage.invitedByName,
+      roomAccessSource: safeMessage.roomAccessSource || safeMessage.roomSource
     });
     const isIncomingInvite = (
       String(safeMessage.fromUid || "").trim() === safeFriendUid &&
@@ -8593,7 +8658,8 @@ async function sendSocialChatEntry(targetUid, entry = {}){
       roomId: entry?.roomId,
       roomTitle: entry?.roomTitle,
       invitedByUid: ownUid,
-      invitedByName: entry?.invitedByName || entry?.inviterName
+      invitedByName: entry?.invitedByName || entry?.inviterName,
+      roomAccessSource: entry?.roomAccessSource || entry?.roomSource
     });
     payload.studyRoomInvite = invitePayload;
   }
@@ -8660,7 +8726,8 @@ async function sendSocialChatStudyRoomInviteMessage(
   {
     roomId = "",
     roomTitle = "Sala de estudio",
-    inviterName = ""
+    inviterName = "",
+    roomAccessSource = ""
   } = {}
 ){
   const safeRoomId = String(roomId || "").trim();
@@ -8670,6 +8737,7 @@ async function sendSocialChatStudyRoomInviteMessage(
     currentUser?.displayName ||
     "Usuario"
   ).trim() || "Usuario";
+  const safeRoomAccessSource = normalizeStudyRoomInviteAccessSource(roomAccessSource);
 
   const sentPayload = await sendSocialChatEntry(targetUid, {
     kind: SOCIAL_CHAT_KIND_STUDY_ROOM_INVITE,
@@ -8678,7 +8746,8 @@ async function sendSocialChatStudyRoomInviteMessage(
       roomId: safeRoomId,
       roomTitle: safeRoomTitle,
       invitedByUid: String(currentUser?.uid || "").trim(),
-      invitedByName: safeInviterName
+      invitedByName: safeInviterName,
+      roomAccessSource: safeRoomAccessSource
     }
   });
 
@@ -8713,7 +8782,8 @@ async function persistSocialChatStudyRoomInviteResponse(friendUid, message = {},
     roomId: message?.roomId,
     roomTitle: message?.roomTitle,
     invitedByUid: message?.fromUid || safeFriendUid,
-    invitedByName: message?.invitedByName
+    invitedByName: message?.invitedByName,
+    roomAccessSource: message?.roomAccessSource || message?.roomSource
   });
   const normalizedStatus = normalizeSocialChatStudyRoomInviteStatus(status);
   const now = Date.now();
@@ -8723,6 +8793,7 @@ async function persistSocialChatStudyRoomInviteResponse(friendUid, message = {},
     roomTitle: String(invitePayload.roomTitle || "Sala de estudio").trim() || "Sala de estudio",
     invitedByUid: String(invitePayload.invitedByUid || safeFriendUid).trim(),
     invitedByName: String(invitePayload.invitedByName || "").trim(),
+    roomAccessSource: String(invitePayload.roomAccessSource || "").trim(),
     updatedAt: now,
     respondedAt: now
   };
@@ -8952,7 +9023,8 @@ async function claimStudyRoomInviteMembership(
   roomId,
   {
     invitedByUid = "",
-    invitedByName = ""
+    invitedByName = "",
+    roomAccessSource = ""
   } = {}
 ){
   const safeRoomId = String(roomId || "").trim();
@@ -8971,11 +9043,13 @@ async function claimStudyRoomInviteMembership(
   const shouldAppendJoinMessage = !studyRoomsState.joinAnnouncementSyncedByRoomId.has(safeRoomId);
   const safeInvitedByUid = String(invitedByUid || "").trim();
   const safeInvitedByName = String(invitedByName || "").trim();
+  const safeRoomAccessSource = normalizeStudyRoomInviteAccessSource(roomAccessSource);
   logStudyRoomInviteDebug("CLM-02", "Intentando reclamar membresía de invitación.", {
     roomId: safeRoomId,
     userUid: identity.uid,
     invitedByUid: safeInvitedByUid,
-    appendJoinMessage: shouldAppendJoinMessage
+    appendJoinMessage: shouldAppendJoinMessage,
+    roomAccessSource: safeRoomAccessSource
   });
 
   const now = Date.now();
@@ -9018,6 +9092,65 @@ async function claimStudyRoomInviteMembership(
     };
   }
 
+  const ownedPayload = {
+    [`${STUDY_ROOM_OWNED_FIELD}.invited.${identity.uid}`]: {
+      uid: identity.uid,
+      invitedAt: now,
+      invitedByUid: safeInvitedByUid,
+      invitedByName: safeInvitedByName
+    },
+    [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}`]: {
+      uid: identity.uid,
+      name: identity.name,
+      photo: identity.photo,
+      joinedAt: now,
+      updatedAt: now
+    },
+    [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}`]: {
+      uid: identity.uid,
+      name: identity.name,
+      photo: identity.photo,
+      tasks: {},
+      updatedAt: now
+    },
+    [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+  };
+  if (shouldAppendJoinMessage && joinMessageId) {
+    ownedPayload[`${STUDY_ROOM_OWNED_FIELD}.chat.${joinMessageId}`] = {
+      id: joinMessageId,
+      uid: identity.uid,
+      name: identity.name,
+      photo: identity.photo,
+      kind: "system",
+      text: `${identity.name} se ha unido a la sala`,
+      createdAt: now
+    };
+  }
+
+  if (safeRoomAccessSource === "owned" && safeInvitedByUid) {
+    try {
+      await updateDoc(doc(db, "users", safeInvitedByUid), ownedPayload);
+      if (shouldAppendJoinMessage) {
+        studyRoomsState.joinAnnouncementSyncedByRoomId.add(safeRoomId);
+      }
+      logStudyRoomInviteDebug("CLM-02A", "Membresía confirmada en owned (prioridad por source).", {
+        roomId: safeRoomId,
+        ownerUid: safeInvitedByUid,
+        userUid: identity.uid
+      }, "ok");
+      return true;
+    } catch (preferredOwnedErr) {
+      logStudyRoomInviteDebug("CLM-02B", "Falló intento prioritario en owned, se probará primary.", {
+        roomId: safeRoomId,
+        ownerUid: safeInvitedByUid,
+        userUid: identity.uid,
+        permissionDenied: isFirestorePermissionError(preferredOwnedErr),
+        code: String(preferredOwnedErr?.code || "").trim(),
+        message: String(preferredOwnedErr?.message || "").trim()
+      }, isFirestorePermissionError(preferredOwnedErr) ? "warn" : "error");
+    }
+  }
+
   try {
     await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), payload);
     if (shouldAppendJoinMessage) {
@@ -9045,41 +9178,6 @@ async function claimStudyRoomInviteMembership(
         console.warn("No se pudo confirmar membresía al aceptar invitación de sala.", err);
       }
       return false;
-    }
-
-    const ownedPayload = {
-      [`${STUDY_ROOM_OWNED_FIELD}.invited.${identity.uid}`]: {
-        uid: identity.uid,
-        invitedAt: now,
-        invitedByUid: safeInvitedByUid,
-        invitedByName: safeInvitedByName
-      },
-      [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}`]: {
-        uid: identity.uid,
-        name: identity.name,
-        photo: identity.photo,
-        joinedAt: now,
-        updatedAt: now
-      },
-      [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}`]: {
-        uid: identity.uid,
-        name: identity.name,
-        photo: identity.photo,
-        tasks: {},
-        updatedAt: now
-      },
-      [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
-    };
-    if (shouldAppendJoinMessage && joinMessageId) {
-      ownedPayload[`${STUDY_ROOM_OWNED_FIELD}.chat.${joinMessageId}`] = {
-        id: joinMessageId,
-        uid: identity.uid,
-        name: identity.name,
-        photo: identity.photo,
-        kind: "system",
-        text: `${identity.name} se ha unido a la sala`,
-        createdAt: now
-      };
     }
 
     try {
@@ -9114,7 +9212,8 @@ async function openStudyRoomSessionFromInvite(
   roomId,
   {
     roomTitle = "Sala de estudio",
-    invitedByUid = ""
+    invitedByUid = "",
+    roomAccessSource = ""
   } = {}
 ){
   const safeRoomId = String(roomId || "").trim();
@@ -9126,11 +9225,13 @@ async function openStudyRoomSessionFromInvite(
     return false;
   }
   const safeInvitedByUid = String(invitedByUid || "").trim();
+  const safeRoomAccessSource = normalizeStudyRoomInviteAccessSource(roomAccessSource);
   logStudyRoomInviteDebug("OPN-02", "Abriendo sala desde invitación.", {
     roomId: safeRoomId,
     roomTitle: String(roomTitle || "").trim(),
     invitedByUid: safeInvitedByUid,
-    currentUid: String(currentUser?.uid || "").trim()
+    currentUid: String(currentUser?.uid || "").trim(),
+    roomAccessSource: safeRoomAccessSource
   });
 
   const activeRoom = studyRoomsState.activeRoomData;
@@ -9160,6 +9261,37 @@ async function openStudyRoomSessionFromInvite(
     }
   }
 
+  if (
+    safeRoomAccessSource === "owned" &&
+    safeInvitedByUid &&
+    safeInvitedByUid !== ownUid
+  ) {
+    logStudyRoomInviteDebug("OPN-03A", "Intentando apertura prioritaria por source owned.", {
+      roomId: safeRoomId,
+      ownerUid: safeInvitedByUid
+    }, "info");
+    persistStudyRoomActiveSession(safeInvitedByUid, currentUser?.uid);
+    subscribeActiveOwnedStudyRoom(safeInvitedByUid);
+    startStudyRoomSessionTracking(safeInvitedByUid);
+    await setViewMode(VIEW_MODE_STUDY_ROOMS);
+    const preferredOwnedJoin = await waitForStudyRoomSessionReady(safeInvitedByUid);
+    logStudyRoomInviteDebug("OPN-03B", "Resultado de apertura prioritaria por owned.", {
+      ownerUid: safeInvitedByUid,
+      ready: !!preferredOwnedJoin?.ready,
+      reason: String(preferredOwnedJoin?.reason || "").trim(),
+      error: String(preferredOwnedJoin?.error || "").trim()
+    }, preferredOwnedJoin?.ready ? "ok" : "warn");
+    if (preferredOwnedJoin.ready) {
+      showToast(`Entraste a la sala ${String(roomTitle || "Sala de estudio").trim() || "Sala de estudio"}.`);
+      return true;
+    }
+    const leftOwnedAttempt = await leaveStudyRoomSession({ silent: true });
+    logStudyRoomInviteDebug("OPN-03C", "Limpieza tras intento owned fallido para probar ruta primaria.", {
+      ownerUid: safeInvitedByUid,
+      leftOwnedAttempt
+    }, leftOwnedAttempt ? "ok" : "warn");
+  }
+
   const opened = await openStudyRoomSession(safeRoomId, {
     skipListAccessCheck: true
   });
@@ -9178,6 +9310,38 @@ async function openStudyRoomSessionFromInvite(
     error: String(joinResult?.error || "").trim()
   }, joinResult?.ready ? "ok" : "warn");
   if (!joinResult.ready) {
+    if (joinResult.reason === "switched") {
+      const activeRoomSource = String(studyRoomsState.activeRoomSource || "").trim().toLowerCase();
+      const activeRoomOwnerUid = String(studyRoomsState.activeRoomOwnerUid || "").trim();
+      const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+      const expectedOwnerUid = String(safeInvitedByUid || "").trim();
+      const switchedToOwned = (
+        activeRoomSource === "owned" &&
+        !!activeRoomOwnerUid &&
+        (!!expectedOwnerUid ? activeRoomOwnerUid === expectedOwnerUid : true)
+      );
+      logStudyRoomInviteDebug("OPN-05A", "La sesión cambió durante la espera de sala principal.", {
+        roomId: safeRoomId,
+        activeRoomId,
+        activeRoomSource,
+        activeRoomOwnerUid,
+        expectedOwnerUid,
+        switchedToOwned
+      }, switchedToOwned ? "warn" : "info");
+      if (switchedToOwned) {
+        const switchedJoinResult = await waitForStudyRoomSessionReady(activeRoomOwnerUid);
+        logStudyRoomInviteDebug("OPN-05B", "Resultado de espera tras switch a owned.", {
+          ownerUid: activeRoomOwnerUid,
+          ready: !!switchedJoinResult?.ready,
+          reason: String(switchedJoinResult?.reason || "").trim(),
+          error: String(switchedJoinResult?.error || "").trim()
+        }, switchedJoinResult?.ready ? "ok" : "warn");
+        if (switchedJoinResult.ready) {
+          showToast(`Entraste a la sala ${String(roomTitle || "Sala de estudio").trim() || "Sala de estudio"}.`);
+          return true;
+        }
+      }
+    }
     if (joinResult.reason === "error") {
       const roomError = String(joinResult.error || "").trim();
       const ownUid = String(currentUser?.uid || "").trim();
@@ -9280,7 +9444,8 @@ async function respondToSocialChatStudyRoomInvite(friendUid, messageId, action =
     roomId: inviteMessage.roomId,
     roomTitle: inviteMessage.roomTitle,
     invitedByUid: inviteMessage.fromUid || safeFriendUid,
-    invitedByName: inviteMessage.invitedByName
+    invitedByName: inviteMessage.invitedByName,
+    roomAccessSource: inviteMessage.roomAccessSource || inviteMessage.roomSource
   });
   const roomId = String(invitePayload.roomId || "").trim();
   const roomTitle = String(invitePayload.roomTitle || "Sala de estudio").trim() || "Sala de estudio";
@@ -9289,7 +9454,8 @@ async function respondToSocialChatStudyRoomInvite(friendUid, messageId, action =
     messageId: safeMessageId,
     roomId,
     roomTitle,
-    invitedByUid: String(invitePayload.invitedByUid || safeFriendUid).trim()
+    invitedByUid: String(invitePayload.invitedByUid || safeFriendUid).trim(),
+    roomAccessSource: String(invitePayload.roomAccessSource || "").trim()
   });
 
   if (safeAction === "reject") {
@@ -9328,7 +9494,8 @@ async function respondToSocialChatStudyRoomInvite(friendUid, messageId, action =
 
   grantCurrentUserStudyRoomInviteAccess(roomId, {
     invitedByUid: invitePayload.invitedByUid || safeFriendUid,
-    roomTitle
+    roomTitle,
+    roomAccessSource: invitePayload.roomAccessSource
   });
   logStudyRoomInviteDebug("ACC-09", "Acceso local por invitación registrado.", {
     roomId,
@@ -9337,7 +9504,8 @@ async function respondToSocialChatStudyRoomInvite(friendUid, messageId, action =
 
   const membershipClaimed = await claimStudyRoomInviteMembership(roomId, {
     invitedByUid: invitePayload.invitedByUid || safeFriendUid,
-    invitedByName: invitePayload.invitedByName
+    invitedByName: invitePayload.invitedByName,
+    roomAccessSource: invitePayload.roomAccessSource
   });
   logStudyRoomInviteDebug("ACC-10", "Resultado de claim de membresía al aceptar.", {
     roomId,
@@ -9346,7 +9514,8 @@ async function respondToSocialChatStudyRoomInvite(friendUid, messageId, action =
 
   const joined = await openStudyRoomSessionFromInvite(roomId, {
     roomTitle,
-    invitedByUid: invitePayload.invitedByUid || safeFriendUid
+    invitedByUid: invitePayload.invitedByUid || safeFriendUid,
+    roomAccessSource: invitePayload.roomAccessSource
   });
   logStudyRoomInviteDebug("ACC-11", "Resultado de apertura de sala tras aceptar.", {
     roomId,
@@ -16615,7 +16784,8 @@ function renderSocialChatStudyRoomInviteBubble(
     roomId: message?.roomId,
     roomTitle: message?.roomTitle,
     invitedByUid: message?.fromUid,
-    invitedByName: message?.invitedByName
+    invitedByName: message?.invitedByName,
+    roomAccessSource: message?.roomAccessSource || message?.roomSource
   });
   const roomTitleRaw = String(invitePayload.roomTitle || "Sala de estudio").trim() || "Sala de estudio";
   const roomTitle = escapeHtml(roomTitleRaw);
@@ -22136,6 +22306,23 @@ function subscribeActiveStudyRoom(roomId){
 
       const access = canCurrentUserAccessStudyRoom(normalized);
       if (!access.allowed) {
+        const acceptedInviteAccess = getCurrentUserAcceptedStudyRoomInviteAccessEntry(
+          safeRoomId,
+          String(normalized.createdByUid || "").trim()
+        );
+        const fallbackOwnerUid = String(acceptedInviteAccess?.invitedByUid || "").trim();
+        const ownUid = String(currentUser?.uid || "").trim();
+        const canFallbackToOwned = !!fallbackOwnerUid && fallbackOwnerUid !== ownUid;
+        if (canFallbackToOwned) {
+          logStudyRoomInviteDebug("LSN-P05A", "Snapshot principal sin acceso, fallback inmediato a owned por invitación aceptada.", {
+            roomId: safeRoomId,
+            fallbackOwnerUid,
+            accessReason: String(access.reason || "").trim(),
+            roomAccessSource: String(acceptedInviteAccess?.roomAccessSource || "").trim()
+          }, "warn");
+          subscribeActiveOwnedStudyRoom(fallbackOwnerUid);
+          return;
+        }
         logStudyRoomInviteDebug("LSN-P05", "Acceso denegado en snapshot principal.", {
           roomId: safeRoomId,
           createdByUid: String(normalized.createdByUid || "").trim(),
@@ -22711,6 +22898,7 @@ async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
 
   const now = Date.now();
   let invitationPersisted = false;
+  let invitationStoredSource = "primary";
   try {
     await setDoc(
       doc(db, STUDY_ROOMS_COLLECTION, roomId),
@@ -22753,6 +22941,7 @@ async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
           },
         );
         invitationPersisted = true;
+        invitationStoredSource = "owned";
         logStudyRoomInviteDebug("SND-10", "Invitación persistida en fallback owned del creador.", {
           roomId,
           ownerUid: identity.uid,
@@ -22796,7 +22985,8 @@ async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
     chatMessageSent = await sendSocialChatStudyRoomInviteMessage(safeTargetUid, {
       roomId,
       roomTitle,
-      inviterName: identity.name
+      inviterName: identity.name,
+      roomAccessSource: invitationStoredSource
     });
   } catch (chatErr) {
     console.error("No se pudo publicar la invitación en chat social.", chatErr);
@@ -22810,7 +23000,8 @@ async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
   logStudyRoomInviteDebug("SND-14", "Resultado de envío de mensaje de invitación por chat.", {
     roomId,
     targetUid: safeTargetUid,
-    chatMessageSent
+    chatMessageSent,
+    invitationStoredSource
   }, chatMessageSent ? "ok" : "warn");
 
   if (!chatMessageSent) {
