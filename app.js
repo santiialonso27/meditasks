@@ -8544,6 +8544,78 @@ function waitForStudyRoomSessionReady(roomId, { timeoutMs = 4500, pollMs = 120 }
   });
 }
 
+async function claimStudyRoomInviteMembership(
+  roomId,
+  {
+    invitedByUid = "",
+    invitedByName = ""
+  } = {}
+){
+  const safeRoomId = String(roomId || "").trim();
+  const identity = getStudyRoomIdentity();
+  if (!safeRoomId || !identity?.uid) return false;
+
+  if (!(studyRoomsState.joinAnnouncementSyncedByRoomId instanceof Set)) {
+    studyRoomsState.joinAnnouncementSyncedByRoomId = new Set();
+  }
+  const shouldAppendJoinMessage = !studyRoomsState.joinAnnouncementSyncedByRoomId.has(safeRoomId);
+  const safeInvitedByUid = String(invitedByUid || "").trim();
+  const safeInvitedByName = String(invitedByName || "").trim();
+
+  const now = Date.now();
+  const joinMessageId = shouldAppendJoinMessage
+    ? `sc_${now}_${Math.random().toString(36).slice(2, 8)}`
+    : "";
+  const payload = {
+    updatedAt: now
+  };
+  payload[`invited.${identity.uid}`] = {
+    uid: identity.uid,
+    invitedAt: now,
+    invitedByUid: safeInvitedByUid,
+    invitedByName: safeInvitedByName
+  };
+  payload[`participants.${identity.uid}`] = {
+    uid: identity.uid,
+    name: identity.name,
+    photo: identity.photo,
+    joinedAt: now,
+    updatedAt: now
+  };
+  payload[`boards.${identity.uid}`] = {
+    uid: identity.uid,
+    name: identity.name,
+    photo: identity.photo,
+    tasks: {},
+    updatedAt: now
+  };
+
+  if (shouldAppendJoinMessage && joinMessageId) {
+    payload[`chat.${joinMessageId}`] = {
+      id: joinMessageId,
+      uid: identity.uid,
+      name: identity.name,
+      photo: identity.photo,
+      kind: "system",
+      text: `${identity.name} se ha unido a la sala`,
+      createdAt: now
+    };
+  }
+
+  try {
+    await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), payload);
+    if (shouldAppendJoinMessage) {
+      studyRoomsState.joinAnnouncementSyncedByRoomId.add(safeRoomId);
+    }
+    return true;
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo confirmar membresía al aceptar invitación de sala.", err);
+    }
+    return false;
+  }
+}
+
 async function openStudyRoomSessionFromInvite(roomId, { roomTitle = "Sala de estudio" } = {}){
   const safeRoomId = String(roomId || "").trim();
   if (!safeRoomId || !currentUser?.uid) return false;
@@ -8645,6 +8717,11 @@ async function respondToSocialChatStudyRoomInvite(friendUid, messageId, action =
     showToast(`La sala ${roomTitle} ya fue cerrada.`);
     return false;
   }
+
+  await claimStudyRoomInviteMembership(roomId, {
+    invitedByUid: invitePayload.invitedByUid || safeFriendUid,
+    invitedByName: invitePayload.invitedByName
+  });
 
   const joined = await openStudyRoomSessionFromInvite(roomId, { roomTitle });
   if (!joined) {
@@ -21428,12 +21505,33 @@ async function openStudyRoomSession(roomId, { skipListAccessCheck = false } = {}
     }
   }
 
-  if (studyRoomsState.activeRoomId === safeRoomId && typeof studyRoomsState.activeRoomUnsub === "function") {
-    persistStudyRoomActiveSession(safeRoomId, currentUser?.uid);
-    startStudyRoomSessionTracking(safeRoomId);
-    if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
-      patchStudyRoomsUI();
+  if (studyRoomsState.activeRoomId === safeRoomId) {
+    const activeRoomData = studyRoomsState.activeRoomData && typeof studyRoomsState.activeRoomData === "object"
+      ? studyRoomsState.activeRoomData
+      : null;
+    const activeRoomDataId = activeRoomData
+      ? String(activeRoomData.id || "").trim()
+      : "";
+    const hasActiveRoomData = activeRoomDataId === safeRoomId;
+    const hasActiveRoomError = !!String(studyRoomsState.activeRoomError || "").trim();
+    const hasLiveActiveListener = typeof studyRoomsState.activeRoomUnsub === "function";
+
+    if (
+      hasLiveActiveListener &&
+      !hasActiveRoomError &&
+      (studyRoomsState.activeRoomLoading || hasActiveRoomData)
+    ) {
+      persistStudyRoomActiveSession(safeRoomId, currentUser?.uid);
+      startStudyRoomSessionTracking(safeRoomId);
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        patchStudyRoomsUI();
+      }
+      return true;
     }
+
+    persistStudyRoomActiveSession(safeRoomId, currentUser?.uid);
+    subscribeActiveStudyRoom(safeRoomId);
+    startStudyRoomSessionTracking(safeRoomId);
     return true;
   }
 
@@ -21770,7 +21868,6 @@ async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
   }
 
   const now = Date.now();
-  let invitationPersisted = false;
   try {
     await setDoc(
       doc(db, STUDY_ROOMS_COLLECTION, roomId),
@@ -21785,40 +21882,12 @@ async function sendStudyRoomInvitation(targetUid, targetName = "usuario"){
       },
       { merge: true }
     );
-    invitationPersisted = true;
   } catch (err) {
     if (isFirestorePermissionError(err)) {
-      try {
-        await updateDoc(
-          doc(db, "users", identity.uid),
-          {
-            [`${STUDY_ROOM_OWNED_FIELD}.invited.${safeTargetUid}`]: {
-              uid: safeTargetUid,
-              invitedAt: now,
-              invitedByUid: identity.uid,
-              invitedByName: identity.name
-            },
-            [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
-          },
-        );
-        invitationPersisted = true;
-      } catch (ownedErr) {
-        if (isFirestorePermissionError(ownedErr)) {
-          showToast("No hay permisos para invitar a esta sala.");
-          return false;
-        }
-        console.error("No se pudo enviar invitación a sala de estudio local.", ownedErr);
-        showToast("No se pudo enviar la invitación.");
-        return false;
-      }
-    } else {
-      console.error("No se pudo enviar invitación a sala de estudio.", err);
-      showToast("No se pudo enviar la invitación.");
+      showToast("No hay permisos para invitar a esta sala.");
       return false;
     }
-  }
-
-  if (!invitationPersisted) {
+    console.error("No se pudo enviar invitación a sala de estudio.", err);
     showToast("No se pudo enviar la invitación.");
     return false;
   }
