@@ -18445,13 +18445,11 @@ function canCurrentUserAccessStudyRoom(roomData = null){
 }
 
 function isStudyRoomReadOnlySource(source = ""){
-  return String(source || "").trim().toLowerCase() === "shared";
+  return false;
 }
 
 function ensureStudyRoomWritableSourceOrNotify(source = ""){
-  if (!isStudyRoomReadOnlySource(source)) return true;
-  showToast("Esta sala está en modo solo lectura por permisos.");
-  return false;
+  return true;
 }
 
 function parseStudyRoomTasks(rawTasks = {}){
@@ -21323,8 +21321,6 @@ function renderStudyRoomWorkspace(){
     Array.isArray(roomData.participants) ? roomData.participants.length : 0,
     Math.max(0, Number(roomData.participantsCount) || 0)
   );
-  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim().toLowerCase();
-  const isSharedReadOnly = activeRoomSource === "shared";
   const cards = buildStudyRoomCards(roomData);
   const ownUid = String(currentUser?.uid || "").trim();
   const isCreator = String(roomData.createdByUid || "").trim() === ownUid;
@@ -21420,7 +21416,6 @@ function renderStudyRoomWorkspace(){
       </div>
     </div>
     <p class="study-room-meta">Creada por ${safeCreatorName} (Acceso solo por invitación)</p>
-    ${isSharedReadOnly ? `<div class="social-empty">Modo solo lectura: permisos limitados para editar esta sala.</div>` : ""}
     ${studyRoomsState.activeRoomError ? `<div class="social-empty">${escapeHtml(studyRoomsState.activeRoomError)}</div>` : ""}
     <div class="study-room-board-grid">
       ${cardsHtml}
@@ -22408,9 +22403,11 @@ async function ensureStudyRoomMembership(roomData = null){
   const access = canCurrentUserAccessStudyRoom(room);
   if (!access.allowed) return false;
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
-  if (activeRoomSource === "owned" || activeRoomSource === "shared") {
-    return false;
-  }
+  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
+  const ownedRoomOwnerUid = usesOwnedRoomWritePath
+    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, room)
+    : "";
+  if (usesOwnedRoomWritePath && !ownedRoomOwnerUid) return false;
 
   const participantsByUid = room.participantsByUid instanceof Map
     ? room.participantsByUid
@@ -22494,8 +22491,18 @@ async function ensureStudyRoomMembership(roomData = null){
     studyRoomsState.joinAnnouncementSyncedByRoomId.add(safeRoomId);
   }
 
+  const writePayload = usesOwnedRoomWritePath
+    ? Object.entries(payload).reduce((acc, [key, value]) => {
+      acc[`${STUDY_ROOM_OWNED_FIELD}.${key}`] = value;
+      return acc;
+    }, {})
+    : payload;
+  const targetDocRef = usesOwnedRoomWritePath
+    ? doc(db, "users", ownedRoomOwnerUid)
+    : doc(db, STUDY_ROOMS_COLLECTION, safeRoomId);
+
   try {
-    await setDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), payload, { merge: true });
+    await setDoc(targetDocRef, writePayload, { merge: true });
     studyRoomsState.presenceSyncedByRoomId.add(safeRoomId);
     if (shouldAnnounceJoin && joinMessageId) {
       const activeRoomData = studyRoomsState.activeRoomData;
@@ -23853,7 +23860,8 @@ async function addStudyRoomTask(roomId, rawTask){
   if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const ownedRoomOwnerUid = activeRoomSource === "owned"
+  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
+  const ownedRoomOwnerUid = usesOwnedRoomWritePath
     ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, studyRoomsState.activeRoomData)
     : "";
 
@@ -23872,7 +23880,7 @@ async function addStudyRoomTask(roomId, rawTask){
     expGiven: false
   };
 
-  if (activeRoomSource === "owned") {
+  if (usesOwnedRoomWritePath) {
     if (!ownedRoomOwnerUid) return false;
     try {
       await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
@@ -23998,12 +24006,13 @@ async function updateStudyRoomTaskText(roomId, taskId, rawText){
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const ownedRoomOwnerUid = activeRoomSource === "owned"
+  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
+  const ownedRoomOwnerUid = usesOwnedRoomWritePath
     ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
     : "";
   const now = Date.now();
 
-  if (activeRoomSource === "owned") {
+  if (usesOwnedRoomWritePath) {
     if (!ownedRoomOwnerUid) return false;
     try {
       await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
@@ -24119,12 +24128,13 @@ async function setStudyRoomTaskDone(
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const ownedRoomOwnerUid = activeRoomSource === "owned"
+  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
+  const ownedRoomOwnerUid = usesOwnedRoomWritePath
     ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
     : "";
   const now = Date.now();
 
-  if (activeRoomSource === "owned") {
+  if (usesOwnedRoomWritePath) {
     if (!ownedRoomOwnerUid) return false;
     try {
       const payload = {
@@ -24276,12 +24286,13 @@ async function deleteStudyRoomTask(roomId, taskId){
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const ownedRoomOwnerUid = activeRoomSource === "owned"
+  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
+  const ownedRoomOwnerUid = usesOwnedRoomWritePath
     ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
     : "";
   const now = Date.now();
 
-  if (activeRoomSource === "owned") {
+  if (usesOwnedRoomWritePath) {
     if (!ownedRoomOwnerUid) return false;
     try {
       await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
@@ -24382,7 +24393,8 @@ async function addStudyRoomChatMessage(roomId, rawMessage, { kind = "message" } 
   if (!roomData || typeof roomData !== "object") return false;
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const ownedRoomOwnerUid = activeRoomSource === "owned"
+  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
+  const ownedRoomOwnerUid = usesOwnedRoomWritePath
     ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
     : "";
   const access = canCurrentUserAccessStudyRoom(roomData);
@@ -24406,7 +24418,7 @@ async function addStudyRoomChatMessage(roomId, rawMessage, { kind = "message" } 
     createdAt: now
   };
 
-  if (activeRoomSource === "owned") {
+  if (usesOwnedRoomWritePath) {
     if (!ownedRoomOwnerUid) return false;
     try {
       await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
@@ -24492,7 +24504,8 @@ async function persistStudyRoomMusicState(roomId, nextMusic = {}){
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const ownedRoomOwnerUid = activeRoomSource === "owned"
+  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
+  const ownedRoomOwnerUid = usesOwnedRoomWritePath
     ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
     : "";
   const now = Math.max(0, Number(nextMusic.updatedAt) || Date.now());
@@ -24502,7 +24515,7 @@ async function persistStudyRoomMusicState(roomId, nextMusic = {}){
     updatedByUid: identity.uid
   });
 
-  if (activeRoomSource === "owned") {
+  if (usesOwnedRoomWritePath) {
     if (!ownedRoomOwnerUid) return false;
     try {
       await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
@@ -24566,7 +24579,8 @@ async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const ownedRoomOwnerUid = activeRoomSource === "owned"
+  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
+  const ownedRoomOwnerUid = usesOwnedRoomWritePath
     ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
     : "";
   const now = Math.max(0, Number(nextMusic.updatedAt) || Date.now());
@@ -24593,7 +24607,7 @@ async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {
     }
     : null;
 
-  if (activeRoomSource === "owned") {
+  if (usesOwnedRoomWritePath) {
     if (!ownedRoomOwnerUid) return false;
     const ownedUpdates = {
       [`${STUDY_ROOM_OWNED_FIELD}.music`]: normalizedMusic,
