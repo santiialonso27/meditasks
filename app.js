@@ -8495,6 +8495,53 @@ async function resolveStudyRoomInvitationTargetRoom(roomId, inviterUid = ""){
   return { isActive: false, reason: "unavailable", roomData: null };
 }
 
+function waitForStudyRoomSessionReady(roomId, { timeoutMs = 4500, pollMs = 120 } = {}){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) {
+    return Promise.resolve({ ready: false, reason: "missing-room" });
+  }
+
+  const safeTimeoutMs = Math.max(300, Number(timeoutMs) || 0);
+  const safePollMs = Math.max(60, Number(pollMs) || 0);
+  const startedAt = Date.now();
+
+  return new Promise((resolve) => {
+    const checkState = () => {
+      const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+      if (activeRoomId !== safeRoomId) {
+        resolve({ ready: false, reason: "switched" });
+        return;
+      }
+
+      const activeRoomData = studyRoomsState.activeRoomData && typeof studyRoomsState.activeRoomData === "object"
+        ? studyRoomsState.activeRoomData
+        : null;
+      const activeRoomDataId = activeRoomData
+        ? String(activeRoomData.id || "").trim()
+        : "";
+      if (activeRoomDataId === safeRoomId) {
+        resolve({ ready: true, reason: "ready" });
+        return;
+      }
+
+      const activeRoomError = String(studyRoomsState.activeRoomError || "").trim();
+      if (activeRoomError) {
+        resolve({ ready: false, reason: "error", error: activeRoomError });
+        return;
+      }
+
+      if (Date.now() - startedAt >= safeTimeoutMs) {
+        resolve({ ready: false, reason: "timeout" });
+        return;
+      }
+
+      setTimeout(checkState, safePollMs);
+    };
+
+    checkState();
+  });
+}
+
 async function openStudyRoomSessionFromInvite(roomId, { roomTitle = "Sala de estudio" } = {}){
   const safeRoomId = String(roomId || "").trim();
   if (!safeRoomId || !currentUser?.uid) return false;
@@ -8527,6 +8574,20 @@ async function openStudyRoomSessionFromInvite(roomId, { roomTitle = "Sala de est
   if (!opened) return false;
 
   await setViewMode(VIEW_MODE_STUDY_ROOMS);
+  const joinResult = await waitForStudyRoomSessionReady(safeRoomId);
+  if (!joinResult.ready) {
+    if (joinResult.reason === "error") {
+      const roomError = String(joinResult.error || "").trim();
+      if (roomError) {
+        showToast(roomError);
+      }
+      return false;
+    }
+    if (joinResult.reason === "timeout") {
+      showToast("No se pudo confirmar el ingreso a la sala. Probá de nuevo.");
+    }
+    return false;
+  }
   showToast(`Entraste a la sala ${String(roomTitle || "Sala de estudio").trim() || "Sala de estudio"}.`);
   return true;
 }
@@ -19036,11 +19097,24 @@ function renderStudyRoomsActiveList(){
 
   const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
   const ownUid = String(currentUser?.uid || "").trim();
+  const activeRoomData = studyRoomsState.activeRoomData && typeof studyRoomsState.activeRoomData === "object"
+    ? studyRoomsState.activeRoomData
+    : null;
+  const activeRoomDataId = activeRoomData
+    ? String(activeRoomData.id || "").trim()
+    : "";
+  const hasResolvedActiveRoom = !!activeRoomDataId && activeRoomDataId === activeRoomId;
 
   return studyRoomsState.rooms.map((room) => {
     const roomId = String(room.id || "").trim();
     const safeRoomId = escapeHtml(roomId);
-    const isCurrent = roomId === activeRoomId;
+    const isCurrent = (
+      roomId === activeRoomId &&
+      (
+        studyRoomsState.activeRoomLoading ||
+        hasResolvedActiveRoom
+      )
+    );
     const isCreator = !!ownUid && String(room.createdByUid || "").trim() === ownUid;
     const hostName = String(room.createdByName || "Usuario").trim() || "Usuario";
     const safeHostName = escapeHtml(hostName);
