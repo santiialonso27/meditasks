@@ -114,6 +114,9 @@ const LEGACY_PLAYER_CLAIMED_UID_KEY = "mt_player_legacy_claimed_uid_v1";
 const STUDY_ROOM_ACTIVE_SESSION_STORAGE_PREFIX = "mt_study_room_active_session_v1_";
 const STUDY_ROOM_INVITE_ACCESS_STORAGE_PREFIX = "mt_study_room_invite_access_v1_";
 const STUDY_ROOM_CLOSURE_SUMMARY_SEEN_STORAGE_PREFIX = "mt_study_room_closure_seen_v1_";
+const STUDY_ROOM_SYNC_DELETE_TOKEN = "__mt_delete_token_v1__";
+const STUDY_ROOM_SYNC_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7;
+const STUDY_ROOM_SYNC_TRACKED_OP_IDS_LIMIT = 900;
 const STUDY_ROOM_INVITE_ACCESS_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
 const STUDY_ROOM_INVITE_ACCESS_MAX_ENTRIES = 120;
 const STUDY_ROOM_INVITE_DEBUG_ENABLED = true;
@@ -249,6 +252,7 @@ const SOCIAL_REJECTED_REQUESTS_FIELD = "socialRejectedRequests";
 const SOCIAL_CHAT_OUTBOX_FIELD = "socialChatOutbox";
 const SOCIAL_CHAT_READS_FIELD = "socialChatReads";
 const SOCIAL_CHAT_STUDY_ROOM_INVITES_FIELD = "socialChatStudyRoomInvites";
+const SOCIAL_CHAT_STUDY_ROOM_SYNC_FIELD = "socialChatStudyRoomSync";
 const SOCIAL_CHAT_LOCAL_READS_STORAGE_PREFIX = "mt_social_chat_reads_cache_v1_";
 const SOCIAL_CHAT_MAX_LENGTH = 420;
 const SOCIAL_CHAT_KIND_MESSAGE = "message";
@@ -286,6 +290,8 @@ const socialState = {
   chatUnreadLiveFriendUnsubByUid: new Map(),
   chatUnreadLiveFriendDocByUid: new Map(),
   chatUnreadLiveOwnReadByUid: new Map(),
+  studyRoomSyncProcessQueueByFriendUid: new Map(),
+  studyRoomSyncAppliedOpIdsByFriendUid: new Map(),
   chatRemoteReadByUid: new Map(),
   chatOwnReadByUid: new Map(),
   chatMessages: [],
@@ -7284,6 +7290,8 @@ function resetSocialState(){
   socialState.chatUnreadLiveFriendUnsubByUid = new Map();
   socialState.chatUnreadLiveFriendDocByUid = new Map();
   socialState.chatUnreadLiveOwnReadByUid = new Map();
+  socialState.studyRoomSyncProcessQueueByFriendUid = new Map();
+  socialState.studyRoomSyncAppliedOpIdsByFriendUid = new Map();
   socialState.chatRemoteReadByUid = new Map();
   socialState.chatOwnReadByUid = new Map();
   socialState.chatMessages = [];
@@ -8226,6 +8234,375 @@ function syncStudyRoomInviteAccessFromIncomingChatInvites(
   return grantsApplied;
 }
 
+function normalizeStudyRoomSyncRoomUpdates(rawUpdates = {}){
+  if (!rawUpdates || typeof rawUpdates !== "object" || Array.isArray(rawUpdates)) {
+    return {};
+  }
+
+  const normalized = {};
+  Object.entries(rawUpdates).forEach(([path, value]) => {
+    const safePath = String(path || "").trim();
+    if (!safePath) return;
+    if (!/^[a-zA-Z0-9_.-]+$/.test(safePath)) return;
+    if (safePath.startsWith(".") || safePath.endsWith(".") || safePath.includes("..")) return;
+    normalized[safePath] = value;
+  });
+  return normalized;
+}
+
+function filterStudyRoomSyncRoomUpdatesForActor(roomUpdates = {}, actorUid = ""){
+  const safeActorUid = String(actorUid || "").trim();
+  const source = normalizeStudyRoomSyncRoomUpdates(roomUpdates);
+  if (!Object.keys(source).length) return {};
+
+  const filtered = {};
+  Object.entries(source).forEach(([path, value]) => {
+    const safePath = String(path || "").trim();
+    if (!safePath) return;
+
+    const isGlobalAllowedPath = (
+      safePath === "updatedAt" ||
+      safePath === "music" ||
+      safePath.startsWith("chat.")
+    );
+    if (isGlobalAllowedPath) {
+      filtered[safePath] = value;
+      return;
+    }
+    if (!safeActorUid) return;
+
+    if (
+      safePath === `allowed.${safeActorUid}` ||
+      safePath.startsWith(`allowed.${safeActorUid}.`) ||
+      safePath === `invited.${safeActorUid}` ||
+      safePath.startsWith(`invited.${safeActorUid}.`) ||
+      safePath === `participants.${safeActorUid}` ||
+      safePath.startsWith(`participants.${safeActorUid}.`) ||
+      safePath === `boards.${safeActorUid}` ||
+      safePath.startsWith(`boards.${safeActorUid}.`)
+    ) {
+      filtered[safePath] = value;
+    }
+  });
+
+  return filtered;
+}
+
+function normalizeSocialStudyRoomSyncOp(entry = {}, fallbackId = "", friendUid = ""){
+  const source = entry && typeof entry === "object" && !Array.isArray(entry)
+    ? entry
+    : {};
+
+  const id = String(source.id || fallbackId || "").trim();
+  const ownerUid = String(source.ownerUid || "").trim();
+  const roomId = String(source.roomId || "").trim();
+  const actorUid = String(source.actorUid || source.uid || "").trim();
+  const createdAt = Math.max(0, Number(source.createdAt || source.updatedAt) || 0);
+  const roomUpdates = normalizeStudyRoomSyncRoomUpdates(source.roomUpdates);
+
+  if (!id || !ownerUid || !roomId || !actorUid || !Object.keys(roomUpdates).length) {
+    return null;
+  }
+
+  return {
+    id,
+    ownerUid,
+    roomId,
+    actorUid,
+    actorName: String(source.actorName || "Usuario").trim() || "Usuario",
+    actorPhoto: String(source.actorPhoto || "").trim(),
+    createdAt,
+    reason: String(source.reason || "").trim(),
+    roomUpdates,
+    friendUid: String(friendUid || "").trim()
+  };
+}
+
+function collectSocialStudyRoomSyncOpsFromFriendDoc(friendUid, friendDocData = {}, ownerUid = ""){
+  const safeFriendUid = String(friendUid || "").trim();
+  const safeOwnerUid = String(ownerUid || currentUser?.uid || "").trim();
+  if (!safeFriendUid || !safeOwnerUid) return [];
+  if (!friendDocData || typeof friendDocData !== "object") return [];
+
+  const rawSyncStore = friendDocData?.[SOCIAL_CHAT_STUDY_ROOM_SYNC_FIELD];
+  if (!rawSyncStore || typeof rawSyncStore !== "object" || Array.isArray(rawSyncStore)) {
+    return [];
+  }
+
+  const rawByOwner = rawSyncStore[safeOwnerUid];
+  if (!rawByOwner || typeof rawByOwner !== "object" || Array.isArray(rawByOwner)) {
+    return [];
+  }
+
+  const operations = [];
+  Object.entries(rawByOwner).forEach(([opId, value]) => {
+    const normalized = normalizeSocialStudyRoomSyncOp(value, opId, safeFriendUid);
+    if (!normalized) return;
+    operations.push(normalized);
+  });
+
+  operations.sort((a, b) => {
+    const byTime = (Number(a?.createdAt) || 0) - (Number(b?.createdAt) || 0);
+    if (byTime !== 0) return byTime;
+    return String(a?.id || "").localeCompare(String(b?.id || ""), "es", { sensitivity: "base" });
+  });
+  return operations;
+}
+
+async function enqueueStudyRoomSyncRelayOperation({
+  ownerUid = "",
+  roomId = "",
+  roomUpdates = {},
+  reason = ""
+} = {}){
+  const ownUid = String(currentUser?.uid || "").trim();
+  const safeOwnerUid = String(ownerUid || "").trim();
+  const safeRoomId = String(roomId || "").trim();
+  if (!ownUid || !safeOwnerUid || !safeRoomId) return false;
+  if (ownUid === safeOwnerUid) return false;
+
+  const normalizedUpdates = filterStudyRoomSyncRoomUpdatesForActor(roomUpdates, ownUid);
+  if (!Object.keys(normalizedUpdates).length) return false;
+
+  const identity = getStudyRoomIdentity();
+  const now = Date.now();
+  const opId = `srs_${now}_${Math.random().toString(36).slice(2, 8)}`;
+  const payload = {
+    id: opId,
+    ownerUid: safeOwnerUid,
+    roomId: safeRoomId,
+    actorUid: ownUid,
+    actorName: String(identity?.name || currentUser?.displayName || "Usuario").trim() || "Usuario",
+    actorPhoto: String(identity?.photo || currentUser?.photoURL || "").trim(),
+    createdAt: now,
+    reason: String(reason || "").trim(),
+    roomUpdates: normalizedUpdates
+  };
+
+  logStudyRoomInviteDebug("RLY-01", "Encolando operación de sincronización de sala por fallback local.", {
+    ownerUid: safeOwnerUid,
+    roomId: safeRoomId,
+    actorUid: ownUid,
+    opId,
+    reason: String(payload.reason || "").trim(),
+    updateKeys: Object.keys(normalizedUpdates).slice(0, 16)
+  }, "info");
+
+  try {
+    await setDoc(
+      doc(db, "leaderboard", ownUid),
+      {
+        [SOCIAL_CHAT_STUDY_ROOM_SYNC_FIELD]: {
+          [safeOwnerUid]: {
+            [opId]: payload
+          }
+        }
+      },
+      { merge: true }
+    );
+    logStudyRoomInviteDebug("RLY-02", "Operación de sincronización de sala encolada.", {
+      ownerUid: safeOwnerUid,
+      roomId: safeRoomId,
+      actorUid: ownUid,
+      opId
+    }, "ok");
+    return true;
+  } catch (err) {
+    logStudyRoomInviteDebug("RLY-03", "No se pudo encolar operación de sincronización de sala.", {
+      ownerUid: safeOwnerUid,
+      roomId: safeRoomId,
+      actorUid: ownUid,
+      opId,
+      permissionDenied: isFirestorePermissionError(err),
+      code: String(err?.code || "").trim(),
+      message: String(err?.message || "").trim()
+    }, isFirestorePermissionError(err) ? "warn" : "error");
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo encolar operación de sincronización de sala.", err);
+    }
+    return false;
+  }
+}
+
+async function applySocialStudyRoomSyncOpFromFriend(operation = {}, friendUid = ""){
+  const ownUid = String(currentUser?.uid || "").trim();
+  const safeFriendUid = String(friendUid || "").trim();
+  if (!ownUid) return false;
+  if (!operation || typeof operation !== "object") return false;
+
+  const safeOpId = String(operation.id || "").trim();
+  const safeOwnerUid = String(operation.ownerUid || "").trim();
+  const safeRoomId = String(operation.roomId || "").trim();
+  const safeActorUid = String(operation.actorUid || "").trim();
+  const safeCreatedAt = Math.max(0, Number(operation.createdAt) || 0);
+  const safeReason = String(operation.reason || "").trim();
+  const normalizedRoomUpdates = filterStudyRoomSyncRoomUpdatesForActor(
+    operation.roomUpdates,
+    safeActorUid
+  );
+  if (!safeOpId || !safeOwnerUid || !safeRoomId || !safeActorUid || !Object.keys(normalizedRoomUpdates).length) {
+    return false;
+  }
+  if (safeOwnerUid !== ownUid) return false;
+  if (safeFriendUid && safeActorUid && safeActorUid !== safeFriendUid) {
+    logStudyRoomInviteDebug("RLY-04", "Operación ignorada por actor distinto al friend listener.", {
+      opId: safeOpId,
+      friendUid: safeFriendUid,
+      actorUid: safeActorUid
+    }, "warn");
+    return false;
+  }
+  if (safeRoomId !== ownUid) {
+    logStudyRoomInviteDebug("RLY-05", "Operación ignorada por roomId inválido para el owner.", {
+      opId: safeOpId,
+      roomId: safeRoomId,
+      ownerUid: safeOwnerUid
+    }, "warn");
+    return false;
+  }
+  if (safeCreatedAt > 0 && (Date.now() - safeCreatedAt) > STUDY_ROOM_SYNC_MAX_AGE_MS) {
+    return false;
+  }
+
+  const roomUpdates = {
+    ...normalizedRoomUpdates
+  };
+  if (!Object.prototype.hasOwnProperty.call(roomUpdates, "updatedAt")) {
+    roomUpdates.updatedAt = Math.max(safeCreatedAt, Date.now());
+  }
+
+  const ownedUpdates = buildStudyRoomFirestoreUpdates(roomUpdates, {
+    prefix: STUDY_ROOM_OWNED_FIELD
+  });
+  if (!Object.keys(ownedUpdates).length) return false;
+
+  try {
+    await updateDoc(doc(db, "users", ownUid), ownedUpdates);
+  } catch (err) {
+    logStudyRoomInviteDebug("RLY-06", "No se pudo aplicar operación relay en ruta owned del creador.", {
+      opId: safeOpId,
+      roomId: safeRoomId,
+      actorUid: safeActorUid,
+      reason: safeReason,
+      permissionDenied: isFirestorePermissionError(err),
+      code: String(err?.code || "").trim(),
+      message: String(err?.message || "").trim()
+    }, isFirestorePermissionError(err) ? "warn" : "error");
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo aplicar operación de relay en sala owned.", err);
+    }
+    return false;
+  }
+
+  const sharedUpdates = buildStudyRoomFirestoreUpdates(roomUpdates, {
+    prefix: STUDY_ROOM_SHARED_FIELD
+  });
+  if (Object.keys(sharedUpdates).length) {
+    try {
+      await updateDoc(doc(db, "leaderboard", ownUid), sharedUpdates);
+    } catch (err) {
+      logStudyRoomInviteDebug("RLY-06B", "No se pudo reflejar operación relay en snapshot shared.", {
+        opId: safeOpId,
+        roomId: safeRoomId,
+        actorUid: safeActorUid,
+        reason: safeReason,
+        permissionDenied: isFirestorePermissionError(err),
+        code: String(err?.code || "").trim(),
+        message: String(err?.message || "").trim()
+      }, isFirestorePermissionError(err) ? "warn" : "error");
+      if (!isFirestorePermissionError(err)) {
+        console.warn("No se pudo reflejar operación relay en snapshot shared.", err);
+      }
+    }
+  }
+
+  logStudyRoomInviteDebug("RLY-07", "Operación relay aplicada por el creador.", {
+    opId: safeOpId,
+    roomId: safeRoomId,
+    actorUid: safeActorUid,
+    reason: safeReason,
+    updateKeys: Object.keys(roomUpdates).slice(0, 16)
+  }, "ok");
+  return true;
+}
+
+async function processSocialStudyRoomSyncOpsFromFriend(friendUid, friendDocData = {}){
+  const ownUid = String(currentUser?.uid || "").trim();
+  const safeFriendUid = String(friendUid || "").trim();
+  if (!ownUid || !safeFriendUid) return 0;
+
+  const operations = collectSocialStudyRoomSyncOpsFromFriendDoc(
+    safeFriendUid,
+    friendDocData,
+    ownUid
+  );
+  if (!operations.length) return 0;
+
+  if (!(socialState.studyRoomSyncAppliedOpIdsByFriendUid instanceof Map)) {
+    socialState.studyRoomSyncAppliedOpIdsByFriendUid = new Map();
+  }
+  const alreadyAppliedOpIds = socialState.studyRoomSyncAppliedOpIdsByFriendUid.get(safeFriendUid) instanceof Set
+    ? socialState.studyRoomSyncAppliedOpIdsByFriendUid.get(safeFriendUid)
+    : new Set();
+
+  let applied = 0;
+  for (const operation of operations) {
+    const safeOpId = String(operation?.id || "").trim();
+    if (safeOpId && alreadyAppliedOpIds.has(safeOpId)) {
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const done = await applySocialStudyRoomSyncOpFromFriend(operation, safeFriendUid);
+    if (done && safeOpId) {
+      alreadyAppliedOpIds.add(safeOpId);
+      applied += 1;
+    } else if (done) {
+      applied += 1;
+    }
+  }
+  while (alreadyAppliedOpIds.size > STUDY_ROOM_SYNC_TRACKED_OP_IDS_LIMIT) {
+    const oldestTracked = alreadyAppliedOpIds.values().next().value;
+    if (!oldestTracked) break;
+    alreadyAppliedOpIds.delete(oldestTracked);
+  }
+  socialState.studyRoomSyncAppliedOpIdsByFriendUid.set(safeFriendUid, alreadyAppliedOpIds);
+
+  if (applied > 0) {
+    logStudyRoomInviteDebug("RLY-08", "Se aplicaron operaciones relay recibidas desde amigo.", {
+      friendUid: safeFriendUid,
+      ownerUid: ownUid,
+      applied,
+      total: operations.length
+    }, "ok");
+  }
+  return applied;
+}
+
+function queueProcessSocialStudyRoomSyncOpsFromFriend(friendUid, friendDocData = {}){
+  const ownUid = String(currentUser?.uid || "").trim();
+  const safeFriendUid = String(friendUid || "").trim();
+  if (!ownUid || !safeFriendUid) return;
+  if (!friendDocData || typeof friendDocData !== "object") return;
+
+  if (!(socialState.studyRoomSyncProcessQueueByFriendUid instanceof Map)) {
+    socialState.studyRoomSyncProcessQueueByFriendUid = new Map();
+  }
+  const previousTask = socialState.studyRoomSyncProcessQueueByFriendUid.get(safeFriendUid);
+  const safePreviousTask = previousTask instanceof Promise ? previousTask : Promise.resolve();
+
+  const nextTask = safePreviousTask
+    .catch(() => {})
+    .then(() => processSocialStudyRoomSyncOpsFromFriend(safeFriendUid, friendDocData))
+    .catch((err) => {
+      if (!isFirestorePermissionError(err)) {
+        console.warn("No se pudo procesar relay de sala desde amigo.", err);
+      }
+      return 0;
+    });
+
+  socialState.studyRoomSyncProcessQueueByFriendUid.set(safeFriendUid, nextTask);
+}
+
 function refreshSocialActiveChatMessages(){
   const activeFriendUid = String(socialState.chatActiveFriendUid || "").trim();
   if (!activeFriendUid || !currentUser?.uid) {
@@ -8662,6 +9039,7 @@ function openSocialChatSession(friendUid){
     (snapshot) => {
       if (socialState.chatActiveFriendUid !== safeFriendUid) return;
       socialState.chatFriendDocData = snapshot.exists() ? (snapshot.data() || {}) : {};
+      queueProcessSocialStudyRoomSyncOpsFromFriend(safeFriendUid, socialState.chatFriendDocData);
       socialState.chatFriendReady = true;
       socialState.chatError = "";
       syncLoadingState();
@@ -9786,6 +10164,8 @@ function stopSocialUnreadLiveListeners(){
 
   socialState.chatUnreadLiveFriendDocByUid = new Map();
   socialState.chatUnreadLiveOwnReadByUid = new Map();
+  socialState.studyRoomSyncProcessQueueByFriendUid = new Map();
+  socialState.studyRoomSyncAppliedOpIdsByFriendUid = new Map();
 }
 
 function syncSocialUnreadFromLiveSnapshots({ patch = true } = {}){
@@ -9896,6 +10276,12 @@ function ensureSocialUnreadLiveListeners(){
     }
     socialState.chatUnreadLiveFriendUnsubByUid.delete(friendUid);
     socialState.chatUnreadLiveFriendDocByUid.delete(friendUid);
+    if (socialState.studyRoomSyncProcessQueueByFriendUid instanceof Map) {
+      socialState.studyRoomSyncProcessQueueByFriendUid.delete(friendUid);
+    }
+    if (socialState.studyRoomSyncAppliedOpIdsByFriendUid instanceof Map) {
+      socialState.studyRoomSyncAppliedOpIdsByFriendUid.delete(friendUid);
+    }
   });
 
   desiredFriendUids.forEach((friendUid) => {
@@ -9907,6 +10293,10 @@ function ensureSocialUnreadLiveListeners(){
         socialState.chatUnreadLiveFriendDocByUid.set(
           friendUid,
           snapshot.exists() ? (snapshot.data() || {}) : {}
+        );
+        queueProcessSocialStudyRoomSyncOpsFromFriend(
+          friendUid,
+          socialState.chatUnreadLiveFriendDocByUid.get(friendUid) || {}
         );
         syncSocialUnreadFromLiveSnapshots();
       },
@@ -9924,6 +10314,12 @@ function ensureSocialUnreadLiveListeners(){
 
   if (!desiredFriendUids.size) {
     socialState.chatUnreadLiveFriendDocByUid.clear();
+    if (socialState.studyRoomSyncProcessQueueByFriendUid instanceof Map) {
+      socialState.studyRoomSyncProcessQueueByFriendUid.clear();
+    }
+    if (socialState.studyRoomSyncAppliedOpIdsByFriendUid instanceof Map) {
+      socialState.studyRoomSyncAppliedOpIdsByFriendUid.clear();
+    }
     socialState.chatUnreadByUid = new Map();
     syncSocialActiveChatUnreadCount();
     syncSocialNavUnreadBadge(board);
@@ -22375,6 +22771,25 @@ function resolveActiveOwnedStudyRoomOwnerUid(roomId = "", roomData = null){
   return safeRoomId;
 }
 
+function buildStudyRoomFirestoreUpdates(roomUpdates = {}, { prefix = "" } = {}){
+  if (!roomUpdates || typeof roomUpdates !== "object" || Array.isArray(roomUpdates)) {
+    return {};
+  }
+
+  const safePrefix = String(prefix || "").trim();
+  const updates = {};
+  Object.entries(roomUpdates).forEach(([path, value]) => {
+    const safePath = String(path || "").trim();
+    if (!safePath) return;
+    if (value === undefined) return;
+    const targetPath = safePrefix ? `${safePrefix}.${safePath}` : safePath;
+    updates[targetPath] = value === STUDY_ROOM_SYNC_DELETE_TOKEN
+      ? deleteField()
+      : value;
+  });
+  return updates;
+}
+
 function resolveStudyRoomWriteContext(roomId = "", roomData = null){
   const safeRoomId = String(roomId || studyRoomsState.activeRoomId || "").trim();
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary")
@@ -22401,7 +22816,8 @@ async function runStudyRoomWriteWithFallback({
   failureLogMessage = "",
   showPermissionToast = true,
   showFailureToast = true,
-  allowLocalPermissionFallback = false
+  allowLocalPermissionFallback = false,
+  onLocalPermissionFallback = null
 } = {}){
   const context = resolveStudyRoomWriteContext(roomId, roomData);
   const safeRoomId = String(context?.safeRoomId || "").trim();
@@ -22516,6 +22932,28 @@ async function runStudyRoomWriteWithFallback({
         roomId: safeRoomId,
         roomCreatorUid
       }, "warn");
+      if (typeof onLocalPermissionFallback === "function") {
+        try {
+          const relayQueued = await onLocalPermissionFallback({
+            roomId: safeRoomId,
+            roomCreatorUid,
+            ownerUid,
+            roomData
+          });
+          logStudyRoomInviteDebug("WRT-10", "Resultado de encolado de relay local tras fallback de permisos.", {
+            roomId: safeRoomId,
+            roomCreatorUid,
+            relayQueued: relayQueued !== false
+          }, relayQueued === false ? "warn" : "ok");
+        } catch (relayErr) {
+          logStudyRoomInviteDebug("WRT-11", "Falló callback de relay local tras fallback de permisos.", {
+            roomId: safeRoomId,
+            roomCreatorUid,
+            code: String(relayErr?.code || "").trim(),
+            message: String(relayErr?.message || "").trim()
+          }, "error");
+        }
+      }
       return true;
     }
     if (showPermissionToast && permissionToast) {
@@ -22592,16 +23030,16 @@ async function ensureStudyRoomMembership(roomData = null){
     room.createdByName ||
     "Usuario"
   ).trim() || "Usuario";
-  const payload = {
+  const roomUpdates = {
     updatedAt: now
   };
-  payload[`allowed.${identity.uid}`] = {
+  roomUpdates[`allowed.${identity.uid}`] = {
     uid: identity.uid,
     addedAt: Math.max(0, Number(allowedEntry?.addedAt) || now),
     invitedByUid: allowedInvitedByUid,
     invitedByName: allowedInvitedByName
   };
-  payload[`participants.${identity.uid}`] = {
+  roomUpdates[`participants.${identity.uid}`] = {
     uid: identity.uid,
     name: identity.name,
     photo: identity.photo,
@@ -22610,7 +23048,7 @@ async function ensureStudyRoomMembership(roomData = null){
   };
 
   if (needsBoard) {
-    payload[`boards.${identity.uid}`] = {
+    roomUpdates[`boards.${identity.uid}`] = {
       uid: identity.uid,
       name: identity.name,
       photo: identity.photo,
@@ -22623,7 +23061,7 @@ async function ensureStudyRoomMembership(roomData = null){
   let joinMessageId = "";
   if (shouldAnnounceJoin) {
     joinMessageId = `sc_${now}_${Math.random().toString(36).slice(2, 8)}`;
-    payload[`chat.${joinMessageId}`] = {
+    roomUpdates[`chat.${joinMessageId}`] = {
       id: joinMessageId,
       uid: identity.uid,
       name: identity.name,
@@ -22642,15 +23080,23 @@ async function ensureStudyRoomMembership(roomData = null){
     showFailureToast: false,
     allowLocalPermissionFallback: true,
     failureLogMessage: "No se pudo registrar presencia en sala de estudio.",
+    onLocalPermissionFallback: async ({ roomCreatorUid }) => {
+      return enqueueStudyRoomSyncRelayOperation({
+        ownerUid: roomCreatorUid,
+        roomId: safeRoomId,
+        roomUpdates,
+        reason: "membership-ensure"
+      });
+    },
     writeOwned: async (ownerUid) => {
-      const ownedPayload = Object.entries(payload).reduce((acc, [key, value]) => {
-        acc[`${STUDY_ROOM_OWNED_FIELD}.${key}`] = value;
-        return acc;
-      }, {});
-      await setDoc(doc(db, "users", ownerUid), ownedPayload, { merge: true });
+      const ownedUpdates = buildStudyRoomFirestoreUpdates(roomUpdates, {
+        prefix: STUDY_ROOM_OWNED_FIELD
+      });
+      await updateDoc(doc(db, "users", ownerUid), ownedUpdates);
     },
     writePrimary: async () => {
-      await setDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), payload, { merge: true });
+      const primaryUpdates = buildStudyRoomFirestoreUpdates(roomUpdates);
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), primaryUpdates);
     }
   });
   if (!synced) {
@@ -24184,6 +24630,12 @@ async function addStudyRoomTask(roomId, rawTask){
     done: false,
     expGiven: false
   };
+  const roomUpdates = {
+    [`boards.${identity.uid}.tasks.${taskId}`]: payload,
+    [`boards.${identity.uid}.updatedAt`]: now,
+    [`participants.${identity.uid}.updatedAt`]: now,
+    updatedAt: now
+  };
 
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
@@ -24192,21 +24644,23 @@ async function addStudyRoomTask(roomId, rawTask){
     permissionToast: "No hay permisos para actualizar la sala.",
     failureToast: "No se pudo agregar la tarea.",
     failureLogMessage: "No se pudo agregar tarea en sala de estudio.",
-    writeOwned: async (ownerUid) => {
-      await updateDoc(doc(db, "users", ownerUid), {
-        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${taskId}`]: payload,
-        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+    onLocalPermissionFallback: async ({ roomCreatorUid }) => {
+      return enqueueStudyRoomSyncRelayOperation({
+        ownerUid: roomCreatorUid,
+        roomId: safeRoomId,
+        roomUpdates,
+        reason: "task-add"
       });
     },
-    writePrimary: async () => {
-      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
-        [`boards.${identity.uid}.tasks.${taskId}`]: payload,
-        [`boards.${identity.uid}.updatedAt`]: now,
-        [`participants.${identity.uid}.updatedAt`]: now,
-        updatedAt: now
+    writeOwned: async (ownerUid) => {
+      const ownedUpdates = buildStudyRoomFirestoreUpdates(roomUpdates, {
+        prefix: STUDY_ROOM_OWNED_FIELD
       });
+      await updateDoc(doc(db, "users", ownerUid), ownedUpdates);
+    },
+    writePrimary: async () => {
+      const primaryUpdates = buildStudyRoomFirestoreUpdates(roomUpdates);
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), primaryUpdates);
     }
   });
   if (!persisted) return false;
@@ -24301,6 +24755,12 @@ async function updateStudyRoomTaskText(roomId, taskId, rawText){
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
   const now = Date.now();
+  const roomUpdates = {
+    [`boards.${identity.uid}.tasks.${safeTaskId}.text`]: nextText,
+    [`boards.${identity.uid}.updatedAt`]: now,
+    [`participants.${identity.uid}.updatedAt`]: now,
+    updatedAt: now
+  };
 
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
@@ -24309,21 +24769,23 @@ async function updateStudyRoomTaskText(roomId, taskId, rawText){
     permissionToast: "No hay permisos para editar esa tarea.",
     failureToast: "No se pudo editar la tarea.",
     failureLogMessage: "No se pudo editar tarea en sala de estudio.",
-    writeOwned: async (ownerUid) => {
-      await updateDoc(doc(db, "users", ownerUid), {
-        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.text`]: nextText,
-        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+    onLocalPermissionFallback: async ({ roomCreatorUid }) => {
+      return enqueueStudyRoomSyncRelayOperation({
+        ownerUid: roomCreatorUid,
+        roomId: safeRoomId,
+        roomUpdates,
+        reason: "task-edit-text"
       });
     },
-    writePrimary: async () => {
-      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
-        [`boards.${identity.uid}.tasks.${safeTaskId}.text`]: nextText,
-        [`boards.${identity.uid}.updatedAt`]: now,
-        [`participants.${identity.uid}.updatedAt`]: now,
-        updatedAt: now
+    writeOwned: async (ownerUid) => {
+      const ownedUpdates = buildStudyRoomFirestoreUpdates(roomUpdates, {
+        prefix: STUDY_ROOM_OWNED_FIELD
       });
+      await updateDoc(doc(db, "users", ownerUid), ownedUpdates);
+    },
+    writePrimary: async () => {
+      const primaryUpdates = buildStudyRoomFirestoreUpdates(roomUpdates);
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), primaryUpdates);
     }
   });
   if (!persisted) return false;
@@ -24408,6 +24870,15 @@ async function setStudyRoomTaskDone(
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
   const now = Date.now();
+  const roomUpdates = {
+    [`boards.${identity.uid}.tasks.${safeTaskId}.done`]: desiredDone,
+    [`boards.${identity.uid}.updatedAt`]: now,
+    [`participants.${identity.uid}.updatedAt`]: now,
+    updatedAt: now
+  };
+  if (shouldMarkExpGiven) {
+    roomUpdates[`boards.${identity.uid}.tasks.${safeTaskId}.expGiven`] = true;
+  }
 
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
@@ -24416,29 +24887,23 @@ async function setStudyRoomTaskDone(
     permissionToast: "No hay permisos para actualizar esa tarea.",
     failureToast: "No se pudo actualizar la tarea.",
     failureLogMessage: "No se pudo actualizar estado de tarea en sala de estudio.",
+    onLocalPermissionFallback: async ({ roomCreatorUid }) => {
+      return enqueueStudyRoomSyncRelayOperation({
+        ownerUid: roomCreatorUid,
+        roomId: safeRoomId,
+        roomUpdates,
+        reason: "task-set-done"
+      });
+    },
     writeOwned: async (ownerUid) => {
-      const payload = {
-        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.done`]: desiredDone,
-        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
-      };
-      if (shouldMarkExpGiven) {
-        payload[`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.expGiven`] = true;
-      }
-      await updateDoc(doc(db, "users", ownerUid), payload);
+      const ownedUpdates = buildStudyRoomFirestoreUpdates(roomUpdates, {
+        prefix: STUDY_ROOM_OWNED_FIELD
+      });
+      await updateDoc(doc(db, "users", ownerUid), ownedUpdates);
     },
     writePrimary: async () => {
-      const payload = {
-        [`boards.${identity.uid}.tasks.${safeTaskId}.done`]: desiredDone,
-        [`boards.${identity.uid}.updatedAt`]: now,
-        [`participants.${identity.uid}.updatedAt`]: now,
-        updatedAt: now
-      };
-      if (shouldMarkExpGiven) {
-        payload[`boards.${identity.uid}.tasks.${safeTaskId}.expGiven`] = true;
-      }
-      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), payload);
+      const primaryUpdates = buildStudyRoomFirestoreUpdates(roomUpdates);
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), primaryUpdates);
     }
   });
   if (!persisted) return false;
@@ -24551,6 +25016,12 @@ async function deleteStudyRoomTask(roomId, taskId){
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
   const now = Date.now();
+  const roomUpdates = {
+    [`boards.${identity.uid}.tasks.${safeTaskId}`]: STUDY_ROOM_SYNC_DELETE_TOKEN,
+    [`boards.${identity.uid}.updatedAt`]: now,
+    [`participants.${identity.uid}.updatedAt`]: now,
+    updatedAt: now
+  };
 
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
@@ -24559,21 +25030,23 @@ async function deleteStudyRoomTask(roomId, taskId){
     permissionToast: "No hay permisos para borrar esa tarea.",
     failureToast: "No se pudo borrar la tarea.",
     failureLogMessage: "No se pudo borrar tarea en sala de estudio.",
-    writeOwned: async (ownerUid) => {
-      await updateDoc(doc(db, "users", ownerUid), {
-        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}`]: deleteField(),
-        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+    onLocalPermissionFallback: async ({ roomCreatorUid }) => {
+      return enqueueStudyRoomSyncRelayOperation({
+        ownerUid: roomCreatorUid,
+        roomId: safeRoomId,
+        roomUpdates,
+        reason: "task-delete"
       });
     },
-    writePrimary: async () => {
-      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
-        [`boards.${identity.uid}.tasks.${safeTaskId}`]: deleteField(),
-        [`boards.${identity.uid}.updatedAt`]: now,
-        [`participants.${identity.uid}.updatedAt`]: now,
-        updatedAt: now
+    writeOwned: async (ownerUid) => {
+      const ownedUpdates = buildStudyRoomFirestoreUpdates(roomUpdates, {
+        prefix: STUDY_ROOM_OWNED_FIELD
       });
+      await updateDoc(doc(db, "users", ownerUid), ownedUpdates);
+    },
+    writePrimary: async () => {
+      const primaryUpdates = buildStudyRoomFirestoreUpdates(roomUpdates);
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), primaryUpdates);
     }
   });
   if (!persisted) return false;
@@ -24662,6 +25135,12 @@ async function addStudyRoomChatMessage(roomId, rawMessage, { kind = "message" } 
     text,
     createdAt: now
   };
+  const roomUpdates = {
+    [`chat.${messageId}`]: payload,
+    [`participants.${identity.uid}.updatedAt`]: now,
+    [`boards.${identity.uid}.updatedAt`]: now,
+    updatedAt: now
+  };
 
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
@@ -24670,20 +25149,23 @@ async function addStudyRoomChatMessage(roomId, rawMessage, { kind = "message" } 
     permissionToast: "No hay permisos para enviar mensajes en esta sala.",
     failureToast: "No se pudo enviar el mensaje.",
     failureLogMessage: "No se pudo enviar mensaje de sala.",
-    writeOwned: async (ownerUid) => {
-      await updateDoc(doc(db, "users", ownerUid), {
-        [`${STUDY_ROOM_OWNED_FIELD}.chat.${messageId}`]: payload,
-        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+    onLocalPermissionFallback: async ({ roomCreatorUid }) => {
+      return enqueueStudyRoomSyncRelayOperation({
+        ownerUid: roomCreatorUid,
+        roomId: safeRoomId,
+        roomUpdates,
+        reason: safeKind === "system" ? "chat-system" : "chat-message"
       });
     },
-    writePrimary: async () => {
-      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
-        [`chat.${messageId}`]: payload,
-        [`participants.${identity.uid}.updatedAt`]: now,
-        updatedAt: now
+    writeOwned: async (ownerUid) => {
+      const ownedUpdates = buildStudyRoomFirestoreUpdates(roomUpdates, {
+        prefix: STUDY_ROOM_OWNED_FIELD
       });
+      await updateDoc(doc(db, "users", ownerUid), ownedUpdates);
+    },
+    writePrimary: async () => {
+      const primaryUpdates = buildStudyRoomFirestoreUpdates(roomUpdates);
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), primaryUpdates);
     }
   });
   if (!persisted) return false;
@@ -24744,6 +25226,11 @@ async function persistStudyRoomMusicState(roomId, nextMusic = {}){
     updatedAt: now,
     updatedByUid: identity.uid
   });
+  const roomUpdates = {
+    music: normalizedMusic,
+    [`participants.${identity.uid}.updatedAt`]: now,
+    updatedAt: now
+  };
 
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
@@ -24752,19 +25239,23 @@ async function persistStudyRoomMusicState(roomId, nextMusic = {}){
     permissionToast: "No hay permisos para controlar la música de esta sala.",
     failureToast: "No se pudo actualizar la música.",
     failureLogMessage: "No se pudo sincronizar música de sala.",
-    writeOwned: async (ownerUid) => {
-      await updateDoc(doc(db, "users", ownerUid), {
-        [`${STUDY_ROOM_OWNED_FIELD}.music`]: normalizedMusic,
-        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+    onLocalPermissionFallback: async ({ roomCreatorUid }) => {
+      return enqueueStudyRoomSyncRelayOperation({
+        ownerUid: roomCreatorUid,
+        roomId: safeRoomId,
+        roomUpdates,
+        reason: "music-set"
       });
     },
-    writePrimary: async () => {
-      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
-        music: normalizedMusic,
-        [`participants.${identity.uid}.updatedAt`]: now,
-        updatedAt: now
+    writeOwned: async (ownerUid) => {
+      const ownedUpdates = buildStudyRoomFirestoreUpdates(roomUpdates, {
+        prefix: STUDY_ROOM_OWNED_FIELD
       });
+      await updateDoc(doc(db, "users", ownerUid), ownedUpdates);
+    },
+    writePrimary: async () => {
+      const primaryUpdates = buildStudyRoomFirestoreUpdates(roomUpdates);
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), primaryUpdates);
     }
   });
   if (!persisted) return false;
@@ -24821,6 +25312,15 @@ async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {
       createdAt: now
     }
     : null;
+  const roomUpdates = {
+    music: normalizedMusic,
+    [`participants.${identity.uid}.updatedAt`]: now,
+    updatedAt: now
+  };
+  if (systemPayload) {
+    roomUpdates[`chat.${messageId}`] = systemPayload;
+    roomUpdates[`boards.${identity.uid}.updatedAt`] = now;
+  }
 
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
@@ -24829,28 +25329,23 @@ async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {
     permissionToast: "No hay permisos para controlar la música de esta sala.",
     failureToast: "No se pudo actualizar la música.",
     failureLogMessage: "No se pudo sincronizar música/chat de sala.",
+    onLocalPermissionFallback: async ({ roomCreatorUid }) => {
+      return enqueueStudyRoomSyncRelayOperation({
+        ownerUid: roomCreatorUid,
+        roomId: safeRoomId,
+        roomUpdates,
+        reason: systemPayload ? "music-set-system-message" : "music-set"
+      });
+    },
     writeOwned: async (ownerUid) => {
-      const ownedUpdates = {
-        [`${STUDY_ROOM_OWNED_FIELD}.music`]: normalizedMusic,
-        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
-        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
-      };
-      if (systemPayload) {
-        ownedUpdates[`${STUDY_ROOM_OWNED_FIELD}.chat.${messageId}`] = systemPayload;
-        ownedUpdates[`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`] = now;
-      }
+      const ownedUpdates = buildStudyRoomFirestoreUpdates(roomUpdates, {
+        prefix: STUDY_ROOM_OWNED_FIELD
+      });
       await updateDoc(doc(db, "users", ownerUid), ownedUpdates);
     },
     writePrimary: async () => {
-      const roomUpdates = {
-        music: normalizedMusic,
-        [`participants.${identity.uid}.updatedAt`]: now,
-        updatedAt: now
-      };
-      if (systemPayload) {
-        roomUpdates[`chat.${messageId}`] = systemPayload;
-      }
-      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), roomUpdates);
+      const primaryUpdates = buildStudyRoomFirestoreUpdates(roomUpdates);
+      await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), primaryUpdates);
     }
   });
   if (!persisted) return false;
