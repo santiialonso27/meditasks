@@ -22400,7 +22400,8 @@ async function runStudyRoomWriteWithFallback({
   failureToast = "",
   failureLogMessage = "",
   showPermissionToast = true,
-  showFailureToast = true
+  showFailureToast = true,
+  allowLocalPermissionFallback = false
 } = {}){
   const context = resolveStudyRoomWriteContext(roomId, roomData);
   const safeRoomId = String(context?.safeRoomId || "").trim();
@@ -22410,6 +22411,18 @@ async function runStudyRoomWriteWithFallback({
   const prefersOwnedPath = !!context?.prefersOwnedPath;
   const canWriteOwned = typeof writeOwned === "function" && !!ownerUid;
   const canWritePrimary = typeof writePrimary === "function";
+  const ownUid = String(currentUser?.uid || "").trim();
+  const roomCreatorUid = String(
+    roomData?.createdByUid ||
+    ownerUid ||
+    safeRoomId
+  ).trim();
+  const canUseLocalPermissionFallback = !!(
+    allowLocalPermissionFallback &&
+    ownUid &&
+    roomCreatorUid &&
+    roomCreatorUid !== ownUid
+  );
   if (!canWriteOwned && !canWritePrimary) {
     logStudyRoomInviteDebug("WRT-00", "No hay rutas de persistencia disponibles para operación de sala.", {
       roomId: safeRoomId,
@@ -22498,6 +22511,13 @@ async function runStudyRoomWriteWithFallback({
 
   const finalError = secondAttempt?.err || firstAttempt.err;
   if (finalError && isFirestorePermissionError(finalError)) {
+    if (canUseLocalPermissionFallback) {
+      logStudyRoomInviteDebug("WRT-09", "Permisos remotos denegados en ambas rutas. Se habilita fallback local para invitado.", {
+        roomId: safeRoomId,
+        roomCreatorUid
+      }, "warn");
+      return true;
+    }
     if (showPermissionToast && permissionToast) {
       showToast(permissionToast);
     }
@@ -22620,6 +22640,7 @@ async function ensureStudyRoomMembership(roomData = null){
     roomData: room,
     showPermissionToast: false,
     showFailureToast: false,
+    allowLocalPermissionFallback: true,
     failureLogMessage: "No se pudo registrar presencia en sala de estudio.",
     writeOwned: async (ownerUid) => {
       const ownedPayload = Object.entries(payload).reduce((acc, [key, value]) => {
@@ -22641,6 +22662,154 @@ async function ensureStudyRoomMembership(roomData = null){
 
   try {
     studyRoomsState.presenceSyncedByRoomId.add(safeRoomId);
+    let membershipPatchedLocally = false;
+    const activeRoomForMembershipPatch = studyRoomsState.activeRoomData;
+    if (
+      activeRoomForMembershipPatch &&
+      typeof activeRoomForMembershipPatch === "object" &&
+      String(activeRoomForMembershipPatch.id || "").trim() === safeRoomId
+    ) {
+      const nextParticipant = {
+        uid: identity.uid,
+        name: identity.name,
+        photo: identity.photo,
+        joinedAt: Math.max(0, Number(participantEntry?.joinedAt) || now),
+        updatedAt: now
+      };
+
+      const nextAllowed = {
+        uid: identity.uid,
+        addedAt: Math.max(0, Number(allowedEntry?.addedAt) || now),
+        invitedByUid: allowedInvitedByUid,
+        invitedByName: allowedInvitedByName
+      };
+
+      const nextInvited = {
+        uid: identity.uid,
+        invitedAt: Math.max(0, Number(participantEntry?.joinedAt) || now),
+        invitedByUid: allowedInvitedByUid,
+        invitedByName: allowedInvitedByName
+      };
+
+      const previousParticipants = Array.isArray(activeRoomForMembershipPatch.participants)
+        ? activeRoomForMembershipPatch.participants
+        : [];
+      const participantsByUidMap = new Map();
+      previousParticipants.forEach((entry) => {
+        const uid = String(entry?.uid || "").trim();
+        if (!uid) return;
+        participantsByUidMap.set(uid, entry);
+      });
+      participantsByUidMap.set(identity.uid, {
+        ...(participantsByUidMap.get(identity.uid) || {}),
+        ...nextParticipant
+      });
+      const participants = Array.from(participantsByUidMap.values());
+      participants.sort((a, b) => {
+        const byJoinedAt = (Number(a?.joinedAt) || 0) - (Number(b?.joinedAt) || 0);
+        if (byJoinedAt !== 0) return byJoinedAt;
+        return String(a?.uid || "").localeCompare(String(b?.uid || ""), "es", { sensitivity: "base" });
+      });
+      activeRoomForMembershipPatch.participants = participants;
+      activeRoomForMembershipPatch.participantsByUid = new Map(
+        participants.map((entry) => [String(entry.uid || "").trim(), entry])
+      );
+      activeRoomForMembershipPatch.participantsCount = Math.max(
+        participants.length,
+        Math.max(0, Number(activeRoomForMembershipPatch.participantsCount) || 0)
+      );
+
+      const previousAllowed = Array.isArray(activeRoomForMembershipPatch.allowed)
+        ? activeRoomForMembershipPatch.allowed
+        : [];
+      const allowedByUidMap = new Map();
+      previousAllowed.forEach((entry) => {
+        const uid = String(entry?.uid || "").trim();
+        if (!uid) return;
+        allowedByUidMap.set(uid, entry);
+      });
+      allowedByUidMap.set(identity.uid, {
+        ...(allowedByUidMap.get(identity.uid) || {}),
+        ...nextAllowed
+      });
+      const allowed = Array.from(allowedByUidMap.values());
+      allowed.sort((a, b) => {
+        const byAddedAt = (Number(a?.addedAt) || 0) - (Number(b?.addedAt) || 0);
+        if (byAddedAt !== 0) return byAddedAt;
+        return String(a?.uid || "").localeCompare(String(b?.uid || ""), "es", { sensitivity: "base" });
+      });
+      activeRoomForMembershipPatch.allowed = allowed;
+      activeRoomForMembershipPatch.allowedByUid = new Map(
+        allowed.map((entry) => [String(entry.uid || "").trim(), entry])
+      );
+
+      const previousInvited = Array.isArray(activeRoomForMembershipPatch.invited)
+        ? activeRoomForMembershipPatch.invited
+        : [];
+      const invitedByUidMap = new Map();
+      previousInvited.forEach((entry) => {
+        const uid = String(entry?.uid || "").trim();
+        if (!uid) return;
+        invitedByUidMap.set(uid, entry);
+      });
+      invitedByUidMap.set(identity.uid, {
+        ...(invitedByUidMap.get(identity.uid) || {}),
+        ...nextInvited
+      });
+      const invited = Array.from(invitedByUidMap.values());
+      invited.sort((a, b) => {
+        const byInvitedAt = (Number(a?.invitedAt) || 0) - (Number(b?.invitedAt) || 0);
+        if (byInvitedAt !== 0) return byInvitedAt;
+        return String(a?.uid || "").localeCompare(String(b?.uid || ""), "es", { sensitivity: "base" });
+      });
+      activeRoomForMembershipPatch.invited = invited;
+      activeRoomForMembershipPatch.invitedByUid = new Map(
+        invited.map((entry) => [String(entry.uid || "").trim(), entry])
+      );
+
+      const previousBoards = Array.isArray(activeRoomForMembershipPatch.boards)
+        ? activeRoomForMembershipPatch.boards
+        : [];
+      const boardsByUidMap = new Map();
+      previousBoards.forEach((entry) => {
+        const uid = String(entry?.uid || "").trim();
+        if (!uid) return;
+        boardsByUidMap.set(uid, entry);
+      });
+      const existingOwnBoard = boardsByUidMap.get(identity.uid);
+      boardsByUidMap.set(identity.uid, {
+        uid: identity.uid,
+        name: identity.name,
+        photo: identity.photo,
+        joinedAt: Math.max(0, Number(existingOwnBoard?.joinedAt || participantEntry?.joinedAt) || now),
+        updatedAt: now,
+        tasks: Array.isArray(existingOwnBoard?.tasks) ? existingOwnBoard.tasks : []
+      });
+      const boards = Array.from(boardsByUidMap.values());
+      boards.sort((a, b) => {
+        const byJoinedAt = (Number(a?.joinedAt) || 0) - (Number(b?.joinedAt) || 0);
+        if (byJoinedAt !== 0) return byJoinedAt;
+        return String(a?.uid || "").localeCompare(String(b?.uid || ""), "es", { sensitivity: "base" });
+      });
+      activeRoomForMembershipPatch.boards = boards;
+      activeRoomForMembershipPatch.boardsByUid = new Map(
+        boards.map((entry) => [String(entry.uid || "").trim(), entry])
+      );
+
+      activeRoomForMembershipPatch.updatedAt = Math.max(
+        Number(activeRoomForMembershipPatch.updatedAt) || 0,
+        now
+      );
+      membershipPatchedLocally = true;
+    }
+
+    if (membershipPatchedLocally && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+      const patchedBoards = patchStudyRoomBoardsUI();
+      if (!patchedBoards) {
+        patchStudyRoomsUI();
+      }
+    }
+
     if (shouldAnnounceJoin && joinMessageId) {
       const activeRoomData = studyRoomsState.activeRoomData;
       if (
@@ -24019,6 +24188,7 @@ async function addStudyRoomTask(roomId, rawTask){
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
     roomData,
+    allowLocalPermissionFallback: true,
     permissionToast: "No hay permisos para actualizar la sala.",
     failureToast: "No se pudo agregar la tarea.",
     failureLogMessage: "No se pudo agregar tarea en sala de estudio.",
@@ -24135,6 +24305,7 @@ async function updateStudyRoomTaskText(roomId, taskId, rawText){
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
     roomData,
+    allowLocalPermissionFallback: true,
     permissionToast: "No hay permisos para editar esa tarea.",
     failureToast: "No se pudo editar la tarea.",
     failureLogMessage: "No se pudo editar tarea en sala de estudio.",
@@ -24241,6 +24412,7 @@ async function setStudyRoomTaskDone(
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
     roomData,
+    allowLocalPermissionFallback: true,
     permissionToast: "No hay permisos para actualizar esa tarea.",
     failureToast: "No se pudo actualizar la tarea.",
     failureLogMessage: "No se pudo actualizar estado de tarea en sala de estudio.",
@@ -24383,6 +24555,7 @@ async function deleteStudyRoomTask(roomId, taskId){
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
     roomData,
+    allowLocalPermissionFallback: true,
     permissionToast: "No hay permisos para borrar esa tarea.",
     failureToast: "No se pudo borrar la tarea.",
     failureLogMessage: "No se pudo borrar tarea en sala de estudio.",
@@ -24493,6 +24666,7 @@ async function addStudyRoomChatMessage(roomId, rawMessage, { kind = "message" } 
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
     roomData,
+    allowLocalPermissionFallback: true,
     permissionToast: "No hay permisos para enviar mensajes en esta sala.",
     failureToast: "No se pudo enviar el mensaje.",
     failureLogMessage: "No se pudo enviar mensaje de sala.",
@@ -24574,6 +24748,7 @@ async function persistStudyRoomMusicState(roomId, nextMusic = {}){
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
     roomData,
+    allowLocalPermissionFallback: true,
     permissionToast: "No hay permisos para controlar la música de esta sala.",
     failureToast: "No se pudo actualizar la música.",
     failureLogMessage: "No se pudo sincronizar música de sala.",
@@ -24650,6 +24825,7 @@ async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {
   const persisted = await runStudyRoomWriteWithFallback({
     roomId: safeRoomId,
     roomData,
+    allowLocalPermissionFallback: true,
     permissionToast: "No hay permisos para controlar la música de esta sala.",
     failureToast: "No se pudo actualizar la música.",
     failureLogMessage: "No se pudo sincronizar música/chat de sala.",
