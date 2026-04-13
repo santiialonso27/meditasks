@@ -4403,15 +4403,9 @@ function finalizePomodoroSession(cancelReason = ""){
     if (pomodoroState.phaseBadge) pomodoroState.phaseBadge.textContent = "Pomodoro cancelado";
     if (pomodoroState.timerCaption) pomodoroState.timerCaption.textContent = "Sesión detenida";
     if (pomodoroState.statusLine) {
-      if (cancelReason === "visibility") {
-        pomodoroState.statusLine.textContent = pomodoroState.expGranted
-          ? "Se canceló por cambio de pestaña. La EXP del foco ya quedó acreditada."
-          : "Se canceló por cambio de pestaña. Esta sesión no otorga EXP.";
-      } else {
-        pomodoroState.statusLine.textContent = pomodoroState.expGranted
-          ? "Pomodoro cancelado. La EXP del foco ya quedó acreditada."
-          : "Pomodoro cancelado. Esta sesión no otorgó EXP.";
-      }
+      pomodoroState.statusLine.textContent = pomodoroState.expGranted
+        ? "Pomodoro cancelado. La EXP del foco ya quedó acreditada."
+        : "Pomodoro cancelado. Esta sesión no otorgó EXP.";
     }
   } else {
     pomodoroState.phase = "done";
@@ -4535,7 +4529,7 @@ function beginPomodoroFocusPhase(){
   if (pomodoroState.phaseBadge) pomodoroState.phaseBadge.textContent = "Foco activo";
   if (pomodoroState.timerCaption) pomodoroState.timerCaption.textContent = "Tiempo de enfoque";
   if (pomodoroState.statusLine) {
-    pomodoroState.statusLine.textContent = "Modo concentración activo. Mantén esta pestaña visible para conservar la sesión.";
+    pomodoroState.statusLine.textContent = "Modo concentración activo. Puedes cambiar de pestaña: el temporizador seguirá corriendo.";
   }
 
   closePomodoroCancelConfirm();
@@ -4554,9 +4548,9 @@ function cancelPomodoroSession(reason = "manual"){
   clearPomodoroTicker();
 
   adminConsoleLog(
-    reason === "visibility"
-      ? "Pomodoro cancelado por cambio de pestaña."
-      : "Pomodoro cancelado manualmente.",
+    reason === "manual"
+      ? "Pomodoro cancelado manualmente."
+      : "Pomodoro cancelado.",
     "warn"
   );
 
@@ -5297,12 +5291,6 @@ function openPomodoroMode(){
     pomodoroState.focusInput?.focus();
   });
 }
-
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) return;
-  if (!isPomodoroSessionRunning()) return;
-  cancelPomodoroSession("visibility");
-});
 
 document.addEventListener("keydown", (event) => {
   if (!isPomodoroOverlayOpen()) return;
