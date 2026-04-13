@@ -22387,6 +22387,148 @@ function resolveActiveOwnedStudyRoomOwnerUid(roomId = "", roomData = null){
   return safeRoomId;
 }
 
+function resolveStudyRoomWriteContext(roomId = "", roomData = null){
+  const safeRoomId = String(roomId || studyRoomsState.activeRoomId || "").trim();
+  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary")
+    .trim()
+    .toLowerCase() || "primary";
+  const prefersOwnedPath = activeRoomSource === "owned" || activeRoomSource === "shared";
+  const ownerUid = resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData);
+
+  return {
+    safeRoomId,
+    activeRoomSource,
+    prefersOwnedPath,
+    ownerUid
+  };
+}
+
+async function runStudyRoomWriteWithFallback({
+  roomId = "",
+  roomData = null,
+  writeOwned = null,
+  writePrimary = null,
+  permissionToast = "",
+  failureToast = "",
+  failureLogMessage = "",
+  showPermissionToast = true,
+  showFailureToast = true
+} = {}){
+  const context = resolveStudyRoomWriteContext(roomId, roomData);
+  const safeRoomId = String(context?.safeRoomId || "").trim();
+  if (!safeRoomId) return false;
+
+  const ownerUid = String(context?.ownerUid || "").trim();
+  const prefersOwnedPath = !!context?.prefersOwnedPath;
+  const canWriteOwned = typeof writeOwned === "function" && !!ownerUid;
+  const canWritePrimary = typeof writePrimary === "function";
+  if (!canWriteOwned && !canWritePrimary) {
+    logStudyRoomInviteDebug("WRT-00", "No hay rutas de persistencia disponibles para operación de sala.", {
+      roomId: safeRoomId,
+      prefersOwnedPath,
+      canWriteOwned,
+      canWritePrimary
+    }, "warn");
+    return false;
+  }
+
+  const shouldFallbackFromError = (err) => {
+    if (!err) return true;
+    return isFirestorePermissionError(err) || isFirestoreNotFoundError(err);
+  };
+
+  const attemptOwnedWrite = async () => {
+    if (!canWriteOwned) {
+      return { attempted: false, ok: false, source: "owned", err: null };
+    }
+    logStudyRoomInviteDebug("WRT-01", "Intentando persistencia en ruta owned.", {
+      roomId: safeRoomId,
+      ownerUid
+    }, "info");
+    try {
+      await writeOwned(ownerUid);
+      logStudyRoomInviteDebug("WRT-02", "Persistencia en ruta owned completada.", {
+        roomId: safeRoomId,
+        ownerUid
+      }, "ok");
+      return { attempted: true, ok: true, source: "owned", err: null };
+    } catch (err) {
+      logStudyRoomInviteDebug("WRT-03", "Falló persistencia en ruta owned.", {
+        roomId: safeRoomId,
+        ownerUid,
+        permissionDenied: isFirestorePermissionError(err),
+        code: String(err?.code || "").trim(),
+        message: String(err?.message || "").trim()
+      }, isFirestorePermissionError(err) ? "warn" : "error");
+      return { attempted: true, ok: false, source: "owned", err };
+    }
+  };
+
+  const attemptPrimaryWrite = async () => {
+    if (!canWritePrimary) {
+      return { attempted: false, ok: false, source: "primary", err: null };
+    }
+    logStudyRoomInviteDebug("WRT-04", "Intentando persistencia en ruta primary.", {
+      roomId: safeRoomId
+    }, "info");
+    try {
+      await writePrimary();
+      logStudyRoomInviteDebug("WRT-05", "Persistencia en ruta primary completada.", {
+        roomId: safeRoomId
+      }, "ok");
+      return { attempted: true, ok: true, source: "primary", err: null };
+    } catch (err) {
+      logStudyRoomInviteDebug("WRT-06", "Falló persistencia en ruta primary.", {
+        roomId: safeRoomId,
+        permissionDenied: isFirestorePermissionError(err),
+        code: String(err?.code || "").trim(),
+        message: String(err?.message || "").trim()
+      }, isFirestorePermissionError(err) ? "warn" : "error");
+      return { attempted: true, ok: false, source: "primary", err };
+    }
+  };
+
+  const firstAttempt = prefersOwnedPath
+    ? await attemptOwnedWrite()
+    : await attemptPrimaryWrite();
+  if (firstAttempt.ok) return true;
+
+  let secondAttempt = null;
+  if (prefersOwnedPath && canWritePrimary && shouldFallbackFromError(firstAttempt.err)) {
+    logStudyRoomInviteDebug("WRT-07", "Aplicando fallback de persistencia owned -> primary.", {
+      roomId: safeRoomId
+    }, "warn");
+    secondAttempt = await attemptPrimaryWrite();
+  } else if (!prefersOwnedPath && canWriteOwned && shouldFallbackFromError(firstAttempt.err)) {
+    logStudyRoomInviteDebug("WRT-08", "Aplicando fallback de persistencia primary -> owned.", {
+      roomId: safeRoomId,
+      ownerUid
+    }, "warn");
+    secondAttempt = await attemptOwnedWrite();
+  }
+  if (secondAttempt?.ok) return true;
+
+  const finalError = secondAttempt?.err || firstAttempt.err;
+  if (finalError && isFirestorePermissionError(finalError)) {
+    if (showPermissionToast && permissionToast) {
+      showToast(permissionToast);
+    }
+    return false;
+  }
+
+  if (finalError && failureLogMessage) {
+    console.error(failureLogMessage, finalError);
+  } else if (finalError) {
+    console.error("No se pudo actualizar la sala de estudio.", finalError);
+  }
+
+  if (showFailureToast && failureToast) {
+    showToast(failureToast);
+  }
+
+  return false;
+}
+
 async function ensureStudyRoomMembership(roomData = null){
   const safeRoomId = String(studyRoomsState.activeRoomId || "").trim();
   if (!safeRoomId || !currentUser?.uid) return false;
@@ -22402,12 +22544,6 @@ async function ensureStudyRoomMembership(roomData = null){
   if (!identity?.uid) return false;
   const access = canCurrentUserAccessStudyRoom(room);
   if (!access.allowed) return false;
-  const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
-  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
-  const ownedRoomOwnerUid = usesOwnedRoomWritePath
-    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, room)
-    : "";
-  if (usesOwnedRoomWritePath && !ownedRoomOwnerUid) return false;
 
   const participantsByUid = room.participantsByUid instanceof Map
     ? room.participantsByUid
@@ -22491,18 +22627,31 @@ async function ensureStudyRoomMembership(roomData = null){
     studyRoomsState.joinAnnouncementSyncedByRoomId.add(safeRoomId);
   }
 
-  const writePayload = usesOwnedRoomWritePath
-    ? Object.entries(payload).reduce((acc, [key, value]) => {
-      acc[`${STUDY_ROOM_OWNED_FIELD}.${key}`] = value;
-      return acc;
-    }, {})
-    : payload;
-  const targetDocRef = usesOwnedRoomWritePath
-    ? doc(db, "users", ownedRoomOwnerUid)
-    : doc(db, STUDY_ROOMS_COLLECTION, safeRoomId);
+  const synced = await runStudyRoomWriteWithFallback({
+    roomId: safeRoomId,
+    roomData: room,
+    showPermissionToast: false,
+    showFailureToast: false,
+    failureLogMessage: "No se pudo registrar presencia en sala de estudio.",
+    writeOwned: async (ownerUid) => {
+      const ownedPayload = Object.entries(payload).reduce((acc, [key, value]) => {
+        acc[`${STUDY_ROOM_OWNED_FIELD}.${key}`] = value;
+        return acc;
+      }, {});
+      await setDoc(doc(db, "users", ownerUid), ownedPayload, { merge: true });
+    },
+    writePrimary: async () => {
+      await setDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), payload, { merge: true });
+    }
+  });
+  if (!synced) {
+    if (shouldAnnounceJoin) {
+      studyRoomsState.joinAnnouncementSyncedByRoomId.delete(safeRoomId);
+    }
+    return false;
+  }
 
   try {
-    await setDoc(targetDocRef, writePayload, { merge: true });
     studyRoomsState.presenceSyncedByRoomId.add(safeRoomId);
     if (shouldAnnounceJoin && joinMessageId) {
       const activeRoomData = studyRoomsState.activeRoomData;
@@ -22646,6 +22795,7 @@ function subscribeActiveSharedStudyRoom(ownerUid){
       studyRoomsState.activeRoomLoading = false;
       studyRoomsState.activeRoomError = "";
       persistStudyRoomActiveSession(safeOwnerUid, currentUser?.uid);
+      void ensureStudyRoomMembership(sharedRoom);
       if (!previousActiveRoomData) {
         logStudyRoomInviteDebug("LSN-S05", "Sala shared cargada correctamente.", {
           ownerUid: safeOwnerUid,
@@ -22781,6 +22931,7 @@ function subscribeActiveOwnedStudyRoom(ownerUid){
       studyRoomsState.activeRoomLoading = false;
       studyRoomsState.activeRoomError = "";
       persistStudyRoomActiveSession(safeOwnerUid, currentUser?.uid);
+      void ensureStudyRoomMembership(normalizedOwnedRoom);
       if (!previousActiveRoomData) {
         logStudyRoomInviteDebug("LSN-O05", "Sala owned cargada correctamente.", {
           ownerUid: safeOwnerUid,
@@ -23860,15 +24011,12 @@ async function addStudyRoomTask(roomId, rawTask){
   if (safeRoomId !== String(studyRoomsState.activeRoomId || "").trim()) return false;
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
-  const ownedRoomOwnerUid = usesOwnedRoomWritePath
-    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, studyRoomsState.activeRoomData)
-    : "";
+  const roomData = studyRoomsState.activeRoomData;
 
   const taskText = String(rawTask || "").trim().slice(0, STUDY_ROOM_MAX_TASK_LENGTH);
   if (!taskText) return false;
 
-  await ensureStudyRoomMembership(studyRoomsState.activeRoomData);
+  await ensureStudyRoomMembership(roomData);
 
   const now = Date.now();
   const taskId = `t_${now}_${Math.random().toString(36).slice(2, 8)}`;
@@ -23880,42 +24028,30 @@ async function addStudyRoomTask(roomId, rawTask){
     expGiven: false
   };
 
-  if (usesOwnedRoomWritePath) {
-    if (!ownedRoomOwnerUid) return false;
-    try {
-      await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
+  const persisted = await runStudyRoomWriteWithFallback({
+    roomId: safeRoomId,
+    roomData,
+    permissionToast: "No hay permisos para actualizar la sala.",
+    failureToast: "No se pudo agregar la tarea.",
+    failureLogMessage: "No se pudo agregar tarea en sala de estudio.",
+    writeOwned: async (ownerUid) => {
+      await updateDoc(doc(db, "users", ownerUid), {
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${taskId}`]: payload,
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
       });
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para actualizar la sala.");
-        return false;
-      }
-      console.error("No se pudo agregar tarea en sala de estudio local.", err);
-      showToast("No se pudo agregar la tarea.");
-      return false;
-    }
-  } else {
-    try {
+    },
+    writePrimary: async () => {
       await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
         [`boards.${identity.uid}.tasks.${taskId}`]: payload,
         [`boards.${identity.uid}.updatedAt`]: now,
         [`participants.${identity.uid}.updatedAt`]: now,
         updatedAt: now
       });
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para actualizar la sala.");
-        return false;
-      }
-      console.error("No se pudo agregar tarea en sala de estudio.", err);
-      showToast("No se pudo agregar la tarea.");
-      return false;
     }
-  }
+  });
+  if (!persisted) return false;
 
   const activeRoomData = studyRoomsState.activeRoomData;
   if (
@@ -24006,48 +24142,32 @@ async function updateStudyRoomTaskText(roomId, taskId, rawText){
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
-  const ownedRoomOwnerUid = usesOwnedRoomWritePath
-    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
-    : "";
   const now = Date.now();
 
-  if (usesOwnedRoomWritePath) {
-    if (!ownedRoomOwnerUid) return false;
-    try {
-      await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
+  const persisted = await runStudyRoomWriteWithFallback({
+    roomId: safeRoomId,
+    roomData,
+    permissionToast: "No hay permisos para editar esa tarea.",
+    failureToast: "No se pudo editar la tarea.",
+    failureLogMessage: "No se pudo editar tarea en sala de estudio.",
+    writeOwned: async (ownerUid) => {
+      await updateDoc(doc(db, "users", ownerUid), {
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.text`]: nextText,
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
       });
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para editar esa tarea.");
-        return false;
-      }
-      console.error("No se pudo editar tarea en sala local.", err);
-      showToast("No se pudo editar la tarea.");
-      return false;
-    }
-  } else {
-    try {
+    },
+    writePrimary: async () => {
       await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
         [`boards.${identity.uid}.tasks.${safeTaskId}.text`]: nextText,
         [`boards.${identity.uid}.updatedAt`]: now,
         [`participants.${identity.uid}.updatedAt`]: now,
         updatedAt: now
       });
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para editar esa tarea.");
-        return false;
-      }
-      console.error("No se pudo editar tarea en sala de estudio.", err);
-      showToast("No se pudo editar la tarea.");
-      return false;
     }
-  }
+  });
+  if (!persisted) return false;
 
   const activeRoomData = studyRoomsState.activeRoomData;
   if (
@@ -24128,15 +24248,15 @@ async function setStudyRoomTaskDone(
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
-  const ownedRoomOwnerUid = usesOwnedRoomWritePath
-    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
-    : "";
   const now = Date.now();
 
-  if (usesOwnedRoomWritePath) {
-    if (!ownedRoomOwnerUid) return false;
-    try {
+  const persisted = await runStudyRoomWriteWithFallback({
+    roomId: safeRoomId,
+    roomData,
+    permissionToast: "No hay permisos para actualizar esa tarea.",
+    failureToast: "No se pudo actualizar la tarea.",
+    failureLogMessage: "No se pudo actualizar estado de tarea en sala de estudio.",
+    writeOwned: async (ownerUid) => {
       const payload = {
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.done`]: desiredDone,
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
@@ -24146,18 +24266,9 @@ async function setStudyRoomTaskDone(
       if (shouldMarkExpGiven) {
         payload[`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}.expGiven`] = true;
       }
-      await updateDoc(doc(db, "users", ownedRoomOwnerUid), payload);
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para actualizar esa tarea.");
-        return false;
-      }
-      console.error("No se pudo actualizar estado de tarea en sala local.", err);
-      showToast("No se pudo actualizar la tarea.");
-      return false;
-    }
-  } else {
-    try {
+      await updateDoc(doc(db, "users", ownerUid), payload);
+    },
+    writePrimary: async () => {
       const payload = {
         [`boards.${identity.uid}.tasks.${safeTaskId}.done`]: desiredDone,
         [`boards.${identity.uid}.updatedAt`]: now,
@@ -24168,16 +24279,9 @@ async function setStudyRoomTaskDone(
         payload[`boards.${identity.uid}.tasks.${safeTaskId}.expGiven`] = true;
       }
       await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), payload);
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para actualizar esa tarea.");
-        return false;
-      }
-      console.error("No se pudo actualizar estado de tarea en sala de estudio.", err);
-      showToast("No se pudo actualizar la tarea.");
-      return false;
     }
-  }
+  });
+  if (!persisted) return false;
 
   const activeRoomData = studyRoomsState.activeRoomData;
   if (
@@ -24286,48 +24390,32 @@ async function deleteStudyRoomTask(roomId, taskId){
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
-  const ownedRoomOwnerUid = usesOwnedRoomWritePath
-    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
-    : "";
   const now = Date.now();
 
-  if (usesOwnedRoomWritePath) {
-    if (!ownedRoomOwnerUid) return false;
-    try {
-      await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
+  const persisted = await runStudyRoomWriteWithFallback({
+    roomId: safeRoomId,
+    roomData,
+    permissionToast: "No hay permisos para borrar esa tarea.",
+    failureToast: "No se pudo borrar la tarea.",
+    failureLogMessage: "No se pudo borrar tarea en sala de estudio.",
+    writeOwned: async (ownerUid) => {
+      await updateDoc(doc(db, "users", ownerUid), {
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.tasks.${safeTaskId}`]: deleteField(),
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
       });
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para borrar esa tarea.");
-        return false;
-      }
-      console.error("No se pudo borrar tarea en sala local.", err);
-      showToast("No se pudo borrar la tarea.");
-      return false;
-    }
-  } else {
-    try {
+    },
+    writePrimary: async () => {
       await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
         [`boards.${identity.uid}.tasks.${safeTaskId}`]: deleteField(),
         [`boards.${identity.uid}.updatedAt`]: now,
         [`participants.${identity.uid}.updatedAt`]: now,
         updatedAt: now
       });
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para borrar esa tarea.");
-        return false;
-      }
-      console.error("No se pudo borrar tarea en sala de estudio.", err);
-      showToast("No se pudo borrar la tarea.");
-      return false;
     }
-  }
+  });
+  if (!persisted) return false;
 
   const activeRoomData = studyRoomsState.activeRoomData;
   if (
@@ -24393,10 +24481,6 @@ async function addStudyRoomChatMessage(roomId, rawMessage, { kind = "message" } 
   if (!roomData || typeof roomData !== "object") return false;
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
-  const ownedRoomOwnerUid = usesOwnedRoomWritePath
-    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
-    : "";
   const access = canCurrentUserAccessStudyRoom(roomData);
   if (!access.allowed) return false;
 
@@ -24418,41 +24502,29 @@ async function addStudyRoomChatMessage(roomId, rawMessage, { kind = "message" } 
     createdAt: now
   };
 
-  if (usesOwnedRoomWritePath) {
-    if (!ownedRoomOwnerUid) return false;
-    try {
-      await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
+  const persisted = await runStudyRoomWriteWithFallback({
+    roomId: safeRoomId,
+    roomData,
+    permissionToast: "No hay permisos para enviar mensajes en esta sala.",
+    failureToast: "No se pudo enviar el mensaje.",
+    failureLogMessage: "No se pudo enviar mensaje de sala.",
+    writeOwned: async (ownerUid) => {
+      await updateDoc(doc(db, "users", ownerUid), {
         [`${STUDY_ROOM_OWNED_FIELD}.chat.${messageId}`]: payload,
         [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
       });
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para enviar mensajes en esta sala.");
-        return false;
-      }
-      console.error("No se pudo enviar mensaje de sala (local).", err);
-      showToast("No se pudo enviar el mensaje.");
-      return false;
-    }
-  } else {
-    try {
+    },
+    writePrimary: async () => {
       await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
         [`chat.${messageId}`]: payload,
         [`participants.${identity.uid}.updatedAt`]: now,
         updatedAt: now
       });
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para enviar mensajes en esta sala.");
-        return false;
-      }
-      console.error("No se pudo enviar mensaje de sala.", err);
-      showToast("No se pudo enviar el mensaje.");
-      return false;
     }
-  }
+  });
+  if (!persisted) return false;
 
   if (safeKind !== "system") {
     setStudyRoomChatDraft(safeRoomId, "");
@@ -24504,10 +24576,6 @@ async function persistStudyRoomMusicState(roomId, nextMusic = {}){
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
-  const ownedRoomOwnerUid = usesOwnedRoomWritePath
-    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
-    : "";
   const now = Math.max(0, Number(nextMusic.updatedAt) || Date.now());
   const normalizedMusic = normalizeStudyRoomMusicData({
     ...nextMusic,
@@ -24515,40 +24583,28 @@ async function persistStudyRoomMusicState(roomId, nextMusic = {}){
     updatedByUid: identity.uid
   });
 
-  if (usesOwnedRoomWritePath) {
-    if (!ownedRoomOwnerUid) return false;
-    try {
-      await updateDoc(doc(db, "users", ownedRoomOwnerUid), {
+  const persisted = await runStudyRoomWriteWithFallback({
+    roomId: safeRoomId,
+    roomData,
+    permissionToast: "No hay permisos para controlar la música de esta sala.",
+    failureToast: "No se pudo actualizar la música.",
+    failureLogMessage: "No se pudo sincronizar música de sala.",
+    writeOwned: async (ownerUid) => {
+      await updateDoc(doc(db, "users", ownerUid), {
         [`${STUDY_ROOM_OWNED_FIELD}.music`]: normalizedMusic,
         [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
         [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
       });
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para controlar la música de esta sala.");
-        return false;
-      }
-      console.error("No se pudo sincronizar música de sala (local).", err);
-      showToast("No se pudo actualizar la música.");
-      return false;
-    }
-  } else {
-    try {
+    },
+    writePrimary: async () => {
       await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
         music: normalizedMusic,
         [`participants.${identity.uid}.updatedAt`]: now,
         updatedAt: now
       });
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para controlar la música de esta sala.");
-        return false;
-      }
-      console.error("No se pudo sincronizar música de sala.", err);
-      showToast("No se pudo actualizar la música.");
-      return false;
     }
-  }
+  });
+  if (!persisted) return false;
 
   if (
     studyRoomsState.activeRoomData &&
@@ -24579,10 +24635,6 @@ async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {
 
   const activeRoomSource = String(studyRoomsState.activeRoomSource || "primary").trim() || "primary";
   if (!ensureStudyRoomWritableSourceOrNotify(activeRoomSource)) return false;
-  const usesOwnedRoomWritePath = activeRoomSource === "owned" || activeRoomSource === "shared";
-  const ownedRoomOwnerUid = usesOwnedRoomWritePath
-    ? resolveActiveOwnedStudyRoomOwnerUid(safeRoomId, roomData)
-    : "";
   const now = Math.max(0, Number(nextMusic.updatedAt) || Date.now());
   const normalizedMusic = normalizeStudyRoomMusicData({
     ...nextMusic,
@@ -24607,51 +24659,37 @@ async function persistStudyRoomMusicStateWithSystemMessage(roomId, nextMusic = {
     }
     : null;
 
-  if (usesOwnedRoomWritePath) {
-    if (!ownedRoomOwnerUid) return false;
-    const ownedUpdates = {
-      [`${STUDY_ROOM_OWNED_FIELD}.music`]: normalizedMusic,
-      [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
-      [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
-    };
-    if (systemPayload) {
-      ownedUpdates[`${STUDY_ROOM_OWNED_FIELD}.chat.${messageId}`] = systemPayload;
-      ownedUpdates[`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`] = now;
-    }
-
-    try {
-      await updateDoc(doc(db, "users", ownedRoomOwnerUid), ownedUpdates);
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para controlar la música de esta sala.");
-        return false;
+  const persisted = await runStudyRoomWriteWithFallback({
+    roomId: safeRoomId,
+    roomData,
+    permissionToast: "No hay permisos para controlar la música de esta sala.",
+    failureToast: "No se pudo actualizar la música.",
+    failureLogMessage: "No se pudo sincronizar música/chat de sala.",
+    writeOwned: async (ownerUid) => {
+      const ownedUpdates = {
+        [`${STUDY_ROOM_OWNED_FIELD}.music`]: normalizedMusic,
+        [`${STUDY_ROOM_OWNED_FIELD}.participants.${identity.uid}.updatedAt`]: now,
+        [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: now
+      };
+      if (systemPayload) {
+        ownedUpdates[`${STUDY_ROOM_OWNED_FIELD}.chat.${messageId}`] = systemPayload;
+        ownedUpdates[`${STUDY_ROOM_OWNED_FIELD}.boards.${identity.uid}.updatedAt`] = now;
       }
-      console.error("No se pudo sincronizar música/chat de sala (local).", err);
-      showToast("No se pudo actualizar la música.");
-      return false;
-    }
-  } else {
-    const roomUpdates = {
-      music: normalizedMusic,
-      [`participants.${identity.uid}.updatedAt`]: now,
-      updatedAt: now
-    };
-    if (systemPayload) {
-      roomUpdates[`chat.${messageId}`] = systemPayload;
-    }
-
-    try {
+      await updateDoc(doc(db, "users", ownerUid), ownedUpdates);
+    },
+    writePrimary: async () => {
+      const roomUpdates = {
+        music: normalizedMusic,
+        [`participants.${identity.uid}.updatedAt`]: now,
+        updatedAt: now
+      };
+      if (systemPayload) {
+        roomUpdates[`chat.${messageId}`] = systemPayload;
+      }
       await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), roomUpdates);
-    } catch (err) {
-      if (isFirestorePermissionError(err)) {
-        showToast("No hay permisos para controlar la música de esta sala.");
-        return false;
-      }
-      console.error("No se pudo sincronizar música/chat de sala.", err);
-      showToast("No se pudo actualizar la música.");
-      return false;
     }
-  }
+  });
+  if (!persisted) return false;
 
   if (
     studyRoomsState.activeRoomData &&
