@@ -14175,16 +14175,17 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           const currentIndex = dayTasks.indexOf(t);
           const isLast = currentIndex === dayTasks.length - 1;
 
-          if (currentIndex !== -1 && !isLast) {
-            const taskToMove = dayTasks.splice(currentIndex, 1)[0];
-            dayTasks.push(taskToMove);
-          }
+	          if (currentIndex !== -1 && !isLast) {
+	            const taskToMove = dayTasks.splice(currentIndex, 1)[0];
+	            dayTasks.push(taskToMove);
+	          }
 
 	          if (!isLast) {
 	            const delay = expShown ? 900 : 0;
 
-	            setTimeout(async () => {
-	              await save({ includePlayer: shouldSavePlayer });
+	            // Persist first to avoid race conditions with realtime snapshot refreshes.
+	            await save({ includePlayer: shouldSavePlayer });
+	            setTimeout(() => {
 	              render();
 	              renderMiniCalendar();
 	              checkAchievements({ dateContext: dayCompleted ? iso : null });
