@@ -24060,44 +24060,60 @@ async function leaveStudyRoomSession({ silent = false, forceLocal = false } = {}
       }
     }
 
-    if (activeRoomSource === "owned" || activeRoomSource === "shared") {
-      if (!roomOwnerUid) {
-        return false;
-      }
+    const primaryRoomId = String(activeRoomData?.id || safeRoomId || "").trim();
+    const ownerUidForClosure = String(
+      roomOwnerUid ||
+      activeRoomData?.createdByUid ||
+      ownUid
+    ).trim();
+    const closeAttempts = [];
+
+    if (ownerUidForClosure) {
       try {
-        await updateDoc(doc(db, "users", roomOwnerUid), {
+        await updateDoc(doc(db, "users", ownerUidForClosure), {
           [STUDY_ROOM_OWNED_FIELD]: deleteField()
         });
-        roomUpdated = true;
+        closeAttempts.push({ source: "owned", status: "success" });
       } catch (err) {
         if (isFirestoreNotFoundError(err)) {
-          roomUpdated = true;
+          closeAttempts.push({ source: "owned", status: "notfound" });
         } else if (isFirestorePermissionError(err)) {
-          if (!silent && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
-            showToast("No hay permisos para cerrar tu sala.");
-          }
+          closeAttempts.push({ source: "owned", status: "permission" });
         } else {
+          closeAttempts.push({ source: "owned", status: "error" });
           console.warn("No se pudo cerrar la sala local del creador.", err);
         }
       }
-    } else {
+    }
+
+    if (primaryRoomId) {
       try {
-        await deleteDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId));
-        roomUpdated = true;
+        await deleteDoc(doc(db, STUDY_ROOMS_COLLECTION, primaryRoomId));
+        closeAttempts.push({ source: "primary", status: "success" });
       } catch (err) {
         if (isFirestoreNotFoundError(err)) {
-          roomUpdated = true;
+          closeAttempts.push({ source: "primary", status: "notfound" });
         } else if (isFirestorePermissionError(err)) {
-          if (!silent && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
-            showToast("No hay permisos para cerrar tu sala.");
-          }
+          closeAttempts.push({ source: "primary", status: "permission" });
         } else {
+          closeAttempts.push({ source: "primary", status: "error" });
           console.warn("No se pudo eliminar la sala de estudio.", err);
         }
       }
     }
 
+    const hasCloseAttempt = closeAttempts.length > 0;
+    const hasCloseSuccess = closeAttempts.some((attempt) => attempt.status === "success");
+    const hasClosePermissionError = closeAttempts.some((attempt) => attempt.status === "permission");
+    const allCloseAttemptsNotFound = hasCloseAttempt && closeAttempts.every((attempt) => {
+      return attempt.status === "notfound";
+    });
+    roomUpdated = hasCloseSuccess || allCloseAttemptsNotFound;
+
     if (!roomUpdated) {
+      if (hasClosePermissionError && !silent && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        showToast("No hay permisos para cerrar tu sala.");
+      }
       if (forceLocal) {
         await finalizeStudyRoomSessionTracking(safeRoomId, now);
         clearLocalActiveRoomState();
@@ -24106,23 +24122,14 @@ async function leaveStudyRoomSession({ silent = false, forceLocal = false } = {}
       return false;
     }
 
-    if (activeRoomSource === "primary") {
-      try {
-        await updateDoc(doc(db, "users", ownUid), {
-          [STUDY_ROOM_OWNED_FIELD]: deleteField()
-        });
-      } catch (ownedCleanupErr) {
-        if (!isFirestorePermissionError(ownedCleanupErr) && !isFirestoreNotFoundError(ownedCleanupErr)) {
-          console.warn("No se pudo limpiar el respaldo local de la sala cerrada.", ownedCleanupErr);
-        }
-      }
-    }
-
+    const closedRoomIds = new Set([safeRoomId, primaryRoomId].filter(Boolean));
     studyRoomsState.rooms = studyRoomsState.rooms.filter((roomEntry) => {
-      return String(roomEntry?.id || "").trim() !== safeRoomId;
+      return !closedRoomIds.has(String(roomEntry?.id || "").trim());
     });
-    void clearCurrentUserStudyRoomPublicSummary();
-    void clearCurrentUserStudyRoomSharedSnapshot();
+    await Promise.allSettled([
+      clearCurrentUserStudyRoomPublicSummary(),
+      clearCurrentUserStudyRoomSharedSnapshot()
+    ]);
     await finalizeStudyRoomSessionTracking(safeRoomId, now);
     clearLocalActiveRoomState();
 
