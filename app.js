@@ -1723,7 +1723,15 @@ document.addEventListener("keydown", (e) => {
 
 document.addEventListener("selectstart", (e) => {
   if (!isMobileViewport()) return;
-  if (e.target.closest(".edit-input")) return;
+  if (!isMobileTaskReorderEnabled()) return;
+  const target = e.target instanceof Element ? e.target : null;
+  if (!target) return;
+  if (
+    target.closest(".edit-input") ||
+    target.closest("input, textarea, [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']")
+  ) {
+    return;
+  }
   e.preventDefault();
 });
 
@@ -22335,11 +22343,41 @@ function patchStudyRoomsCreateFormUI(scope = board){
 
   const createFormSlot = scope.querySelector("#studyRoomsCreateFormSlot");
   if (!(createFormSlot instanceof HTMLElement)) return;
+  const activeElement = document.activeElement;
+  const shouldRestoreCreateInput = (
+    activeElement instanceof HTMLInputElement &&
+    activeElement.id === "studyRoomTitleInput"
+  );
+  const restoreSelectionStart = shouldRestoreCreateInput ? activeElement.selectionStart : null;
+  const restoreSelectionEnd = shouldRestoreCreateInput ? activeElement.selectionEnd : null;
 
   const nextHtml = renderStudyRoomsCreateForm();
   if (createFormSlot.innerHTML !== nextHtml) {
     createFormSlot.innerHTML = nextHtml;
   }
+
+  if (!shouldRestoreCreateInput) return;
+
+  const createInput = createFormSlot.querySelector("#studyRoomTitleInput");
+  if (!(createInput instanceof HTMLInputElement)) return;
+
+  try {
+    createInput.focus({ preventScroll: true });
+  } catch (_error) {
+    createInput.focus();
+  }
+
+  const valueLength = createInput.value.length;
+  const nextStart = Number.isInteger(restoreSelectionStart)
+    ? Math.min(Math.max(0, restoreSelectionStart), valueLength)
+    : valueLength;
+  const nextEnd = Number.isInteger(restoreSelectionEnd)
+    ? Math.min(Math.max(nextStart, restoreSelectionEnd), valueLength)
+    : nextStart;
+
+  try {
+    createInput.setSelectionRange(nextStart, nextEnd);
+  } catch (_error) {}
 }
 
 function patchStudyRoomsUI(scope = board){
