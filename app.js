@@ -20418,7 +20418,7 @@ async function upsertCurrentUserStudyRoomSharedSnapshot(roomData = null){
       {
         [STUDY_ROOM_SHARED_FIELD]: payload
       },
-      { merge: true }
+      { mergeFields: [STUDY_ROOM_SHARED_FIELD] }
     );
     return true;
   } catch (err) {
@@ -25123,7 +25123,7 @@ async function createStudyRoomSession(rawTitle = ""){
         {
           [STUDY_ROOM_OWNED_FIELD]: roomPayload
         },
-        { merge: true }
+        { mergeFields: [STUDY_ROOM_OWNED_FIELD] }
       );
     } catch (backupErr) {
       if (!isFirestorePermissionError(backupErr)) {
@@ -25144,7 +25144,7 @@ async function createStudyRoomSession(rawTitle = ""){
         {
           [STUDY_ROOM_OWNED_FIELD]: roomPayload
         },
-        { merge: true }
+        { mergeFields: [STUDY_ROOM_OWNED_FIELD] }
       );
     } catch (ownedErr) {
       if (isFirestorePermissionError(ownedErr)) {
