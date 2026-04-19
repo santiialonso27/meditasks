@@ -116,6 +116,7 @@ const STUDY_ROOM_INVITE_ACCESS_STORAGE_PREFIX = "mt_study_room_invite_access_v1_
 const STUDY_ROOM_CLOSURE_SUMMARY_SEEN_STORAGE_PREFIX = "mt_study_room_closure_seen_v1_";
 const STUDY_ROOM_SYNC_DELETE_TOKEN = "__mt_delete_token_v1__";
 const STUDY_ROOM_SYNC_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7;
+const STUDY_ROOM_SYNC_CREATED_AT_TOLERANCE_MS = 1000 * 60 * 10;
 const STUDY_ROOM_SYNC_TRACKED_OP_IDS_LIMIT = 900;
 const STUDY_ROOM_INVITE_ACCESS_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 30;
 const STUDY_ROOM_INVITE_ACCESS_MAX_ENTRIES = 120;
@@ -330,6 +331,8 @@ const studyRoomsState = {
   activeRoomLoading: false,
   activeRoomError: "",
   activeRoomUnsub: null,
+  preferredPrimaryRoomById: new Map(),
+  blockPrimaryOwnedFallbackByRoomId: new Set(),
   inviteAccessByRoomId: new Map(),
   inviteAccessLoadedUid: "",
   createTitleDraft: "",
@@ -7760,6 +7763,8 @@ function resetStudyRoomsState(){
   studyRoomsState.activeRoomLoading = false;
   studyRoomsState.activeRoomError = "";
   studyRoomsState.activeRoomUnsub = null;
+  studyRoomsState.preferredPrimaryRoomById = new Map();
+  studyRoomsState.blockPrimaryOwnedFallbackByRoomId = new Set();
   studyRoomsState.inviteAccessByRoomId = new Map();
   studyRoomsState.inviteAccessLoadedUid = "";
   studyRoomsState.createTitleDraft = "";
@@ -8750,6 +8755,10 @@ function normalizeSocialStudyRoomSyncOp(entry = {}, fallbackId = "", friendUid =
   const roomId = String(source.roomId || "").trim();
   const actorUid = String(source.actorUid || source.uid || "").trim();
   const createdAt = Math.max(0, Number(source.createdAt || source.updatedAt) || 0);
+  const roomCreatedAt = Math.max(
+    0,
+    Number(source.roomCreatedAt || source.roomCreatedTimestamp || source.roomCreated || 0) || 0
+  );
   const roomUpdates = normalizeStudyRoomSyncRoomUpdates(source.roomUpdates);
 
   if (!id || !ownerUid || !roomId || !actorUid || !Object.keys(roomUpdates).length) {
@@ -8764,6 +8773,7 @@ function normalizeSocialStudyRoomSyncOp(entry = {}, fallbackId = "", friendUid =
     actorName: String(source.actorName || "Usuario").trim() || "Usuario",
     actorPhoto: String(source.actorPhoto || "").trim(),
     createdAt,
+    roomCreatedAt,
     reason: String(source.reason || "").trim(),
     roomUpdates,
     friendUid: String(friendUid || "").trim()
@@ -8805,7 +8815,8 @@ async function enqueueStudyRoomSyncRelayOperation({
   ownerUid = "",
   roomId = "",
   roomUpdates = {},
-  reason = ""
+  reason = "",
+  roomCreatedAt = 0
 } = {}){
   const ownUid = String(currentUser?.uid || "").trim();
   const safeOwnerUid = String(ownerUid || "").trim();
@@ -8819,6 +8830,17 @@ async function enqueueStudyRoomSyncRelayOperation({
   const identity = getStudyRoomIdentity();
   const now = Date.now();
   const opId = `srs_${now}_${Math.random().toString(36).slice(2, 8)}`;
+  let safeRoomCreatedAt = Math.max(0, Number(roomCreatedAt) || 0);
+  if (!safeRoomCreatedAt) {
+    const activeRoom = studyRoomsState.activeRoomData;
+    if (
+      activeRoom &&
+      typeof activeRoom === "object" &&
+      String(activeRoom.id || "").trim() === safeRoomId
+    ) {
+      safeRoomCreatedAt = Math.max(0, Number(activeRoom.createdAt) || 0);
+    }
+  }
   const payload = {
     id: opId,
     ownerUid: safeOwnerUid,
@@ -8827,6 +8849,7 @@ async function enqueueStudyRoomSyncRelayOperation({
     actorName: String(identity?.name || currentUser?.displayName || "Usuario").trim() || "Usuario",
     actorPhoto: String(identity?.photo || currentUser?.photoURL || "").trim(),
     createdAt: now,
+    roomCreatedAt: safeRoomCreatedAt,
     reason: String(reason || "").trim(),
     roomUpdates: normalizedUpdates
   };
@@ -8876,6 +8899,64 @@ async function enqueueStudyRoomSyncRelayOperation({
   }
 }
 
+async function resolveCurrentOwnerStudyRoomForRelay(ownerUid = "", roomId = ""){
+  const safeOwnerUid = String(ownerUid || "").trim();
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeOwnerUid || !safeRoomId) return null;
+  if (safeOwnerUid !== String(currentUser?.uid || "").trim()) return null;
+
+  const activeRoomFromState = getCurrentUserOwnedActiveStudyRoom();
+  if (
+    activeRoomFromState &&
+    typeof activeRoomFromState === "object" &&
+    activeRoomFromState.isActive &&
+    String(activeRoomFromState.id || "").trim() === safeRoomId
+  ) {
+    return activeRoomFromState;
+  }
+
+  try {
+    const ownUserSnap = await getDoc(doc(db, "users", safeOwnerUid));
+    if (ownUserSnap.exists()) {
+      const ownedRoom = normalizeOwnedStudyRoomFromUserData(
+        ownUserSnap.data() || {},
+        safeOwnerUid
+      );
+      if (
+        ownedRoom &&
+        ownedRoom.isActive &&
+        String(ownedRoom.id || "").trim() === safeRoomId
+      ) {
+        return ownedRoom;
+      }
+    }
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo validar sala owned actual para relay.", err);
+    }
+  }
+
+  try {
+    const primarySnap = await getDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId));
+    if (primarySnap.exists()) {
+      const primaryRoom = normalizeStudyRoomData(primarySnap.data() || {}, primarySnap.id);
+      if (
+        primaryRoom &&
+        primaryRoom.isActive &&
+        String(primaryRoom.createdByUid || "").trim() === safeOwnerUid
+      ) {
+        return primaryRoom;
+      }
+    }
+  } catch (err) {
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo validar sala principal actual para relay.", err);
+    }
+  }
+
+  return null;
+}
+
 async function applySocialStudyRoomSyncOpFromFriend(operation = {}, friendUid = ""){
   const ownUid = String(currentUser?.uid || "").trim();
   const safeFriendUid = String(friendUid || "").trim();
@@ -8887,6 +8968,7 @@ async function applySocialStudyRoomSyncOpFromFriend(operation = {}, friendUid = 
   const safeRoomId = String(operation.roomId || "").trim();
   const safeActorUid = String(operation.actorUid || "").trim();
   const safeCreatedAt = Math.max(0, Number(operation.createdAt) || 0);
+  const safeRoomCreatedAt = Math.max(0, Number(operation.roomCreatedAt) || 0);
   const safeReason = String(operation.reason || "").trim();
   const normalizedRoomUpdates = filterStudyRoomSyncRoomUpdatesForActor(
     operation.roomUpdates,
@@ -8914,6 +8996,68 @@ async function applySocialStudyRoomSyncOpFromFriend(operation = {}, friendUid = 
   }
   if (safeCreatedAt > 0 && (Date.now() - safeCreatedAt) > STUDY_ROOM_SYNC_MAX_AGE_MS) {
     return false;
+  }
+
+  const ownerRoom = await resolveCurrentOwnerStudyRoomForRelay(safeOwnerUid, safeRoomId);
+  if (!ownerRoom || !ownerRoom.isActive) {
+    logStudyRoomInviteDebug("RLY-05A", "Relay ignorado: el creador ya no tiene una sala activa para ese roomId.", {
+      opId: safeOpId,
+      roomId: safeRoomId,
+      ownerUid: safeOwnerUid,
+      actorUid: safeActorUid,
+      reason: safeReason
+    }, "warn");
+    return true;
+  }
+
+  const ownerRoomCreatedAt = Math.max(0, Number(ownerRoom.createdAt) || 0);
+  const sameRoomByCreatedAt = !!(
+    safeRoomCreatedAt > 0 &&
+    ownerRoomCreatedAt > 0 &&
+    safeRoomCreatedAt === ownerRoomCreatedAt
+  );
+  const plausibleByTimestamp = !!(
+    safeRoomCreatedAt <= 0 &&
+    safeCreatedAt > 0 &&
+    ownerRoomCreatedAt > 0 &&
+    (safeCreatedAt + STUDY_ROOM_SYNC_CREATED_AT_TOLERANCE_MS) >= ownerRoomCreatedAt
+  );
+  if (!sameRoomByCreatedAt && !plausibleByTimestamp) {
+    logStudyRoomInviteDebug("RLY-05B", "Relay ignorado por desfase de creación de sala (operación vieja).", {
+      opId: safeOpId,
+      roomId: safeRoomId,
+      ownerUid: safeOwnerUid,
+      actorUid: safeActorUid,
+      opCreatedAt: safeCreatedAt,
+      opRoomCreatedAt: safeRoomCreatedAt,
+      ownerRoomCreatedAt
+    }, "warn");
+    return true;
+  }
+
+  const ownerParticipants = ownerRoom.participantsByUid instanceof Map
+    ? ownerRoom.participantsByUid
+    : new Map();
+  const ownerAllowed = ownerRoom.allowedByUid instanceof Map
+    ? ownerRoom.allowedByUid
+    : new Map();
+  const ownerInvited = ownerRoom.invitedByUid instanceof Map
+    ? ownerRoom.invitedByUid
+    : new Map();
+  const actorKnownToRoom = !!(
+    ownerParticipants.has(safeActorUid) ||
+    ownerAllowed.has(safeActorUid) ||
+    ownerInvited.has(safeActorUid)
+  );
+  if (!actorKnownToRoom) {
+    logStudyRoomInviteDebug("RLY-05C", "Relay ignorado: actor no pertenece ni está invitado a la sala actual.", {
+      opId: safeOpId,
+      roomId: safeRoomId,
+      ownerUid: safeOwnerUid,
+      actorUid: safeActorUid,
+      reason: safeReason
+    }, "warn");
+    return true;
   }
 
   const roomUpdates = {
@@ -24213,6 +24357,12 @@ function subscribeActiveStudyRoom(roomId){
       studyRoomsState.activeRoomLoading = false;
       studyRoomsState.activeRoomOwnerUid = String(normalized.createdByUid || safeRoomId).trim();
       studyRoomsState.activeRoomError = normalized.isActive ? "" : "Esta sala de estudio finalizó.";
+      if (studyRoomsState.preferredPrimaryRoomById instanceof Map) {
+        studyRoomsState.preferredPrimaryRoomById.set(safeRoomId, normalized);
+      }
+      if (studyRoomsState.blockPrimaryOwnedFallbackByRoomId instanceof Set) {
+        studyRoomsState.blockPrimaryOwnedFallbackByRoomId.delete(safeRoomId);
+      }
       if (!previousActiveRoomData) {
         logStudyRoomInviteDebug("LSN-P06", "Sala principal cargada correctamente.", {
           roomId: safeRoomId,
@@ -24260,6 +24410,32 @@ function subscribeActiveStudyRoom(roomId){
         isFirestorePermissionError(err) &&
         safeRoomId === String(currentUser?.uid || "").trim()
       ) {
+        const shouldBlockOwnedFallback = !!(
+          studyRoomsState.blockPrimaryOwnedFallbackByRoomId instanceof Set &&
+          studyRoomsState.blockPrimaryOwnedFallbackByRoomId.has(safeRoomId)
+        );
+        if (shouldBlockOwnedFallback) {
+          const preferredRoom = studyRoomsState.preferredPrimaryRoomById instanceof Map
+            ? studyRoomsState.preferredPrimaryRoomById.get(safeRoomId)
+            : null;
+          if (preferredRoom && typeof preferredRoom === "object" && preferredRoom.isActive !== false) {
+            logStudyRoomInviteDebug("LSN-P08A", "Se conserva snapshot local preferido y se evita fallback a owned.", {
+              roomId: safeRoomId
+            }, "warn");
+            studyRoomsState.activeRoomSource = "primary";
+            studyRoomsState.activeRoomOwnerUid = String(
+              preferredRoom.createdByUid || safeRoomId
+            ).trim() || safeRoomId;
+            studyRoomsState.activeRoomData = preferredRoom;
+            studyRoomsState.activeRoomLoading = false;
+            studyRoomsState.activeRoomError = "";
+            persistStudyRoomActiveSession(safeRoomId, currentUser?.uid);
+            if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+              patchStudyRoomsUI();
+            }
+            return;
+          }
+        }
         logStudyRoomInviteDebug("LSN-P08", "Fallback a owned porque roomId coincide con usuario actual.", {
           roomId: safeRoomId
         }, "warn");
@@ -24488,6 +24664,12 @@ async function leaveStudyRoomSession({ silent = false, forceLocal = false } = {}
       }
       if (studyRoomsState.musicIframeSeekSyncInFlightByRoomId instanceof Set) {
         studyRoomsState.musicIframeSeekSyncInFlightByRoomId.delete(safeRoomId);
+      }
+      if (studyRoomsState.preferredPrimaryRoomById instanceof Map) {
+        studyRoomsState.preferredPrimaryRoomById.delete(safeRoomId);
+      }
+      if (studyRoomsState.blockPrimaryOwnedFallbackByRoomId instanceof Set) {
+        studyRoomsState.blockPrimaryOwnedFallbackByRoomId.delete(safeRoomId);
       }
     }
     studyRoomsState.activeRoomId = "";
@@ -25170,21 +25352,24 @@ async function createStudyRoomSession(rawTitle = ""){
   const normalizedCreatedRoom = normalizeStudyRoomData(roomPayload, identity.uid);
   if (normalizedCreatedRoom) {
     void upsertCurrentUserStudyRoomSharedSnapshot(normalizedCreatedRoom);
-  }
+    const mergedRooms = [];
+    const seen = new Set();
+    [normalizedCreatedRoom, ...studyRoomsState.rooms].forEach((roomEntry) => {
+      const safeId = String(roomEntry?.id || "").trim();
+      if (!safeId || seen.has(safeId)) return;
+      seen.add(safeId);
+      mergedRooms.push(roomEntry);
+    });
+    mergedRooms.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+    studyRoomsState.rooms = mergedRooms.slice(0, STUDY_ROOMS_LIST_LIMIT);
 
-  if (createdSource === "owned") {
-    const normalizedOwnedRoom = normalizeStudyRoomData(roomPayload, identity.uid);
-    if (normalizedOwnedRoom) {
-      const mergedRooms = [];
-      const seen = new Set();
-      [normalizedOwnedRoom, ...studyRoomsState.rooms].forEach((roomEntry) => {
-        const safeId = String(roomEntry?.id || "").trim();
-        if (!safeId || seen.has(safeId)) return;
-        seen.add(safeId);
-        mergedRooms.push(roomEntry);
-      });
-      mergedRooms.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
-      studyRoomsState.rooms = mergedRooms.slice(0, STUDY_ROOMS_LIST_LIMIT);
+    if (createdSource === "primary") {
+      if (studyRoomsState.preferredPrimaryRoomById instanceof Map) {
+        studyRoomsState.preferredPrimaryRoomById.set(identity.uid, normalizedCreatedRoom);
+      }
+      if (studyRoomsState.blockPrimaryOwnedFallbackByRoomId instanceof Set) {
+        studyRoomsState.blockPrimaryOwnedFallbackByRoomId.add(identity.uid);
+      }
     }
   }
 
@@ -25199,7 +25384,22 @@ async function createStudyRoomSession(rawTitle = ""){
     startStudyRoomSessionTracking(identity.uid);
   } else {
     const opened = await openStudyRoomSession(identity.uid);
-    if (!opened) return false;
+    if (!opened) {
+      if (!normalizedCreatedRoom) return false;
+      studyRoomsState.activeRoomId = identity.uid;
+      studyRoomsState.activeRoomSource = "primary";
+      studyRoomsState.activeRoomOwnerUid = String(
+        normalizedCreatedRoom.createdByUid || identity.uid
+      ).trim() || identity.uid;
+      studyRoomsState.activeRoomData = normalizedCreatedRoom;
+      studyRoomsState.activeRoomLoading = false;
+      studyRoomsState.activeRoomError = "";
+      persistStudyRoomActiveSession(identity.uid, currentUser?.uid);
+      startStudyRoomSessionTracking(identity.uid);
+      if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        patchStudyRoomsUI();
+      }
+    }
   }
 
   void registerCollaborativeProgress("totalStudyRoomsCreated", 1, {
