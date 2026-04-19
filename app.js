@@ -3833,6 +3833,7 @@ function printAdminConsoleHelp(){
   adminConsoleLog('/sync check [mail]', "info");
   adminConsoleLog("/social", "info");
   adminConsoleLog("/salas", "info");
+  adminConsoleLog("/salas force-close-all", "info");
   adminConsoleLog("/pomodoro", "info");
   adminConsoleLog("/tutorial", "info");
   adminConsoleLog("/help", "info");
@@ -3884,6 +3885,341 @@ function isFirestoreNotFoundError(err){
     message.includes("no document to update") ||
     message.includes("no document to delete")
   );
+}
+
+function isStudyRoomCloseResolvedStatus(status = ""){
+  const safeStatus = String(status || "").trim();
+  return (
+    safeStatus === "success" ||
+    safeStatus === "soft-success" ||
+    safeStatus === "notfound" ||
+    safeStatus === "skipped"
+  );
+}
+
+async function forceClosePrimaryStudyRoomDoc(
+  roomId = "",
+  {
+    now = Date.now(),
+    closedByUid = "",
+    closedByName = ""
+  } = {}
+){
+  const safeRoomId = String(roomId || "").trim();
+  if (!safeRoomId) return "skipped";
+
+  const safeClosedByUid = String(closedByUid || "").trim();
+  const safeClosedByName = String(closedByName || "Admin").trim() || "Admin";
+
+  try {
+    await deleteDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId));
+    return "success";
+  } catch (err) {
+    if (isFirestoreNotFoundError(err)) {
+      return "notfound";
+    }
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo eliminar sala principal durante cierre forzado.", err);
+      return "error";
+    }
+  }
+
+  try {
+    await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, safeRoomId), {
+      isActive: false,
+      updatedAt: Math.max(0, Number(now) || Date.now()),
+      closedAt: Math.max(0, Number(now) || Date.now()),
+      closedByUid: safeClosedByUid,
+      closedByName: safeClosedByName,
+      participants: deleteField(),
+      participantsCount: 0,
+      boards: deleteField(),
+      chat: deleteField(),
+      invited: deleteField(),
+      allowed: deleteField(),
+      music: deleteField()
+    });
+    return "soft-success";
+  } catch (err) {
+    if (isFirestoreNotFoundError(err)) {
+      return "notfound";
+    }
+    if (isFirestorePermissionError(err)) {
+      return "permission";
+    }
+    console.warn("No se pudo cerrar sala principal con fallback de update.", err);
+    return "error";
+  }
+}
+
+async function forceCloseOwnedStudyRoomDoc(
+  ownerUid = "",
+  {
+    now = Date.now(),
+    closedByUid = "",
+    closedByName = ""
+  } = {}
+){
+  const safeOwnerUid = String(ownerUid || "").trim();
+  if (!safeOwnerUid) return "skipped";
+
+  const safeClosedByUid = String(closedByUid || "").trim();
+  const safeClosedByName = String(closedByName || "Admin").trim() || "Admin";
+
+  try {
+    await updateDoc(doc(db, "users", safeOwnerUid), {
+      [STUDY_ROOM_OWNED_FIELD]: deleteField()
+    });
+    return "success";
+  } catch (err) {
+    if (isFirestoreNotFoundError(err)) {
+      return "notfound";
+    }
+    if (!isFirestorePermissionError(err)) {
+      console.warn("No se pudo eliminar sala owned durante cierre forzado.", err);
+      return "error";
+    }
+  }
+
+  try {
+    await updateDoc(doc(db, "users", safeOwnerUid), {
+      [`${STUDY_ROOM_OWNED_FIELD}.isActive`]: false,
+      [`${STUDY_ROOM_OWNED_FIELD}.updatedAt`]: Math.max(0, Number(now) || Date.now()),
+      [`${STUDY_ROOM_OWNED_FIELD}.closedAt`]: Math.max(0, Number(now) || Date.now()),
+      [`${STUDY_ROOM_OWNED_FIELD}.closedByUid`]: safeClosedByUid,
+      [`${STUDY_ROOM_OWNED_FIELD}.closedByName`]: safeClosedByName,
+      [`${STUDY_ROOM_OWNED_FIELD}.participants`]: deleteField(),
+      [`${STUDY_ROOM_OWNED_FIELD}.participantsCount`]: 0,
+      [`${STUDY_ROOM_OWNED_FIELD}.boards`]: deleteField(),
+      [`${STUDY_ROOM_OWNED_FIELD}.chat`]: deleteField(),
+      [`${STUDY_ROOM_OWNED_FIELD}.invited`]: deleteField(),
+      [`${STUDY_ROOM_OWNED_FIELD}.allowed`]: deleteField(),
+      [`${STUDY_ROOM_OWNED_FIELD}.music`]: deleteField()
+    });
+    return "soft-success";
+  } catch (err) {
+    if (isFirestoreNotFoundError(err)) {
+      return "notfound";
+    }
+    if (isFirestorePermissionError(err)) {
+      return "permission";
+    }
+    console.warn("No se pudo cerrar sala owned con fallback de update.", err);
+    return "error";
+  }
+}
+
+async function clearStudyRoomVisibilityForOwner(ownerUid = ""){
+  const safeOwnerUid = String(ownerUid || "").trim();
+  if (!safeOwnerUid) return "skipped";
+
+  try {
+    await updateDoc(doc(db, "leaderboard", safeOwnerUid), {
+      [STUDY_ROOM_PUBLIC_FIELD]: deleteField(),
+      [STUDY_ROOM_SHARED_FIELD]: deleteField()
+    });
+    return "success";
+  } catch (err) {
+    if (isFirestoreNotFoundError(err)) {
+      return "notfound";
+    }
+    if (isFirestorePermissionError(err)) {
+      return "permission";
+    }
+    console.warn("No se pudo limpiar visibilidad de sala en leaderboard.", err);
+    return "error";
+  }
+}
+
+async function collectStudyRoomForceCloseTargets({ maxTargets = 180 } = {}){
+  const safeMaxTargets = Math.max(1, Math.floor(Number(maxTargets) || 180));
+  const byRoomId = new Map();
+
+  const registerTarget = (roomId = "", ownerUid = "", source = "") => {
+    const safeRoomId = String(roomId || ownerUid || "").trim();
+    const safeOwnerUid = String(ownerUid || roomId || "").trim();
+    if (!safeRoomId) return;
+
+    const previous = byRoomId.get(safeRoomId);
+    if (previous) {
+      if (!previous.ownerUid && safeOwnerUid) {
+        previous.ownerUid = safeOwnerUid;
+      }
+      if (source) {
+        previous.sources.add(String(source || "").trim());
+      }
+      return;
+    }
+
+    byRoomId.set(safeRoomId, {
+      roomId: safeRoomId,
+      ownerUid: safeOwnerUid,
+      sources: new Set(source ? [String(source || "").trim()] : [])
+    });
+  };
+
+  const ownUid = String(currentUser?.uid || "").trim();
+  if (ownUid) {
+    registerTarget(ownUid, ownUid, "self");
+  }
+
+  const activeRoomId = String(studyRoomsState.activeRoomId || "").trim();
+  const activeOwnerUid = resolveActiveOwnedStudyRoomOwnerUid(
+    activeRoomId,
+    studyRoomsState.activeRoomData
+  );
+  if (activeRoomId || activeOwnerUid) {
+    registerTarget(activeRoomId || activeOwnerUid, activeOwnerUid || activeRoomId, "active-state");
+  }
+
+  let primaryQueryError = null;
+  try {
+    const activeRoomsSnapshot = await getDocs(
+      query(
+        collection(db, STUDY_ROOMS_COLLECTION),
+        where("isActive", "==", true),
+        limit(safeMaxTargets)
+      )
+    );
+    activeRoomsSnapshot.forEach((docSnap) => {
+      const normalized = normalizeStudyRoomData(docSnap.data() || {}, docSnap.id);
+      const roomId = String(normalized?.id || docSnap.id || "").trim();
+      const ownerUid = String(normalized?.createdByUid || docSnap.id || "").trim();
+      registerTarget(roomId, ownerUid, "primary-query");
+    });
+  } catch (err) {
+    primaryQueryError = err;
+  }
+
+  let ownedQueryError = null;
+  try {
+    const ownedRoomsSnapshot = await getDocs(
+      query(
+        collection(db, "users"),
+        where(`${STUDY_ROOM_OWNED_FIELD}.isActive`, "==", true),
+        limit(safeMaxTargets)
+      )
+    );
+    ownedRoomsSnapshot.forEach((docSnap) => {
+      const normalizedOwned = normalizeOwnedStudyRoomFromUserData(docSnap.data() || {}, docSnap.id);
+      const roomId = String(normalizedOwned?.id || docSnap.id || "").trim();
+      const ownerUid = String(normalizedOwned?.createdByUid || docSnap.id || "").trim();
+      registerTarget(roomId, ownerUid, "owned-query");
+    });
+  } catch (err) {
+    ownedQueryError = err;
+  }
+
+  const targets = Array.from(byRoomId.values()).map((entry) => {
+    return {
+      roomId: entry.roomId,
+      ownerUid: entry.ownerUid || entry.roomId,
+      sources: Array.from(entry.sources)
+    };
+  });
+
+  targets.sort((a, b) => {
+    return String(a.roomId || "").localeCompare(String(b.roomId || ""), "es", { sensitivity: "base" });
+  });
+
+  return {
+    targets,
+    primaryQueryError,
+    ownedQueryError
+  };
+}
+
+async function forceCloseAllActiveStudyRoomsDebug({ maxTargets = 180 } = {}){
+  const ownUid = String(currentUser?.uid || "").trim();
+  const now = Date.now();
+  const closedByName = String(
+    getStudyRoomIdentity()?.name ||
+    currentUser?.displayName ||
+    "Admin"
+  ).trim() || "Admin";
+
+  const leftSession = await leaveStudyRoomSession({
+    silent: true,
+    forceLocal: true
+  });
+
+  const targetResult = await collectStudyRoomForceCloseTargets({
+    maxTargets
+  });
+
+  const results = [];
+  for (const target of targetResult.targets) {
+    const roomId = String(target?.roomId || "").trim();
+    const ownerUid = String(target?.ownerUid || roomId || "").trim();
+    if (!roomId) continue;
+
+    const primaryStatus = await forceClosePrimaryStudyRoomDoc(roomId, {
+      now,
+      closedByUid: ownUid,
+      closedByName
+    });
+    const ownedStatus = await forceCloseOwnedStudyRoomDoc(ownerUid, {
+      now,
+      closedByUid: ownUid,
+      closedByName
+    });
+    const visibilityStatus = await clearStudyRoomVisibilityForOwner(ownerUid);
+    const resolved = isStudyRoomCloseResolvedStatus(primaryStatus) || isStudyRoomCloseResolvedStatus(ownedStatus);
+
+    results.push({
+      roomId,
+      ownerUid,
+      primaryStatus,
+      ownedStatus,
+      visibilityStatus,
+      resolved,
+      sources: Array.isArray(target?.sources) ? target.sources : []
+    });
+  }
+
+  const closedRoomIds = new Set(
+    results
+      .filter((entry) => entry.resolved)
+      .map((entry) => String(entry.roomId || "").trim())
+      .filter(Boolean)
+  );
+  if (closedRoomIds.size) {
+    studyRoomsState.rooms = studyRoomsState.rooms.filter((entry) => {
+      return !closedRoomIds.has(String(entry?.id || "").trim());
+    });
+  }
+
+  await Promise.allSettled([
+    clearCurrentUserStudyRoomPublicSummary(),
+    clearCurrentUserStudyRoomSharedSnapshot()
+  ]);
+
+  if (currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+    patchStudyRoomsUI();
+  }
+
+  const resolvedCount = results.filter((entry) => entry.resolved).length;
+  const permissionBlockedCount = results.filter((entry) => (
+    entry.primaryStatus === "permission" ||
+    entry.ownedStatus === "permission" ||
+    entry.visibilityStatus === "permission"
+  )).length;
+  const hardErrorCount = results.filter((entry) => (
+    entry.primaryStatus === "error" ||
+    entry.ownedStatus === "error" ||
+    entry.visibilityStatus === "error"
+  )).length;
+
+  return {
+    leftSession,
+    targetsCount: targetResult.targets.length,
+    resolvedCount,
+    permissionBlockedCount,
+    hardErrorCount,
+    results,
+    primaryQueryError: targetResult.primaryQueryError,
+    ownedQueryError: targetResult.ownedQueryError
+  };
 }
 
 async function resolveTargetUserByEmail(email){
@@ -6329,6 +6665,55 @@ async function executeAdminConsoleCommand(rawCommand){
   if (/^\/social$/i.test(command)) {
     await setViewMode(VIEW_MODE_SOCIAL);
     adminConsoleLog("Vista social abierta.", "ok");
+    return;
+  }
+
+  const forceCloseAllRoomsMatch = command.match(
+    /^\/salas\s+(?:force[-_\s]?close[-_\s]?all|cerrar[-_\s]?todas?|reset)\s*$/i
+  );
+  if (forceCloseAllRoomsMatch) {
+    adminConsoleLog("Iniciando cierre forzado de salas activas...", "info");
+
+    const result = await forceCloseAllActiveStudyRoomsDebug({
+      maxTargets: 220
+    });
+
+    if (result.primaryQueryError) {
+      const primaryQueryMessage = isFirestorePermissionError(result.primaryQueryError)
+        ? "Sin permisos para listar salas activas en colección principal."
+        : `Fallo al listar salas activas en colección principal: ${result.primaryQueryError?.message || "desconocido"}.`;
+      adminConsoleLog(primaryQueryMessage, isFirestorePermissionError(result.primaryQueryError) ? "warn" : "error");
+    }
+
+    if (result.ownedQueryError) {
+      const ownedQueryMessage = isFirestorePermissionError(result.ownedQueryError)
+        ? "Sin permisos para listar salas activas en users.studyRoomOwned."
+        : `Fallo al listar salas activas en users.studyRoomOwned: ${result.ownedQueryError?.message || "desconocido"}.`;
+      adminConsoleLog(ownedQueryMessage, isFirestorePermissionError(result.ownedQueryError) ? "warn" : "error");
+    }
+
+    adminConsoleLog(
+      `Cierre forzado completado: ${result.resolvedCount}/${result.targetsCount} salas resueltas.`,
+      result.resolvedCount > 0 ? "ok" : "warn"
+    );
+    adminConsoleLog(
+      `Sesión activa local despejada: ${result.leftSession ? "sí" : "no"}. Bloqueos por permisos: ${result.permissionBlockedCount}. Errores duros: ${result.hardErrorCount}.`,
+      result.hardErrorCount > 0 ? "warn" : "info"
+    );
+
+    const unresolved = result.results.filter((entry) => !entry.resolved).slice(0, 8);
+    unresolved.forEach((entry) => {
+      adminConsoleLog(
+        `No resuelta -> room=${entry.roomId} | owner=${entry.ownerUid} | primary=${entry.primaryStatus} | owned=${entry.ownedStatus} | visibility=${entry.visibilityStatus}`,
+        "warn"
+      );
+    });
+
+    showToast(
+      result.resolvedCount > 0
+        ? `Cierre forzado: ${result.resolvedCount} salas resueltas.`
+        : "No se pudo cerrar ninguna sala con tus permisos actuales."
+    );
     return;
   }
 
@@ -24108,6 +24493,10 @@ async function leaveStudyRoomSession({ silent = false, forceLocal = false } = {}
       ownUid
     ).trim();
     const closeAttempts = [];
+    const isCloseSourceResolved = (status = "") => {
+      const safeStatus = String(status || "").trim();
+      return safeStatus === "success" || safeStatus === "soft-success" || safeStatus === "notfound";
+    };
 
     if (ownerUidForClosure) {
       try {
@@ -24135,7 +24524,32 @@ async function leaveStudyRoomSession({ silent = false, forceLocal = false } = {}
         if (isFirestoreNotFoundError(err)) {
           closeAttempts.push({ source: "primary", status: "notfound" });
         } else if (isFirestorePermissionError(err)) {
-          closeAttempts.push({ source: "primary", status: "permission" });
+          try {
+            await updateDoc(doc(db, STUDY_ROOMS_COLLECTION, primaryRoomId), {
+              isActive: false,
+              updatedAt: now,
+              closedAt: now,
+              closedByUid: ownUid,
+              closedByName: closureActorName,
+              participants: deleteField(),
+              participantsCount: 0,
+              boards: deleteField(),
+              chat: deleteField(),
+              invited: deleteField(),
+              allowed: deleteField(),
+              music: deleteField()
+            });
+            closeAttempts.push({ source: "primary", status: "soft-success" });
+          } catch (softCloseErr) {
+            if (isFirestoreNotFoundError(softCloseErr)) {
+              closeAttempts.push({ source: "primary", status: "notfound" });
+            } else if (isFirestorePermissionError(softCloseErr)) {
+              closeAttempts.push({ source: "primary", status: "permission" });
+            } else {
+              closeAttempts.push({ source: "primary", status: "error" });
+              console.warn("No se pudo cerrar la sala principal con fallback de actualización.", softCloseErr);
+            }
+          }
         } else {
           closeAttempts.push({ source: "primary", status: "error" });
           console.warn("No se pudo eliminar la sala de estudio.", err);
@@ -24154,18 +24568,23 @@ async function leaveStudyRoomSession({ silent = false, forceLocal = false } = {}
     const closeStatusBySource = new Map(
       closeAttempts.map((attempt) => [String(attempt?.source || "").trim(), String(attempt?.status || "").trim()])
     );
-    const hasCloseSuccess = closeAttempts.some((attempt) => attempt.status === "success");
+    const hasCloseSuccess = closeAttempts.some((attempt) => {
+      const status = String(attempt?.status || "").trim();
+      return status === "success" || status === "soft-success";
+    });
     const hasClosePermissionError = closeAttempts.some((attempt) => attempt.status === "permission");
     const missingRequiredCloseSource = requiredCloseSources.some((source) => {
       return !closeStatusBySource.has(source);
     });
     const allRequiredCloseSourcesResolved = !missingRequiredCloseSource && requiredCloseSources.every((source) => {
       const status = closeStatusBySource.get(source);
-      return status === "success" || status === "notfound";
+      return isCloseSourceResolved(status);
     });
+    const ownedCloseResolved = isCloseSourceResolved(closeStatusBySource.get("owned"));
+    const primaryCloseResolved = isCloseSourceResolved(closeStatusBySource.get("primary"));
     roomUpdated = requiredCloseSources.length
-      ? allRequiredCloseSourcesResolved
-      : (hasCloseSuccess || closeAttempts.every((attempt) => attempt.status === "notfound"));
+      ? (allRequiredCloseSourcesResolved || ownedCloseResolved || primaryCloseResolved)
+      : (hasCloseSuccess || closeAttempts.every((attempt) => isCloseSourceResolved(attempt.status)));
 
     if (!roomUpdated) {
       if (hasClosePermissionError && !silent && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
