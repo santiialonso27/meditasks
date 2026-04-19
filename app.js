@@ -7652,6 +7652,56 @@ function grantCurrentUserStudyRoomInviteAccess(
   return true;
 }
 
+function revokeCurrentUserStudyRoomInviteAccess(roomId = "", ownerUid = ""){
+  const ownUid = String(currentUser?.uid || "").trim();
+  const safeRoomId = String(roomId || "").trim();
+  const safeOwnerUid = String(ownerUid || "").trim();
+  if (!ownUid || (!safeRoomId && !safeOwnerUid)) return false;
+
+  const accessByRoomId = ensureStudyRoomInviteAccessHydrated(ownUid);
+  if (!(accessByRoomId instanceof Map) || !accessByRoomId.size) return false;
+
+  let changed = false;
+  const maybeDeleteKey = (key) => {
+    const safeKey = String(key || "").trim();
+    if (!safeKey) return;
+    if (accessByRoomId.delete(safeKey)) {
+      changed = true;
+    }
+  };
+
+  maybeDeleteKey(safeRoomId);
+  maybeDeleteKey(safeOwnerUid);
+
+  Array.from(accessByRoomId.entries()).forEach(([entryKey, entryValue]) => {
+    const normalizedEntry = normalizeStudyRoomInviteAccessEntry(entryValue, entryKey);
+    if (!normalizedEntry) return;
+
+    const entryRoomId = String(normalizedEntry.roomId || "").trim();
+    const entryOwnerUid = String(normalizedEntry.invitedByUid || "").trim();
+    const matchesRoom = !!safeRoomId && (
+      entryRoomId === safeRoomId ||
+      String(entryKey || "").trim() === safeRoomId
+    );
+    const matchesOwner = !!safeOwnerUid && (
+      entryOwnerUid === safeOwnerUid ||
+      String(entryKey || "").trim() === safeOwnerUid
+    );
+    if (!matchesRoom && !matchesOwner) return;
+
+    if (accessByRoomId.delete(entryKey)) {
+      changed = true;
+    }
+  });
+
+  if (!changed) return false;
+
+  studyRoomsState.inviteAccessByRoomId = accessByRoomId;
+  studyRoomsState.inviteAccessLoadedUid = ownUid;
+  persistStoredStudyRoomInviteAccessMap(accessByRoomId, ownUid);
+  return true;
+}
+
 function readStoredStudyRoomActiveSession(uid = ""){
   const key = getStudyRoomActiveSessionStorageKey(uid);
   if (!key) return "";
@@ -10379,6 +10429,7 @@ async function maybeHandleStudyRoomClosureSummaryFromUserData(data = {}){
     summary.roomId === activeRoomId ||
     summary.roomId === activeRoomDataId
   );
+  revokeCurrentUserStudyRoomInviteAccess(summary.roomId, summary.closedByUid);
   if (shouldCloseActiveSession) {
     try {
       await leaveStudyRoomSession({ silent: true, forceLocal: true });
@@ -24050,17 +24101,6 @@ async function leaveStudyRoomSession({ silent = false, forceLocal = false } = {}
   let roomUpdated = false;
 
   if (shouldCloseRoom) {
-    if (activeRoomData && typeof activeRoomData === "object") {
-      try {
-        await broadcastStudyRoomClosureSummary(activeRoomData, {
-          closedByUid: ownUid,
-          closedByName: closureActorName
-        });
-      } catch (closureSummaryError) {
-        console.warn("No se pudo generar o enviar el resumen de cierre de sala.", closureSummaryError);
-      }
-    }
-
     const primaryRoomId = String(activeRoomData?.id || safeRoomId || "").trim();
     const ownerUidForClosure = String(
       roomOwnerUid ||
@@ -24103,17 +24143,35 @@ async function leaveStudyRoomSession({ silent = false, forceLocal = false } = {}
       }
     }
 
-    const hasCloseAttempt = closeAttempts.length > 0;
+    const requiredCloseSources = [];
+    if (ownerUidForClosure) {
+      requiredCloseSources.push("owned");
+    }
+    if (primaryRoomId) {
+      requiredCloseSources.push("primary");
+    }
+
+    const closeStatusBySource = new Map(
+      closeAttempts.map((attempt) => [String(attempt?.source || "").trim(), String(attempt?.status || "").trim()])
+    );
     const hasCloseSuccess = closeAttempts.some((attempt) => attempt.status === "success");
     const hasClosePermissionError = closeAttempts.some((attempt) => attempt.status === "permission");
-    const allCloseAttemptsNotFound = hasCloseAttempt && closeAttempts.every((attempt) => {
-      return attempt.status === "notfound";
+    const missingRequiredCloseSource = requiredCloseSources.some((source) => {
+      return !closeStatusBySource.has(source);
     });
-    roomUpdated = hasCloseSuccess || allCloseAttemptsNotFound;
+    const allRequiredCloseSourcesResolved = !missingRequiredCloseSource && requiredCloseSources.every((source) => {
+      const status = closeStatusBySource.get(source);
+      return status === "success" || status === "notfound";
+    });
+    roomUpdated = requiredCloseSources.length
+      ? allRequiredCloseSourcesResolved
+      : (hasCloseSuccess || closeAttempts.every((attempt) => attempt.status === "notfound"));
 
     if (!roomUpdated) {
       if (hasClosePermissionError && !silent && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
         showToast("No hay permisos para cerrar tu sala.");
+      } else if (!silent && currentViewMode === VIEW_MODE_STUDY_ROOMS) {
+        showToast("No se pudo cerrar la sala por completo. Reintentá.");
       }
       if (forceLocal) {
         await finalizeStudyRoomSessionTracking(safeRoomId, now);
@@ -24123,7 +24181,20 @@ async function leaveStudyRoomSession({ silent = false, forceLocal = false } = {}
       return false;
     }
 
-    const closedRoomIds = new Set([safeRoomId, primaryRoomId].filter(Boolean));
+    if (hasCloseSuccess && activeRoomData && typeof activeRoomData === "object") {
+      try {
+        await broadcastStudyRoomClosureSummary(activeRoomData, {
+          closedByUid: ownUid,
+          closedByName: closureActorName
+        });
+      } catch (closureSummaryError) {
+        console.warn("No se pudo generar o enviar el resumen de cierre de sala.", closureSummaryError);
+      }
+    }
+
+    revokeCurrentUserStudyRoomInviteAccess(primaryRoomId || safeRoomId, ownerUidForClosure);
+
+    const closedRoomIds = new Set([safeRoomId, primaryRoomId, ownerUidForClosure].filter(Boolean));
     studyRoomsState.rooms = studyRoomsState.rooms.filter((roomEntry) => {
       return !closedRoomIds.has(String(roomEntry?.id || "").trim());
     });
@@ -24508,16 +24579,28 @@ async function createStudyRoomSession(rawTitle = ""){
     console.warn("No se pudo validar sala activa local antes de crear.", ownUserResult.reason);
   }
 
-  if (activeRoomFromFirestore?.isActive) {
-    showToast("Ya tenés una sala activa. Cerrala para crear otra.");
-    await openStudyRoomSession(activeRoomFromFirestore.id);
-    return false;
-  }
-
-  if (activeOwnedRoomFromFirestore?.isActive) {
-    showToast("Ya tenés una sala activa. Cerrala para crear otra.");
-    await openStudyRoomSession(activeOwnedRoomFromFirestore.id);
-    return false;
+  const detectedRemoteActiveRoom = activeRoomFromFirestore?.isActive
+    ? activeRoomFromFirestore
+    : (activeOwnedRoomFromFirestore?.isActive ? activeOwnedRoomFromFirestore : null);
+  if (detectedRemoteActiveRoom?.isActive) {
+    const detectedRoomId = String(detectedRemoteActiveRoom.id || identity.uid).trim();
+    const reopenedExisting = detectedRoomId
+      ? await openStudyRoomSession(detectedRoomId, {
+          skipListAccessCheck: true
+        })
+      : false;
+    const closedExisting = reopenedExisting
+      ? await leaveStudyRoomSession({ silent: true })
+      : false;
+    if (!closedExisting) {
+      showToast("Ya tenés una sala activa. Cerrala para crear otra.");
+      if (detectedRoomId) {
+        await openStudyRoomSession(detectedRoomId, {
+          skipListAccessCheck: true
+        });
+      }
+      return false;
+    }
   }
 
   const now = Date.now();
