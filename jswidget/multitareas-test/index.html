@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="js-widget-title" content="MULTITAREAS">
+  <title>MULTITAREAS</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(120% 160% at 10% 0%, #f4f8ff 0%, #edf2ff 48%, #e7ecfa 100%);
+      color: #151a2c;
+    }
+
+    .widget-root {
+      width: 100%;
+      height: 100%;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .brand {
+      font-size: clamp(13px, 2.8vw, 19px);
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #101529;
+    }
+
+    .meta {
+      font-size: clamp(11px, 2.3vw, 14px);
+      font-weight: 600;
+      color: #465272;
+      white-space: nowrap;
+    }
+
+    .list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
+
+    .item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-start;
+      padding: 10px 11px;
+      border-radius: 12px;
+      border: 1px solid rgba(69, 89, 142, 0.18);
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: 0 8px 20px rgba(27, 40, 79, 0.08);
+    }
+
+    .when {
+      font-size: clamp(10px, 2.1vw, 12px);
+      font-weight: 800;
+      color: #30406b;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .text {
+      font-size: clamp(12px, 2.5vw, 16px);
+      font-weight: 650;
+      line-height: 1.25;
+      color: #0f172f;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    .empty {
+      margin-top: auto;
+      margin-bottom: auto;
+      border-radius: 14px;
+      border: 1px dashed rgba(65, 85, 136, 0.35);
+      background: rgba(255, 255, 255, 0.56);
+      padding: 16px 14px;
+      text-align: center;
+      font-size: clamp(12px, 2.5vw, 15px);
+      line-height: 1.35;
+      color: #2a365a;
+      font-weight: 650;
+    }
+  </style>
+</head>
+<body>
+  <main class="widget-root">
+    <header class="header">
+      <h1 class="brand">MULTITAREAS</h1>
+      <div id="meta" class="meta">Cargando...</div>
+    </header>
+    <ul id="list" class="list" hidden></ul>
+    <div id="empty" class="empty">Cargando tareas...</div>
+  </main>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBKxH2qTEhArWT09faZHNMTKS7Eu3YqhOs",
+      authDomain: "multitareas-b3a1e.firebaseapp.com",
+      projectId: "multitareas-b3a1e",
+      storageBucket: "multitareas-b3a1e.firebasestorage.app",
+      messagingSenderId: "944481413077",
+      appId: "1:944481413077:web:02b4f4e433ae52da9aff5c"
+    };
+
+    const WIDGET_FEED_COLLECTION = "widgetFeeds";
+
+    const root = {
+      meta: document.getElementById("meta"),
+      list: document.getElementById("list"),
+      empty: document.getElementById("empty")
+    };
+
+    let widgetReady = false;
+    window.__wweb2JsWidgetTitle = () => "MULTITAREAS";
+    window.__wweb2WaitMillisecondsToWidgetIsReady = () => (widgetReady ? 0 : 250);
+
+    function wlog(message) {
+      if (typeof window.__wweb2Log === "function") {
+        window.__wweb2Log(String(message));
+      } else {
+        console.log(message);
+      }
+    }
+
+    function getFeedTokenFromUrl() {
+      try {
+        const params = new URLSearchParams(window.location.search || "");
+        return String(params.get("token") || "").trim();
+      } catch (_error) {
+        return "";
+      }
+    }
+
+    function formatLocalDate(dateObj) {
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+      const day = String(dateObj.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function addDaysToIsoDate(isoDate, daysToAdd) {
+      const [year, month, day] = String(isoDate || "").split("-").map(Number);
+      if (!year || !month || !day) return isoDate;
+      const nextDate = new Date(year, month - 1, day);
+      nextDate.setDate(nextDate.getDate() + (Number(daysToAdd) || 0));
+      return formatLocalDate(nextDate);
+    }
+
+    function formatDateLabel(dateStr) {
+      const todayIso = formatLocalDate(new Date());
+      if (dateStr === todayIso) return "Hoy";
+      if (dateStr === addDaysToIsoDate(todayIso, 1)) return "Manana";
+      const [year, month, day] = String(dateStr || "").split("-").map(Number);
+      const parsedDate = new Date(year, (month || 1) - 1, day || 1);
+      if (Number.isNaN(parsedDate.getTime())) return dateStr;
+      const base = parsedDate.toLocaleDateString("es-AR", {
+        weekday: "short",
+        day: "numeric",
+        month: "short"
+      });
+      return base ? `${base.charAt(0).toUpperCase()}${base.slice(1)}` : dateStr;
+    }
+
+    function normalizeFeedItems(feedItems) {
+      if (!Array.isArray(feedItems)) return [];
+      return feedItems
+        .map((rawItem) => {
+          const taskText = String(rawItem?.taskText || "").trim();
+          const dateStr = String(rawItem?.dateStr || "").trim();
+          const timeSlot = rawItem?.timeSlot ? String(rawItem.timeSlot).trim() : null;
+          if (!taskText || !dateStr) return null;
+          return { taskText, dateStr, timeSlot: timeSlot || null };
+        })
+        .filter(Boolean)
+        .slice(0, 4);
+    }
+
+    function renderTasks(items) {
+      root.list.innerHTML = "";
+      if (!items.length) {
+        root.list.hidden = true;
+        root.empty.hidden = false;
+        root.empty.textContent = "No tenes tareas diarias pendientes.";
+        root.meta.textContent = "0 pendientes";
+        return;
+      }
+
+      items.forEach((entry) => {
+        const row = document.createElement("li");
+        row.className = "item";
+
+        const text = document.createElement("span");
+        text.className = "text";
+        text.textContent = entry.taskText;
+
+        const when = document.createElement("span");
+        when.className = "when";
+        const dayLabel = formatDateLabel(entry.dateStr);
+        when.textContent = entry.timeSlot ? `${dayLabel} ${entry.timeSlot}` : dayLabel;
+
+        row.appendChild(text);
+        row.appendChild(when);
+        root.list.appendChild(row);
+      });
+
+      root.empty.hidden = true;
+      root.list.hidden = false;
+      root.meta.textContent = `${items.length} pendientes`;
+    }
+
+    async function boot() {
+      try {
+        const feedToken = getFeedTokenFromUrl();
+        if (!feedToken) {
+          root.meta.textContent = "Token faltante";
+          root.empty.textContent = "Configura la URL del widget con ?token=...";
+          widgetReady = true;
+          return;
+        }
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        root.meta.textContent = "Sincronizando...";
+
+        const snap = await getDoc(doc(db, WIDGET_FEED_COLLECTION, feedToken));
+        if (!snap.exists()) {
+          root.meta.textContent = "Sin datos";
+          root.empty.textContent = "Este token no tiene feed disponible todavia.";
+          widgetReady = true;
+          return;
+        }
+
+        const data = snap.data() || {};
+        const upcoming = normalizeFeedItems(data.items || []);
+        renderTasks(upcoming);
+        if (upcoming.length) {
+          root.meta.textContent = `${upcoming.length} pendientes`;
+        }
+        widgetReady = true;
+      } catch (error) {
+        wlog(`widget-error: ${error?.message || error}`);
+        root.meta.textContent = "Error";
+        root.empty.textContent = "No se pudieron cargar las tareas.";
+        widgetReady = true;
+      }
+    }
+
+    boot();
+  </script>
+</body>
+</html>

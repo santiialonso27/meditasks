@@ -65,6 +65,9 @@ let projects = {};
 let projectOrder = [];
 let taskLabels = [];
 let dailyCompletionHistory = {};
+let widgetFeedSyncInFlight = null;
+let lastWidgetFeedToken = "";
+let lastWidgetFeedSignature = "";
 const VIEW_MODE_SUMMARY = "summary";
 const VIEW_MODE_TASKS = "tasks";
 const VIEW_MODE_PROJECTS = "projects";
@@ -107,6 +110,11 @@ const CHANGELOG_MODAL_ITEMS = Object.freeze([
   "Nuevos logros."
 ]);
 const storeKey = "mt_tasks_local";
+const WIDGET_FEED_COLLECTION = "widgetFeeds";
+const WIDGET_FEED_TOKEN_FIELD = "widgetFeedToken";
+const WIDGET_FEED_TOKEN_UPDATED_AT_FIELD = "widgetFeedTokenUpdatedAt";
+const WIDGET_FEED_MAX_ITEMS = 4;
+const WIDGET_FEED_LOCAL_URL_STORAGE_PREFIX = "mt_widget_feed_url_v1_";
 const PLAYER_STORE_KEY = "mt_player";
 const LEGACY_PLAYER_MIGRATION_DONE_KEY = "mt_player_legacy_migration_done_v1";
 const LEGACY_PLAYER_PAYLOAD_READY_KEY = "mt_player_legacy_payload_ready_v1";
@@ -7219,6 +7227,7 @@ onAuthStateChanged(auth, async (user) => {
 	                renderProjectsView();
 	              }
 	            }
+	            void syncWidgetFeedForCurrentUser({ cloudUserData: data || {} });
 	            setStatusSaved();
 	            maybeShowChangelogUpdateModal(data || {});
               queueGuidedTutorialAutostartIfNeeded(data || {});
@@ -7409,6 +7418,7 @@ onAuthStateChanged(auth, async (user) => {
 	      setStatusSaved();
 	      maybeShowChangelogUpdateModal(snapshot.data() || {});
 	      queueGuidedTutorialAutostartIfNeeded(snapshot.data() || {});
+        void syncWidgetFeedForCurrentUser({ cloudUserData: snapshot.data() || {} });
         if (isPlayerReadyForAchievementChecks()) {
           checkAchievements({ silent: false });
         }
@@ -7429,8 +7439,11 @@ onAuthStateChanged(auth, async (user) => {
           unsubscribe = null;
         }
 
-	        await leaveStudyRoomSession({ silent: true });
-		        currentUser = null;
+		        await leaveStudyRoomSession({ silent: true });
+			        currentUser = null;
+            lastWidgetFeedToken = "";
+            lastWidgetFeedSignature = "";
+            widgetFeedSyncInFlight = null;
             playerHydratedForSession = false;
 	          stopGuidedTutorial({ completed: false, silentToast: true });
 	          resetGuidedTutorialAutostartState();
@@ -13301,13 +13314,14 @@ async function save({ includePlayer = false } = {}){
         }
       );
 
-      await setDoc(
-        doc(db,"leaderboard",currentUser.uid),
-        buildLeaderboardDocPayload(currentUser, player),
-        { merge:true }
-      );
+	      await setDoc(
+	        doc(db,"leaderboard",currentUser.uid),
+	        buildLeaderboardDocPayload(currentUser, player),
+	        { merge:true }
+	      );
 
-      setStatusSaved();
+        void syncWidgetFeedForCurrentUser();
+	      setStatusSaved();
 
     }catch(err){
 
@@ -16169,6 +16183,152 @@ function getUpcomingDailyTasks(limit = 3){
 
   return entries.slice(0, safeLimit);
 }
+
+function getWidgetFeedLocalStorageKey(uid = ""){
+  const safeUid = String(uid || currentUser?.uid || "").trim();
+  if (!safeUid) return "";
+  return `${WIDGET_FEED_LOCAL_URL_STORAGE_PREFIX}${safeUid}`;
+}
+
+function generateWidgetFeedToken(){
+  const tokenBytes = new Uint8Array(18);
+  if (window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(tokenBytes);
+  } else {
+    for (let index = 0; index < tokenBytes.length; index += 1) {
+      tokenBytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(tokenBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function buildWidgetFeedUrlFromToken(token = ""){
+  const safeToken = String(token || "").trim();
+  if (!safeToken || !window.location?.origin) return "";
+  return `${window.location.origin}/jswidget/multitareas-test/index.html?token=${encodeURIComponent(safeToken)}`;
+}
+
+function buildWidgetFeedItems(limit = WIDGET_FEED_MAX_ITEMS){
+  const upcoming = getUpcomingDailyTasks(limit);
+  return upcoming.map((entry) => ({
+    taskText: String(entry.taskText || "").trim(),
+    dateStr: String(entry.dateStr || "").trim(),
+    timeSlot: entry.timeSlot ? String(entry.timeSlot) : null
+  }));
+}
+
+async function ensureWidgetFeedTokenForCurrentUser(cloudUserData = null){
+  const safeUid = String(currentUser?.uid || "").trim();
+  if (!safeUid) return "";
+
+  let token = String(cloudUserData?.[WIDGET_FEED_TOKEN_FIELD] || "").trim();
+
+  if (!token) {
+    try {
+      const snap = await getDoc(doc(db, "users", safeUid));
+      token = String(snap.data()?.[WIDGET_FEED_TOKEN_FIELD] || "").trim();
+    } catch (_error) {}
+  }
+
+  if (token) return token;
+
+  token = generateWidgetFeedToken();
+  try {
+    await setDoc(
+      doc(db, "users", safeUid),
+      {
+        [WIDGET_FEED_TOKEN_FIELD]: token,
+        [WIDGET_FEED_TOKEN_UPDATED_AT_FIELD]: Date.now()
+      },
+      { merge: true }
+    );
+  } catch (error) {
+    console.warn("No se pudo guardar el token del widget.", error);
+    return "";
+  }
+
+  return token;
+}
+
+async function syncWidgetFeedForCurrentUser({ cloudUserData = null, force = false } = {}){
+  const safeUid = String(currentUser?.uid || "").trim();
+  if (!safeUid || !navigator.onLine) return null;
+
+  if (widgetFeedSyncInFlight && !force) {
+    return widgetFeedSyncInFlight;
+  }
+
+  widgetFeedSyncInFlight = (async () => {
+    const token = await ensureWidgetFeedTokenForCurrentUser(cloudUserData);
+    if (!token) return null;
+
+    const items = buildWidgetFeedItems(WIDGET_FEED_MAX_ITEMS);
+    const signature = JSON.stringify(items);
+    const widgetUrl = buildWidgetFeedUrlFromToken(token);
+
+    if (!force && token === lastWidgetFeedToken && signature === lastWidgetFeedSignature) {
+      const widgetUrlStorageKey = getWidgetFeedLocalStorageKey(safeUid);
+      if (widgetUrlStorageKey && widgetUrl) localStorage.setItem(widgetUrlStorageKey, widgetUrl);
+      return { token, widgetUrl, skipped: true };
+    }
+
+    try {
+      await setDoc(
+        doc(db, WIDGET_FEED_COLLECTION, token),
+        {
+          uid: safeUid,
+          updatedAt: Date.now(),
+          items
+        },
+        { merge: true }
+      );
+      lastWidgetFeedToken = token;
+      lastWidgetFeedSignature = signature;
+
+      const widgetUrlStorageKey = getWidgetFeedLocalStorageKey(safeUid);
+      if (widgetUrlStorageKey && widgetUrl) localStorage.setItem(widgetUrlStorageKey, widgetUrl);
+      return { token, widgetUrl, skipped: false };
+    } catch (error) {
+      console.warn("No se pudo sincronizar el feed del widget.", error);
+      return null;
+    }
+  })();
+
+  try {
+    return await widgetFeedSyncInFlight;
+  } finally {
+    widgetFeedSyncInFlight = null;
+  }
+}
+
+async function copyWidgetFeedUrlForCurrentUser(){
+  if (!currentUser?.uid) {
+    showToast("Inicia sesión para generar la URL del widget.");
+    return "";
+  }
+
+  const syncResult = await syncWidgetFeedForCurrentUser({ force: true });
+  const widgetUrl = String(syncResult?.widgetUrl || "").trim();
+  if (!widgetUrl) {
+    showToast("No se pudo generar la URL del widget.");
+    return "";
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(widgetUrl);
+      showToast("URL del widget copiada.");
+    } else {
+      showToast("URL del widget generada.");
+    }
+  } catch (_error) {
+    showToast("URL del widget generada.");
+  }
+
+  return widgetUrl;
+}
+
+window.copyWidgetFeedUrl = () => copyWidgetFeedUrlForCurrentUser();
 
 function normalizeTaskTextForCreation(value){
   let text = String(value || "").trim();

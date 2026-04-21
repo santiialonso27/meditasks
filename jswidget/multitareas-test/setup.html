@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configurar Widget MULTITAREAS</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(130% 130% at 0% 0%, #f4f8ff 0%, #e6edff 58%, #dbe4fb 100%);
+      color: #111827;
+      padding: 20px;
+    }
+    .card {
+      width: min(760px, 100%);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.86);
+      border: 1px solid rgba(80, 102, 158, 0.2);
+      box-shadow: 0 20px 46px rgba(30, 45, 90, 0.12);
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(20px, 3.2vw, 30px);
+      letter-spacing: 0.02em;
+    }
+    p {
+      margin: 0;
+      color: #374151;
+      line-height: 1.45;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 11px 14px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      color: #ffffff;
+      background: #3363d7;
+    }
+    button.secondary {
+      color: #1f3c85;
+      background: #d8e6ff;
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .status {
+      font-size: 14px;
+      font-weight: 600;
+      color: #334155;
+    }
+    .url-box {
+      border-radius: 12px;
+      border: 1px solid rgba(70, 97, 156, 0.26);
+      background: rgba(255, 255, 255, 0.85);
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      color: #0f172a;
+      word-break: break-all;
+      min-height: 40px;
+    }
+    .muted {
+      font-size: 12px;
+      color: #475569;
+    }
+  </style>
+</head>
+<body>
+  <section class="card">
+    <h1>Configurar URL de Widget</h1>
+    <p>Este flujo crea un token de lectura para tu widget y genera la URL que tenes que pegar en WidgetWeb.</p>
+    <div class="actions">
+      <button id="loginBtn" type="button">Iniciar sesion con Google</button>
+      <button id="syncBtn" type="button" class="secondary" disabled>Actualizar feed</button>
+      <button id="copyBtn" type="button" class="secondary" disabled>Copiar URL widget</button>
+    </div>
+    <div id="status" class="status">Esperando inicio de sesion...</div>
+    <div id="urlBox" class="url-box">Todavia no hay URL generada.</div>
+    <p class="muted">Tip: despues de pegar la URL en WidgetWeb, ya no necesitas loguearte dentro del widget.</p>
+  </section>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import {
+      getAuth,
+      onAuthStateChanged,
+      signInWithPopup,
+      GoogleAuthProvider,
+      setPersistence,
+      browserLocalPersistence
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBKxH2qTEhArWT09faZHNMTKS7Eu3YqhOs",
+      authDomain: "multitareas-b3a1e.firebaseapp.com",
+      projectId: "multitareas-b3a1e",
+      storageBucket: "multitareas-b3a1e.firebasestorage.app",
+      messagingSenderId: "944481413077",
+      appId: "1:944481413077:web:02b4f4e433ae52da9aff5c"
+    };
+
+    const WIDGET_FEED_COLLECTION = "widgetFeeds";
+    const WIDGET_FEED_TOKEN_FIELD = "widgetFeedToken";
+    const WIDGET_FEED_TOKEN_UPDATED_AT_FIELD = "widgetFeedTokenUpdatedAt";
+
+    const ui = {
+      loginBtn: document.getElementById("loginBtn"),
+      syncBtn: document.getElementById("syncBtn"),
+      copyBtn: document.getElementById("copyBtn"),
+      status: document.getElementById("status"),
+      urlBox: document.getElementById("urlBox")
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+    const db = getFirestore(app);
+
+    let currentWidgetUrl = "";
+
+    function setStatus(text) {
+      ui.status.textContent = String(text || "");
+    }
+
+    function generateWidgetFeedToken() {
+      const tokenBytes = new Uint8Array(18);
+      if (window.crypto?.getRandomValues) {
+        window.crypto.getRandomValues(tokenBytes);
+      } else {
+        for (let index = 0; index < tokenBytes.length; index += 1) {
+          tokenBytes[index] = Math.floor(Math.random() * 256);
+        }
+      }
+      return Array.from(tokenBytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+
+    function formatLocalDate(dateObj) {
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+      const day = String(dateObj.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function getUpcomingDailyTasks(tasksMap, limit = 4) {
+      const safeLimit = Math.max(0, Number(limit) || 0);
+      if (!safeLimit) return [];
+
+      const todayIso = formatLocalDate(new Date());
+      const entries = [];
+
+      Object.entries(tasksMap || {}).forEach(([dateStr, taskList]) => {
+        const safeDate = String(dateStr || "").trim();
+        if (!safeDate || safeDate < todayIso) return;
+        if (!Array.isArray(taskList)) return;
+
+        taskList.forEach((task, index) => {
+          if (!task || task.done) return;
+          const taskText = String(task.text || "").trim();
+          if (!taskText) return;
+          const timeSlot = task?.timeSlot ? String(task.timeSlot).trim() : null;
+          entries.push({ dateStr: safeDate, index, taskText, timeSlot: timeSlot || null });
+        });
+      });
+
+      entries.sort((a, b) => {
+        const dateCompare = a.dateStr.localeCompare(b.dateStr);
+        if (dateCompare !== 0) return dateCompare;
+        const aHasTime = !!a.timeSlot;
+        const bHasTime = !!b.timeSlot;
+        if (aHasTime !== bHasTime) return aHasTime ? -1 : 1;
+        if (aHasTime && bHasTime) {
+          const timeCompare = a.timeSlot.localeCompare(b.timeSlot);
+          if (timeCompare !== 0) return timeCompare;
+        }
+        return a.index - b.index;
+      });
+
+      return entries.slice(0, safeLimit).map((entry) => ({
+        taskText: entry.taskText,
+        dateStr: entry.dateStr,
+        timeSlot: entry.timeSlot
+      }));
+    }
+
+    async function ensureWidgetFeedToken(userData, uid) {
+      const existingToken = String(userData?.[WIDGET_FEED_TOKEN_FIELD] || "").trim();
+      if (existingToken) return existingToken;
+
+      const nextToken = generateWidgetFeedToken();
+      await setDoc(
+        doc(db, "users", uid),
+        {
+          [WIDGET_FEED_TOKEN_FIELD]: nextToken,
+          [WIDGET_FEED_TOKEN_UPDATED_AT_FIELD]: Date.now()
+        },
+        { merge: true }
+      );
+      return nextToken;
+    }
+
+    async function syncForUser(user) {
+      if (!user?.uid) return "";
+      setStatus("Generando feed del widget...");
+      ui.syncBtn.disabled = true;
+      ui.copyBtn.disabled = true;
+
+      const userRef = doc(db, "users", user.uid);
+      const userSnap = await getDoc(userRef);
+      const userData = userSnap.exists() ? userSnap.data() : {};
+      const token = await ensureWidgetFeedToken(userData, user.uid);
+      const items = getUpcomingDailyTasks(userData.tasks || {}, 4);
+
+      await setDoc(
+        doc(db, WIDGET_FEED_COLLECTION, token),
+        {
+          uid: user.uid,
+          updatedAt: Date.now(),
+          items
+        },
+        { merge: true }
+      );
+
+      currentWidgetUrl = `${window.location.origin}/jswidget/multitareas-test/index.html?token=${encodeURIComponent(token)}`;
+      ui.urlBox.textContent = currentWidgetUrl;
+      ui.syncBtn.disabled = false;
+      ui.copyBtn.disabled = false;
+      setStatus(`Listo. ${items.length} tareas pendientes publicadas.`);
+      return currentWidgetUrl;
+    }
+
+    ui.loginBtn.addEventListener("click", async () => {
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (error) {
+        setStatus(`No se pudo iniciar sesion: ${error?.message || error}`);
+      }
+    });
+
+    ui.syncBtn.addEventListener("click", async () => {
+      if (!auth.currentUser) return;
+      try {
+        await syncForUser(auth.currentUser);
+      } catch (error) {
+        setStatus(`Error al actualizar feed: ${error?.message || error}`);
+      }
+    });
+
+    ui.copyBtn.addEventListener("click", async () => {
+      if (!currentWidgetUrl) return;
+      try {
+        await navigator.clipboard.writeText(currentWidgetUrl);
+        setStatus("URL copiada. Pegala en WidgetWeb.");
+      } catch (_error) {
+        setStatus("No se pudo copiar automaticamente. Copia manual desde el recuadro.");
+      }
+    });
+
+    await setPersistence(auth, browserLocalPersistence).catch(() => {});
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        ui.loginBtn.disabled = false;
+        ui.syncBtn.disabled = true;
+        ui.copyBtn.disabled = true;
+        setStatus("Inicia sesion para crear tu URL de widget.");
+        return;
+      }
+
+      ui.loginBtn.disabled = true;
+      try {
+        await syncForUser(user);
+      } catch (error) {
+        setStatus(`Error al generar URL: ${error?.message || error}`);
+      }
+    });
+  </script>
+</body>
+</html>
