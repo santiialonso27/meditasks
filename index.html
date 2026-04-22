@@ -1722,6 +1722,12 @@
       transform:scale(.7);
     }
     .tmain{ flex:1; display:flex; flex-direction:column; gap:4px; min-width:0; }
+    .task-text-row{
+      display:flex;
+      align-items:flex-start;
+      gap:8px;
+      min-width:0;
+    }
     .ttext{ 
       font-size:15px;
       line-height:1.4;
@@ -1731,6 +1737,51 @@
       -webkit-user-select: none;
       -webkit-touch-callout: none;
       letter-spacing:-.01em;
+    }
+    .task-text-row .ttext{
+      flex:1 1 auto;
+      min-width:0;
+    }
+
+    .task-recurrence-indicator{
+      width:22px;
+      height:22px;
+      border-radius:999px;
+      border:1px solid color-mix(in srgb, var(--gradient-to) 42%, rgba(255,255,255,.2));
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.04)),
+        color-mix(in srgb, var(--gradient-from) 12%, rgba(20,24,34,.8));
+      color: color-mix(in srgb, var(--gradient-to) 42%, #f8fafc);
+      display:grid;
+      place-items:center;
+      flex:0 0 auto;
+      margin-top:1px;
+      cursor:pointer;
+      padding:0;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.22);
+      transition: transform .18s ease, border-color .18s ease, filter .18s ease;
+    }
+
+    .task-recurrence-indicator:hover{
+      transform: translateY(-1px);
+      filter: brightness(1.08);
+    }
+
+    .task-recurrence-indicator svg{
+      width:12px;
+      height:12px;
+      opacity:.94;
+    }
+
+    :root.light-mode .task-recurrence-indicator{
+      border-color: color-mix(in srgb, var(--gradient-to) 38%, rgba(15,23,42,.2));
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.98), rgba(255,255,255,.82)),
+        color-mix(in srgb, var(--gradient-from) 10%, rgba(255,255,255,.95));
+      color: color-mix(in srgb, var(--gradient-to) 58%, #334155);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.96),
+        0 6px 12px rgba(15,23,42,.08);
     }
 
     .task-label-badge{
@@ -1834,6 +1885,10 @@
     .task.done .ttext{
       text-decoration: line-through;
       opacity: 0.55;
+    }
+
+    .task.done .task-recurrence-indicator{
+      opacity:.62;
     }
 
     .task.done{
@@ -1947,6 +2002,20 @@
     .icon svg{
       width:14px;
       height:14px;
+    }
+
+    @media (min-width: 901px){
+      .task .task-action-icon-back{
+        display:none;
+      }
+
+      .task.menu-open .task-action-icon-edit{
+        display:none;
+      }
+
+      .task.menu-open .task-action-icon-back{
+        display:block;
+      }
     }
 
     .task.menu-open{
@@ -2195,6 +2264,7 @@
 
     .col.task-focus-host .col-head,
     .col.task-focus-host .adder,
+    .col.task-focus-host .task-completion-divider-row,
     .col.task-focus-host .task:not(.menu-open){
       opacity:0;
       pointer-events:none;
@@ -2215,6 +2285,7 @@
 
     #dayOverlay.day-overlay-cardless .col.task-focus-host .col-head,
     #dayOverlay.day-overlay-cardless .col.task-focus-host .adder,
+    #dayOverlay.day-overlay-cardless .col.task-focus-host .task-completion-divider-row,
     #dayOverlay.day-overlay-cardless .col.task-focus-host .task:not(.menu-open){
       display:none !important;
     }
@@ -2267,6 +2338,11 @@
       opacity:0 !important;
       visibility:hidden !important;
       pointer-events:none !important;
+    }
+
+    body.task-mobile-focus-open .task-completion-divider-row{
+      opacity:0;
+      pointer-events:none;
     }
 
     #taskActionOverlay{
@@ -2360,12 +2436,17 @@
     }
 
     .task-actions-anchor.schedule-open .task-time-panel,
+    .task-actions-anchor.repeat-open .task-repeat-panel,
     .task-actions-anchor.tag-open .task-tag-panel,
     .task-actions-anchor.tag-create-open .task-tag-create-panel,
     .task-actions-anchor.postpone-open .task-postpone-panel{
       opacity:1;
       transform: translateX(0) scale(1);
       pointer-events:auto;
+    }
+
+    .task-repeat-panel{
+      width:196px;
     }
 
     .task-tag-panel{
@@ -2564,6 +2645,19 @@
     :root.light-mode .task-actions-anchor.open .task-menu-btn::before{
       opacity:1;
       transform: skewX(-18deg) translateX(290%);
+    }
+
+    .task-repeat-question{
+      margin:4px 8px 8px;
+      font-size:11px;
+      font-weight:600;
+      line-height:1.35;
+      color:var(--muted);
+      letter-spacing:.01em;
+    }
+
+    :root.light-mode .task-repeat-question{
+      color:rgba(15,23,42,.62);
     }
 
     .task-side-option{
@@ -4280,6 +4374,18 @@
       font-weight:800;
       margin-bottom:22px;
       letter-spacing:-.2px;
+    }
+
+    .recurring-scope-modal h3{
+      margin-bottom:10px;
+    }
+
+    .recurring-scope-copy{
+      margin:0 0 20px;
+      color:var(--muted);
+      font-size:14px;
+      line-height:1.45;
+      text-align:center;
     }
 
     .study-room-confirm-overlay{
@@ -15961,6 +16067,7 @@
       }
 
       .task-actions-anchor.schedule-open .task-time-panel,
+      .task-actions-anchor.repeat-open .task-repeat-panel,
       .task-actions-anchor.tag-open .task-tag-panel,
       .task-actions-anchor.tag-create-open .task-tag-create-panel,
       .task-actions-anchor.postpone-open .task-postpone-panel{
@@ -16034,6 +16141,36 @@
 
       #taskMobileMenu button {
         appearance: none;
+      }
+
+      #taskMobileMenu .task-menu-btn{
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.18);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+      }
+
+      :root.light-mode #taskMobileMenu .task-menu-btn{
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.86);
+      }
+
+      #taskMobileMenu .task-menu-btn::before{
+        display: none;
+      }
+
+      #taskMobileMenu .task-menu-btn[data-action="close"]{
+        color:#ff6969;
+        border-color: color-mix(in srgb, #ef4444 54%, rgba(255,255,255,.18));
+        background:
+          linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.03)),
+          color-mix(in srgb, #ef4444 18%, rgba(20,24,34,.78));
+      }
+
+      :root.light-mode #taskMobileMenu .task-menu-btn[data-action="close"]{
+        color:#c62828;
+        border-color: color-mix(in srgb, #ef4444 58%, rgba(15,23,42,.18));
+        background:
+          linear-gradient(180deg, rgba(255,255,255,.95), rgba(255,255,255,.78)),
+          color-mix(in srgb, #ef4444 14%, rgba(255,255,255,.90));
       }
 
       .task-mobile-menu-separator {

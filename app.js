@@ -94,7 +94,7 @@ let currentViewMode = normalizeViewMode(localStorage.getItem("mt_view_mode"));
 const summaryViewBtn = document.getElementById("summaryViewBtn");
 const tasksViewBtn = document.getElementById("tasksViewBtn");
 const projectsViewBtn = document.getElementById("projectsViewBtn");
-const APP_VERSION = "v2.7";
+const APP_VERSION = "v2.8";
 const CHANGELOG_MODAL_TARGET_VERSION = APP_VERSION;
 const CHANGELOG_MODAL_FIREBASE_FIELD = "lastSeenChangelogVersion";
 const CHANGELOG_MODAL_LOCAL_STORAGE_PREFIX = "mt_seen_changelog_version_";
@@ -102,12 +102,8 @@ const GUIDED_TUTORIAL_COMPLETED_FIREBASE_FIELD = "guidedTutorialCompleted";
 const GUIDED_TUTORIAL_COMPLETED_AT_FIREBASE_FIELD = "guidedTutorialCompletedAt";
 const GUIDED_TUTORIAL_COMPLETED_LOCAL_STORAGE_PREFIX = "mt_guided_tutorial_completed_v1_";
 const CHANGELOG_MODAL_ITEMS = Object.freeze([
-  "Nuevo: Agrega amigos y chatea con ellos.",
-  "Nuevo: Invita amigos a salas de estudio/trabajo",
-  "Nuevo: Crea tu sala de estudio e invita amigos para completar cada uno sus tareas del momento.",
-  "Nuevo: Elegi que cancion de youtube o video te gustaria reproducir para todos en la sala.",
-  "Nuevo: Oculta las tareas completadas y desocultalas con un simple click.",
-  "Nuevos logros."
+  "Nuevo: Tareas y Eventos recurrentes para tareas repetitivas.",
+  "Nuevos efectos de sonido en Sesiones de Enfoque."
 ]);
 const storeKey = "mt_tasks_local";
 const WIDGET_FEED_COLLECTION = "widgetFeeds";
@@ -446,6 +442,21 @@ const TASK_LABEL_COLORS = [
   "#8b5cf6",
   "#ec4899"
 ];
+const TASK_RECURRENCE_OPTIONS = Object.freeze([
+  { value: "", label: "No repetir" },
+  { value: "daily", label: "Todos los dias" },
+  { value: "weekdays", label: "Solo dias habiles (Lun a Vie)" },
+  { value: "weekly", label: "Cada semana" },
+  { value: "monthly", label: "Cada mes" }
+]);
+const TASK_RECURRENCE_GENERATION_DAYS = 3650;
+const TASK_RECURRENCE_VALUES = new Set(TASK_RECURRENCE_OPTIONS.map((option) => option.value));
+const TASK_RECURRENCE_LABEL_BY_VALUE = Object.freeze(
+  TASK_RECURRENCE_OPTIONS.reduce((accumulator, option) => {
+    accumulator[option.value] = option.label;
+    return accumulator;
+  }, {})
+);
 
 const ACHIEVEMENTS = [
   {
@@ -673,6 +684,7 @@ function closeTaskActionMenu() {
   activeTaskActionMenu.anchorElement?.classList.remove("open");
   activeTaskActionMenu.anchorElement?.classList.remove("open-upwards");
   activeTaskActionMenu.anchorElement?.classList.remove("schedule-open");
+  activeTaskActionMenu.anchorElement?.classList.remove("repeat-open");
   activeTaskActionMenu.anchorElement?.classList.remove("tag-open");
   activeTaskActionMenu.anchorElement?.classList.remove("tag-create-open");
   activeTaskActionMenu.anchorElement?.classList.remove("postpone-open");
@@ -908,6 +920,8 @@ function restoreMobileScrollSnapshot() {
 }
 
 function clearTaskMobileFocus() {
+  document.body.classList.remove("task-mobile-focus-open");
+
   if (activeTaskMobileFocus) {
     const { taskElement, menuElement, overlayElement, cloneElement } = activeTaskMobileFocus;
 
@@ -2309,8 +2323,509 @@ function normalizeTaskScheduling(task) {
     task.tagId = "";
   }
 
+  task.recurrence = normalizeTaskRecurrence(task.recurrence);
+
+  if (typeof task.recurrenceId !== "string") {
+    task.recurrenceId = "";
+  } else if (!task.recurrence) {
+    task.recurrenceId = "";
+  } else {
+    task.recurrenceId = task.recurrenceId.trim();
+  }
+
   task.timeCategory = task.timeSlot ? "scheduled" : "all-day";
   return task;
+}
+
+function normalizeTaskRecurrence(value) {
+  const safeValue = String(value || "").trim().toLowerCase();
+  return TASK_RECURRENCE_VALUES.has(safeValue) ? safeValue : "";
+}
+
+function getWeekdayNameFromIsoDate(isoDate) {
+  const safeIso = String(isoDate || "").trim();
+  if (!safeIso) return "";
+
+  const [year, month, day] = safeIso.split("-").map(Number);
+  if (!year || !month || !day) return "";
+
+  const parsedDate = new Date(year, month - 1, day);
+  return DAYS[parsedDate.getDay()] || "";
+}
+
+function getWeeklyRecurrenceLabelForDate(isoDate) {
+  const weekdayName = getWeekdayNameFromIsoDate(isoDate);
+  return weekdayName ? `Cada ${weekdayName}` : "Cada semana";
+}
+
+function getMonthlyRecurrenceLabelForDate(isoDate) {
+  const safeIso = String(isoDate || "").trim();
+  if (!safeIso) return "Cada mes";
+
+  const [, , day] = safeIso.split("-").map(Number);
+  if (!day) return "Cada mes";
+
+  return `El dia ${day} de cada mes`;
+}
+
+function buildTaskRecurrenceOptionsForDate(isoDate) {
+  return TASK_RECURRENCE_OPTIONS.map((option) => {
+    if (option.value === "weekly") {
+      return {
+        ...option,
+        label: getWeeklyRecurrenceLabelForDate(isoDate)
+      };
+    }
+
+    if (option.value === "monthly") {
+      return {
+        ...option,
+        label: getMonthlyRecurrenceLabelForDate(isoDate)
+      };
+    }
+
+    return option;
+  });
+}
+
+function getTaskRecurrenceLabel(value, isoDate = "") {
+  const normalized = normalizeTaskRecurrence(value);
+  if (normalized === "weekly") {
+    return getWeeklyRecurrenceLabelForDate(isoDate);
+  }
+  if (normalized === "monthly") {
+    return getMonthlyRecurrenceLabelForDate(isoDate);
+  }
+  return TASK_RECURRENCE_LABEL_BY_VALUE[normalized] || "No repetir";
+}
+
+function buildTaskRecurrenceToastMessage(value, isoDate = "") {
+  const normalized = normalizeTaskRecurrence(value);
+  if (!normalized) return "";
+
+  if (normalized === "monthly") {
+    const [, , dayOfMonth] = String(isoDate || "").split("-").map(Number);
+    if (dayOfMonth) {
+      return `Se repite todos los ${dayOfMonth} de cada mes`;
+    }
+  }
+
+  const recurrenceLabel = getTaskRecurrenceLabel(value, isoDate);
+  if (!recurrenceLabel || recurrenceLabel === "No repetir") return "";
+
+  return `Se repite ${recurrenceLabel.toLowerCase()}`;
+}
+
+function getTaskRecurrenceGroupId(task) {
+  if (!task) return "";
+  const recurrence = normalizeTaskRecurrence(task.recurrence);
+  if (!recurrence) return "";
+  const recurrenceId = typeof task.recurrenceId === "string"
+    ? task.recurrenceId.trim()
+    : "";
+  return recurrenceId;
+}
+
+function generateTaskRecurrenceId() {
+  return `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function ensureTaskRecurrenceId(task) {
+  if (!task) return "";
+
+  const recurrence = normalizeTaskRecurrence(task.recurrence);
+  if (!recurrence) {
+    task.recurrenceId = "";
+    return "";
+  }
+
+  const existingId = typeof task.recurrenceId === "string"
+    ? task.recurrenceId.trim()
+    : "";
+
+  if (existingId) {
+    task.recurrenceId = existingId;
+    return existingId;
+  }
+
+  const createdId = generateTaskRecurrenceId();
+  task.recurrenceId = createdId;
+  return createdId;
+}
+
+function setTaskRecurrence(task, recurrenceValue) {
+  if (!task) return "";
+
+  const normalizedRecurrence = normalizeTaskRecurrence(recurrenceValue);
+  task.recurrence = normalizedRecurrence;
+
+  if (!normalizedRecurrence) {
+    task.recurrenceId = "";
+    return "";
+  }
+
+  ensureTaskRecurrenceId(task);
+  return normalizedRecurrence;
+}
+
+function getNextRecurringDate(baseIsoDate, recurrenceValue) {
+  const safeBaseIso = String(baseIsoDate || "").trim();
+  const normalizedRecurrence = normalizeTaskRecurrence(recurrenceValue);
+  if (!safeBaseIso || !normalizedRecurrence) return null;
+
+  const [year, month, day] = safeBaseIso.split("-").map(Number);
+  if (!year || !month || !day) return null;
+
+  if (normalizedRecurrence === "daily") {
+    const nextDate = new Date(year, month - 1, day);
+    nextDate.setDate(nextDate.getDate() + 1);
+    return formatLocalDate(nextDate);
+  }
+
+  if (normalizedRecurrence === "weekdays") {
+    const nextDate = new Date(year, month - 1, day);
+    do {
+      nextDate.setDate(nextDate.getDate() + 1);
+    } while (nextDate.getDay() === 0 || nextDate.getDay() === 6);
+    return formatLocalDate(nextDate);
+  }
+
+  if (normalizedRecurrence === "weekly") {
+    const nextDate = new Date(year, month - 1, day);
+    nextDate.setDate(nextDate.getDate() + 7);
+    return formatLocalDate(nextDate);
+  }
+
+  if (normalizedRecurrence === "monthly") {
+    let targetYear = year;
+    let targetMonth = month + 1;
+    if (targetMonth > 12) {
+      targetMonth = 1;
+      targetYear += 1;
+    }
+    const daysInTargetMonth = new Date(targetYear, targetMonth, 0).getDate();
+    const targetDay = Math.min(day, daysInTargetMonth);
+    return formatLocalDate(new Date(targetYear, targetMonth - 1, targetDay));
+  }
+
+  return null;
+}
+
+function getNextRecurringTaskDateForCompletion(sourceIsoDate, recurrenceValue) {
+  const safeSourceIso = String(sourceIsoDate || "").trim();
+  const todayIso = formatLocalDate(new Date());
+  const baseIso = safeSourceIso && safeSourceIso > todayIso
+    ? safeSourceIso
+    : todayIso;
+  return getNextRecurringDate(baseIso, recurrenceValue);
+}
+
+function shouldCreateRecurringInstanceForDate(targetIsoDate, recurrenceValue, sourceIsoDate) {
+  const recurrence = normalizeTaskRecurrence(recurrenceValue);
+  const safeTargetIso = String(targetIsoDate || "").trim();
+  const safeSourceIso = String(sourceIsoDate || "").trim();
+  if (!recurrence || !safeTargetIso || !safeSourceIso) return false;
+
+  const [targetYear, targetMonth, targetDay] = safeTargetIso.split("-").map(Number);
+  const [sourceYear, sourceMonth, sourceDay] = safeSourceIso.split("-").map(Number);
+  if (!targetYear || !targetMonth || !targetDay || !sourceYear || !sourceMonth || !sourceDay) {
+    return false;
+  }
+
+  const targetDate = new Date(targetYear, targetMonth - 1, targetDay);
+  const sourceDate = new Date(sourceYear, sourceMonth - 1, sourceDay);
+
+  if (recurrence === "daily") return true;
+  if (recurrence === "weekdays") {
+    const weekday = targetDate.getDay();
+    return weekday >= 1 && weekday <= 5;
+  }
+  if (recurrence === "weekly") {
+    return targetDate.getDay() === sourceDate.getDay();
+  }
+  if (recurrence === "monthly") {
+    return targetDate.getDate() === sourceDate.getDate();
+  }
+
+  return false;
+}
+
+function buildRecurringTaskClone(sourceTask, recurrenceId = "") {
+  const safeText = String(sourceTask?.text || "").trim();
+  const cloneTask = buildNewTaskItem(safeText);
+  const safeTimeSlot = (
+    typeof sourceTask?.timeSlot === "string"
+    && TASK_TIME_OPTIONS.includes(sourceTask.timeSlot)
+  )
+    ? sourceTask.timeSlot
+    : null;
+  cloneTask.timeSlot = safeTimeSlot;
+  cloneTask.timeCategory = safeTimeSlot ? "scheduled" : "all-day";
+  cloneTask.tagId = typeof sourceTask?.tagId === "string" ? sourceTask.tagId : "";
+  cloneTask.recurrence = normalizeTaskRecurrence(sourceTask?.recurrence);
+  cloneTask.recurrenceId = String(recurrenceId || "").trim();
+  return cloneTask;
+}
+
+function removeRecurringTasksById(recurrenceId, { excludeTask = null } = {}) {
+  const safeRecurrenceId = String(recurrenceId || "").trim();
+  const affectedDates = new Set();
+  if (!safeRecurrenceId) {
+    return { removedCount: 0, affectedDates };
+  }
+
+  let removedCount = 0;
+
+  Object.entries(tasks || {}).forEach(([dateKey, taskList]) => {
+    if (!Array.isArray(taskList)) return;
+
+    for (let index = taskList.length - 1; index >= 0; index -= 1) {
+      const candidate = taskList[index];
+      if (!candidate || candidate === excludeTask) continue;
+
+      const candidateRecurrenceId = String(candidate.recurrenceId || "").trim();
+      if (candidateRecurrenceId !== safeRecurrenceId) continue;
+
+      taskList.splice(index, 1);
+      removedCount += 1;
+      affectedDates.add(dateKey);
+    }
+
+    if (taskList.length === 0) {
+      delete tasks[dateKey];
+    }
+  });
+
+  return { removedCount, affectedDates };
+}
+
+function syncRecurringInstancesForTask(sourceTask, sourceIsoDate) {
+  const safeSourceDate = String(sourceIsoDate || "").trim();
+  const recurrence = normalizeTaskRecurrence(sourceTask?.recurrence);
+  const affectedDates = new Set();
+
+  if (!sourceTask || !safeSourceDate || !recurrence) {
+    return { generatedCount: 0, removedCount: 0, affectedDates };
+  }
+
+  const recurrenceId = ensureTaskRecurrenceId(sourceTask);
+  if (!recurrenceId) {
+    return { generatedCount: 0, removedCount: 0, affectedDates };
+  }
+
+  const removalResult = removeRecurringTasksById(recurrenceId, { excludeTask: sourceTask });
+  removalResult.affectedDates.forEach((dateKey) => affectedDates.add(dateKey));
+
+  const todayIso = formatLocalDate(new Date());
+  let cursorIso = "";
+  if (safeSourceDate < todayIso) {
+    cursorIso = todayIso;
+  } else {
+    cursorIso = addDaysToIsoDate(safeSourceDate, 1);
+  }
+  let generatedCount = 0;
+
+  for (let dayOffset = 0; dayOffset < TASK_RECURRENCE_GENERATION_DAYS; dayOffset += 1) {
+    if (!cursorIso) break;
+
+    if (shouldCreateRecurringInstanceForDate(cursorIso, recurrence, safeSourceDate)) {
+      if (!Array.isArray(tasks[cursorIso])) {
+        tasks[cursorIso] = [];
+      }
+
+      const targetList = tasks[cursorIso];
+      const alreadyExists = targetList.some((entry) => {
+        return String(entry?.recurrenceId || "").trim() === recurrenceId;
+      });
+
+      if (!alreadyExists) {
+        const clonedTask = buildRecurringTaskClone(sourceTask, recurrenceId);
+        insertTaskInList(targetList, clonedTask);
+        generatedCount += 1;
+        affectedDates.add(cursorIso);
+      }
+    }
+
+    cursorIso = addDaysToIsoDate(cursorIso, 1);
+  }
+
+  return {
+    generatedCount,
+    removedCount: removalResult.removedCount,
+    affectedDates
+  };
+}
+
+async function shouldApplyRecurringActionToAll(task, actionLabel = "aplicar este cambio") {
+  const recurrenceId = getTaskRecurrenceGroupId(task);
+  if (!recurrenceId) return false;
+
+  return new Promise((resolve) => {
+    document.getElementById("taskRecurringScopeOverlay")?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.className = "overlay open";
+    overlay.id = "taskRecurringScopeOverlay";
+    overlay.innerHTML = `
+      <div class="logout-modal recurring-scope-modal" role="dialog" aria-modal="true" aria-labelledby="taskRecurringScopeTitle">
+        <h3 id="taskRecurringScopeTitle">Esta tarea es recurrente</h3>
+        <p class="recurring-scope-copy">Queres ${actionLabel} solo en esta tarea o en todas las recurrentes?</p>
+        <div class="logout-actions">
+          <button class="btn-cancel" type="button" data-recurring-scope="single">Solo esta</button>
+          <button class="btn-danger" type="button" data-recurring-scope="all">Todas las recurrentes</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const singleButton = overlay.querySelector('[data-recurring-scope="single"]');
+    const allButton = overlay.querySelector('[data-recurring-scope="all"]');
+    let settled = false;
+
+    const finish = (applyAll) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKeyDown, true);
+      overlay.remove();
+      resolve(applyAll);
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown, true);
+
+    singleButton?.addEventListener("click", () => {
+      finish(false);
+    });
+
+    allButton?.addEventListener("click", () => {
+      finish(true);
+    });
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        finish(false);
+      }
+    });
+
+    allButton?.focus();
+  });
+}
+
+function updateRecurringTaskTextById(recurrenceId, nextText) {
+  const safeRecurrenceId = String(recurrenceId || "").trim();
+  if (!safeRecurrenceId) return 0;
+
+  let updatedCount = 0;
+  Object.values(tasks || {}).forEach((taskList) => {
+    if (!Array.isArray(taskList)) return;
+    taskList.forEach((taskEntry) => {
+      if (!taskEntry) return;
+      if (String(taskEntry.recurrenceId || "").trim() !== safeRecurrenceId) return;
+      taskEntry.text = nextText;
+      updatedCount += 1;
+    });
+  });
+
+  return updatedCount;
+}
+
+function updateRecurringTaskScheduleById(recurrenceId, nextTimeSlot) {
+  const safeRecurrenceId = String(recurrenceId || "").trim();
+  if (!safeRecurrenceId) return 0;
+
+  const normalizedTimeSlot = (
+    typeof nextTimeSlot === "string" && TASK_TIME_OPTIONS.includes(nextTimeSlot)
+  )
+    ? nextTimeSlot
+    : null;
+
+  let updatedCount = 0;
+
+  Object.values(tasks || {}).forEach((taskList) => {
+    if (!Array.isArray(taskList)) return;
+
+    let listChanged = false;
+
+    taskList.forEach((taskEntry) => {
+      if (!taskEntry) return;
+      if (String(taskEntry.recurrenceId || "").trim() !== safeRecurrenceId) return;
+      taskEntry.timeSlot = normalizedTimeSlot;
+      taskEntry.timeCategory = normalizedTimeSlot ? "scheduled" : "all-day";
+      updatedCount += 1;
+      listChanged = true;
+    });
+
+    if (listChanged) {
+      sortTaskList(taskList);
+    }
+  });
+
+  return updatedCount;
+}
+
+function createNextRecurringTask(sourceTask, sourceIsoDate) {
+  if (!sourceTask) return null;
+
+  const recurrence = normalizeTaskRecurrence(sourceTask.recurrence);
+  if (!recurrence) return null;
+
+  const taskText = String(sourceTask.text || "").trim();
+  if (!taskText) return null;
+
+  const nextIsoDate = getNextRecurringTaskDateForCompletion(sourceIsoDate, recurrence);
+  if (!nextIsoDate) return null;
+
+  if (!Array.isArray(tasks[nextIsoDate])) {
+    tasks[nextIsoDate] = [];
+  }
+  const targetList = tasks[nextIsoDate];
+
+  const recurrenceId = ensureTaskRecurrenceId(sourceTask);
+  const timeSlot = (
+    typeof sourceTask.timeSlot === "string"
+    && TASK_TIME_OPTIONS.includes(sourceTask.timeSlot)
+  )
+    ? sourceTask.timeSlot
+    : null;
+  const tagId = typeof sourceTask.tagId === "string" ? sourceTask.tagId : "";
+
+  const duplicateExists = targetList.some((entry) => {
+    if (!entry) return false;
+
+    const entryRecurrenceId = String(entry.recurrenceId || "").trim();
+    if (recurrenceId && entryRecurrenceId) {
+      return entryRecurrenceId === recurrenceId;
+    }
+
+    return (
+      String(entry.text || "").trim() === taskText &&
+      normalizeTaskRecurrence(entry.recurrence) === recurrence &&
+      (entry.timeSlot || null) === timeSlot &&
+      (entry.tagId || "") === tagId
+    );
+  });
+
+  if (duplicateExists) {
+    return nextIsoDate;
+  }
+
+  const nextTask = buildNewTaskItem(taskText);
+  nextTask.timeSlot = timeSlot;
+  nextTask.timeCategory = timeSlot ? "scheduled" : "all-day";
+  nextTask.tagId = tagId;
+  nextTask.recurrence = recurrence;
+  nextTask.recurrenceId = recurrenceId || "";
+
+  insertTaskInList(targetList, nextTask);
+  updateDayModalTaskCount(nextIsoDate);
+  return nextIsoDate;
 }
 
 function getTaskLabelById(labelId) {
@@ -3329,11 +3844,30 @@ function openTaskTimeQuickEditor(taskElement, taskData, render){
     e.preventDefault();
     e.stopPropagation();
     const selected = select.value || null;
-    taskData.timeSlot = selected;
-    taskData.timeCategory = selected ? "scheduled" : "all-day";
-    await save();
+    const previousTimeSlot = taskData.timeSlot || null;
+    const timeChanged = previousTimeSlot !== selected;
+
     overlay.remove();
     editor.remove();
+
+    const applyToAllRecurring = timeChanged
+      ? await shouldApplyRecurringActionToAll(taskData, "aplicar este horario")
+      : false;
+
+    if (timeChanged && applyToAllRecurring) {
+      const recurrenceId = getTaskRecurrenceGroupId(taskData);
+      if (recurrenceId) {
+        updateRecurringTaskScheduleById(recurrenceId, selected);
+      } else {
+        taskData.timeSlot = selected;
+        taskData.timeCategory = selected ? "scheduled" : "all-day";
+      }
+    } else {
+      taskData.timeSlot = selected;
+      taskData.timeCategory = selected ? "scheduled" : "all-day";
+    }
+
+    await save();
     render();
     renderMiniCalendar();
     checkAchievements();
@@ -4792,7 +5326,7 @@ async function onPomodoroFocusCompleted(){
   await applyPomodoroExpReward();
   launchConfetti({ zIndex: 240000 });
   if (soundEnabled) {
-    playDayCompleteSound();
+    playFocusSessionSound();
   }
   adminConsoleLog(
     `Pomodoro completado: +${pomodoroState.expAmount} EXP por ${pomodoroState.focusMinutes} minutos de foco.`,
@@ -4900,6 +5434,9 @@ function beginPomodoroFocusPhase(){
   syncPomodoroActionState();
   updatePomodoroTimerUi();
   clearPomodoroTicker();
+  if (soundEnabled) {
+    playFocusSessionSound();
+  }
   pomodoroState.ticker = setInterval(runPomodoroTick, 250);
 }
 
@@ -13762,6 +14299,8 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       if (isProject) {
         task.timeSlot = null;
         task.timeCategory = "all-day";
+        task.recurrence = "";
+        task.recurrenceId = "";
       }
     });
     sortTaskList(dayTasks);
@@ -13996,6 +14535,33 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         </div>
       `
         : "";
+      const taskRecurrenceValue = !isProject
+        ? normalizeTaskRecurrence(t.recurrence)
+        : "";
+      const taskRecurrenceLabel = taskRecurrenceValue
+        ? getTaskRecurrenceLabel(taskRecurrenceValue, iso)
+        : "";
+      const taskRecurrenceToastMessage = taskRecurrenceValue
+        ? buildTaskRecurrenceToastMessage(taskRecurrenceValue, iso)
+        : "";
+      const taskRecurrenceMarkup = taskRecurrenceValue
+        ? `
+            <button
+              class="task-recurrence-indicator"
+              type="button"
+              data-task-recurrence-indicator="${taskRecurrenceValue}"
+              aria-label="Ver repeticion de la tarea"
+              title="${taskRecurrenceToastMessage || `Se repite ${taskRecurrenceLabel}`}"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M17 1 21 5l-4 4"/>
+                <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                <path d="M7 23 3 19l4-4"/>
+                <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+              </svg>
+            </button>
+          `
+        : "";
       
       el.innerHTML = `
         <div class="task-swipe-actions" aria-hidden="true">
@@ -14034,7 +14600,10 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           <div class="cb"></div>
           ${!isProject && t.timeSlot ? `<span class="task-time">${t.timeSlot}</span>` : ""}
           <div class="tmain">
-            <div class="ttext">${t.text}</div>
+            <div class="task-text-row">
+              <div class="ttext">${t.text}</div>
+              ${taskRecurrenceMarkup}
+            </div>
             ${taskLabelMarkup}
           </div>
           <div class="task-actions-anchor">
@@ -14046,6 +14615,18 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
                   <path d="M12 8v4l3 2"/>
                 </svg>
                 <span>Definir horario</span>
+                <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 3 5 5-5 5"/>
+                </svg>
+              </button>
+              <button class="task-menu-btn" data-action="repeat" type="button">
+                <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M17 1 21 5l-4 4"/>
+                  <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                  <path d="M7 23 3 19l4-4"/>
+                  <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+                </svg>
+                <span>Repetir</span>
                 <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="m6 3 5 5-5 5"/>
                 </svg>
@@ -14086,13 +14667,17 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
               </button>
             </div>
             ${!isProject ? `<div class="task-side-panel task-time-panel" aria-label="Seleccionar horario"></div>` : ""}
+            ${!isProject ? `<div class="task-side-panel task-repeat-panel" aria-label="Definir repeticion"></div>` : ""}
             <div class="task-side-panel task-tag-panel" aria-label="Seleccionar etiqueta"></div>
             <div class="task-side-panel task-tag-create-panel" aria-label="Crear etiqueta"></div>
             ${!isProject ? `<div class="task-side-panel task-postpone-panel" aria-label="Posponer tarea"></div>` : ""}
             <button class="icon task-action" aria-label="Editar tarea" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <svg class="task-action-icon task-action-icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M12 20h9"/>
                 <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+              </svg>
+              <svg class="task-action-icon task-action-icon-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M15 18 9 12l6-6"/>
               </svg>
             </button>
           </div>
@@ -14100,6 +14685,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       `;
       const textDiv = el.querySelector(".ttext");
       const taskLabelDot = el.querySelector(".task-label-dot");
+      const taskRecurrenceIndicator = el.querySelector("[data-task-recurrence-indicator]");
       const timePill = el.querySelector(".task-time");
       const swipeSurface = el.querySelector(".task-swipe-surface");
       const swipeCompleteAction = el.querySelector(".task-swipe-complete");
@@ -14133,10 +14719,27 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         });
       }
 
+      if (taskRecurrenceIndicator && taskRecurrenceToastMessage) {
+        const showRecurrenceToast = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          showToast(taskRecurrenceToastMessage);
+        };
+
+        taskRecurrenceIndicator.addEventListener("click", showRecurrenceToast);
+        taskRecurrenceIndicator.addEventListener("pointerdown", (event) => {
+          event.stopPropagation();
+        });
+        taskRecurrenceIndicator.addEventListener("touchstart", (event) => {
+          event.stopPropagation();
+        }, { passive: true });
+      }
+
       // DESKTOP
       textDiv.addEventListener("dblclick", () => {
 
         const oldText = t.text;
+        let editFinished = false;
 
         const input = document.createElement("input");
         input.type = "text";
@@ -14147,11 +14750,26 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         input.focus();
         input.select();
 
-        function saveEdit() {
+        async function saveEdit() {
+          if (editFinished) return;
+          editFinished = true;
           const newValue = input.value.trim();
           if (newValue) {
-            t.text = newValue;
-            save();
+            const applyToAllRecurring = newValue !== oldText
+              ? await shouldApplyRecurringActionToAll(t, "aplicar esta edicion")
+              : false;
+
+            if (newValue !== oldText && applyToAllRecurring) {
+              const recurrenceId = getTaskRecurrenceGroupId(t);
+              if (recurrenceId) {
+                updateRecurringTaskTextById(recurrenceId, newValue);
+              } else {
+                t.text = newValue;
+              }
+            } else {
+              t.text = newValue;
+            }
+            await save();
           }
           render();
           renderMiniCalendar();
@@ -14160,6 +14778,8 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         }
 
         function cancelEdit() {
+          if (editFinished) return;
+          editFinished = true;
           render();
           renderMiniCalendar();
           forceMobileRenderRefresh(render);
@@ -14167,11 +14787,16 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         }
 
         input.addEventListener("keydown", e => {
-          if (e.key === "Enter") saveEdit();
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void saveEdit();
+          }
           if (e.key === "Escape") cancelEdit();
         });
 
-        input.addEventListener("blur", saveEdit);
+        input.addEventListener("blur", () => {
+          void saveEdit();
+        });
 
       });
 
@@ -14698,10 +15323,12 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       const taskActionAnchor = el.querySelector(".task-actions-anchor");
       const taskActionButton = el.querySelector(".task-action");
       const taskScheduleButton = el.querySelector('[data-action="schedule"]');
+      const taskRepeatButton = el.querySelector('[data-action="repeat"]');
       const taskTagButton = el.querySelector('[data-action="tag"]');
       const taskPostponeButton = el.querySelector('[data-action="postpone"]');
       const taskDeleteButton = el.querySelector('[data-action="delete"]');
       const taskTimePanel = el.querySelector(".task-time-panel");
+      const taskRepeatPanel = el.querySelector(".task-repeat-panel");
       const taskTagPanel = el.querySelector(".task-tag-panel");
       const taskTagCreatePanel = el.querySelector(".task-tag-create-panel");
       const taskPostponePanel = el.querySelector(".task-postpone-panel");
@@ -14724,6 +15351,10 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
         let expShown = false;
 
         t.done = nextDone;
+
+        if (!isProject && !wasDone && t.done && iso) {
+          createNextRecurringTask(t, iso);
+        }
 
         if (allowReward) {
           shouldSavePlayer = resetDailyExpIfNeeded() || shouldSavePlayer;
@@ -14810,7 +15441,17 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           playDeleteTaskSound();
         }
 
-        dayTasks.splice(i, 1);
+        const removeAllRecurring = await shouldApplyRecurringActionToAll(t, "borrar esta tarea");
+        if (removeAllRecurring) {
+          const recurrenceId = getTaskRecurrenceGroupId(t);
+          if (recurrenceId) {
+            removeRecurringTasksById(recurrenceId);
+          } else {
+            dayTasks.splice(i, 1);
+          }
+        } else {
+          dayTasks.splice(i, 1);
+        }
 
         await save();
         render();
@@ -14913,6 +15554,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           taskActionAnchor.classList.remove("tag-open");
           taskActionAnchor.classList.remove("tag-create-open");
           taskActionAnchor.classList.remove("postpone-open");
+          taskActionAnchor.classList.remove("repeat-open");
           taskActionAnchor.classList.toggle("schedule-open");
           positionTaskActionMenu(taskActionAnchor);
         };
@@ -14930,9 +15572,25 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
             e.preventDefault();
             e.stopPropagation();
             const selected = option.dataset.timeSlot || null;
-            t.timeSlot = selected;
-            t.timeCategory = selected ? "scheduled" : "all-day";
+            const previousTimeSlot = t.timeSlot || null;
+            const timeChanged = previousTimeSlot !== selected;
             closeTaskActionMenu();
+            const applyToAllRecurring = timeChanged
+              ? await shouldApplyRecurringActionToAll(t, "aplicar este horario")
+              : false;
+
+            if (timeChanged && applyToAllRecurring) {
+              const recurrenceId = getTaskRecurrenceGroupId(t);
+              if (recurrenceId) {
+                updateRecurringTaskScheduleById(recurrenceId, selected);
+              } else {
+                t.timeSlot = selected;
+                t.timeCategory = selected ? "scheduled" : "all-day";
+              }
+            } else {
+              t.timeSlot = selected;
+              t.timeCategory = selected ? "scheduled" : "all-day";
+            }
             sortTaskList(dayTasks);
             await save();
             render();
@@ -14940,6 +15598,59 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
             checkAchievements();
           });
         });
+      }
+
+      if (taskRepeatButton && taskRepeatPanel) {
+        const renderRepeatPanel = () => {
+          const recurrenceOptions = buildTaskRecurrenceOptionsForDate(iso);
+          const repeatOptionsMarkup = recurrenceOptions.map((option) => `
+            <button
+              class="task-side-option${normalizeTaskRecurrence(t.recurrence) === option.value ? " active" : ""}"
+              type="button"
+              data-task-recurrence="${option.value}"
+            >${option.label}</button>
+          `).join("");
+
+          taskRepeatPanel.innerHTML = `
+            <div class="task-repeat-question">Como queres repetirla?</div>
+            ${repeatOptionsMarkup}
+          `;
+
+          taskRepeatPanel.querySelectorAll("[data-task-recurrence]").forEach((optionButton) => {
+            optionButton.addEventListener("click", async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const previousRecurrenceId = getTaskRecurrenceGroupId(t);
+              const selectedRecurrence = optionButton.dataset.taskRecurrence || "";
+              const appliedRecurrence = setTaskRecurrence(t, selectedRecurrence);
+              if (previousRecurrenceId) {
+                removeRecurringTasksById(previousRecurrenceId, { excludeTask: t });
+              }
+              if (appliedRecurrence && iso) {
+                syncRecurringInstancesForTask(t, iso);
+              }
+              closeTaskActionMenu();
+              await save();
+              render();
+              renderMiniCalendar();
+              showToast(appliedRecurrence ? `Repite: ${getTaskRecurrenceLabel(appliedRecurrence, iso)}` : "Repeticion desactivada");
+            });
+          });
+        };
+
+        renderRepeatPanel();
+
+        taskRepeatButton.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          renderRepeatPanel();
+          taskActionAnchor.classList.remove("tag-open");
+          taskActionAnchor.classList.remove("tag-create-open");
+          taskActionAnchor.classList.remove("postpone-open");
+          taskActionAnchor.classList.remove("schedule-open");
+          taskActionAnchor.classList.toggle("repeat-open");
+          positionTaskActionMenu(taskActionAnchor);
+        };
       }
 
       if (taskTagButton && taskTagPanel && taskTagCreatePanel) {
@@ -15109,6 +15820,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           renderTagPanel();
           taskActionAnchor.classList.remove("schedule-open");
           taskActionAnchor.classList.remove("postpone-open");
+          taskActionAnchor.classList.remove("repeat-open");
           taskActionAnchor.classList.remove("tag-create-open");
           taskActionAnchor.classList.toggle("tag-open");
           positionTaskActionMenu(taskActionAnchor);
@@ -15136,6 +15848,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
           taskActionAnchor.classList.remove("tag-open");
           taskActionAnchor.classList.remove("tag-create-open");
           taskActionAnchor.classList.remove("schedule-open");
+          taskActionAnchor.classList.remove("repeat-open");
           taskActionAnchor.classList.toggle("postpone-open");
           positionTaskActionMenu(taskActionAnchor);
         };
@@ -15217,7 +15930,7 @@ function createDayColumn(date, externalTasks = null, projectId = null) {
       text = text.charAt(0).toUpperCase() + text.slice(1);
     }
 
-    const newTask = { text, done:false, expGiven:false, timeSlot:null, timeCategory:"all-day", tagId:"" };
+    const newTask = buildNewTaskItem(text);
     const firstDoneIndex = dayTasks.findIndex(t => t.done);
 
     if(firstDoneIndex === -1){
@@ -16190,6 +16903,17 @@ function getWidgetFeedLocalStorageKey(uid = ""){
   return `${WIDGET_FEED_LOCAL_URL_STORAGE_PREFIX}${safeUid}`;
 }
 
+function extractWidgetFeedTokenFromUrl(urlValue = ""){
+  const safeUrl = String(urlValue || "").trim();
+  if (!safeUrl) return "";
+  try {
+    const parsed = new URL(safeUrl, window.location.origin);
+    return String(parsed.searchParams.get("token") || "").trim();
+  } catch (_error) {
+    return "";
+  }
+}
+
 function generateWidgetFeedToken(){
   const tokenBytes = new Uint8Array(18);
   if (window.crypto?.getRandomValues) {
@@ -16221,6 +16945,11 @@ async function ensureWidgetFeedTokenForCurrentUser(cloudUserData = null){
   const safeUid = String(currentUser?.uid || "").trim();
   if (!safeUid) return "";
 
+  const widgetUrlStorageKey = getWidgetFeedLocalStorageKey(safeUid);
+  const localUrl = widgetUrlStorageKey ? localStorage.getItem(widgetUrlStorageKey) : "";
+  const localToken = extractWidgetFeedTokenFromUrl(localUrl);
+  if (localToken) return localToken;
+
   let token = String(cloudUserData?.[WIDGET_FEED_TOKEN_FIELD] || "").trim();
 
   if (!token) {
@@ -16230,21 +16959,15 @@ async function ensureWidgetFeedTokenForCurrentUser(cloudUserData = null){
     } catch (_error) {}
   }
 
-  if (token) return token;
+  if (!token) {
+    token = generateWidgetFeedToken();
+  }
 
-  token = generateWidgetFeedToken();
-  try {
-    await setDoc(
-      doc(db, "users", safeUid),
-      {
-        [WIDGET_FEED_TOKEN_FIELD]: token,
-        [WIDGET_FEED_TOKEN_UPDATED_AT_FIELD]: Date.now()
-      },
-      { merge: true }
-    );
-  } catch (error) {
-    console.warn("No se pudo guardar el token del widget.", error);
-    return "";
+  if (widgetUrlStorageKey) {
+    const widgetUrl = buildWidgetFeedUrlFromToken(token);
+    if (widgetUrl) {
+      localStorage.setItem(widgetUrlStorageKey, widgetUrl);
+    }
   }
 
   return token;
@@ -16345,7 +17068,9 @@ function buildNewTaskItem(text){
     expGiven: false,
     timeSlot: null,
     timeCategory: "all-day",
-    tagId: ""
+    tagId: "",
+    recurrence: "",
+    recurrenceId: ""
   };
 }
 
@@ -26562,6 +27287,7 @@ function bindStudyRoomsEvents(scope = board){
       anchor.classList.remove("open");
       anchor.classList.remove("open-upwards");
       anchor.classList.remove("schedule-open");
+      anchor.classList.remove("repeat-open");
       anchor.classList.remove("tag-open");
       anchor.classList.remove("tag-create-open");
       anchor.classList.remove("postpone-open");
@@ -27583,13 +28309,18 @@ deleteTaskSound.volume = 0.6;
 deleteTaskSound.preload = "auto";
 deleteTaskSound.load();
 
+const focusSessionSound = new Audio("/sounds/focus_session_chime.mp3");
+focusSessionSound.volume = 0.72;
+focusSessionSound.preload = "auto";
+focusSessionSound.load();
+
 let audioPlaybackPrimed = false;
 
 function primeAudioPlayback(){
   if (audioPlaybackPrimed) return;
   audioPlaybackPrimed = true;
 
-  const clips = [completeSound, dayCompleteSound, addTaskSound, deleteTaskSound];
+  const clips = [completeSound, dayCompleteSound, addTaskSound, deleteTaskSound, focusSessionSound];
 
   clips.forEach((clip) => {
     if (!clip) return;
@@ -27634,6 +28365,10 @@ function playAddTaskSound() {
 
 function playDeleteTaskSound() {
   safePlayAudio(deleteTaskSound);
+}
+
+function playFocusSessionSound() {
+  safePlayAudio(focusSessionSound);
 }
 
 function safePlayAudio(audioElement){
@@ -27731,6 +28466,25 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   clone.id = "taskMobileFocusClone";
   clone.classList.add("task-mobile-focus");
   clone.classList.add("task-mobile-focus-clone");
+  const cloneRecurrenceIndicator = clone.querySelector("[data-task-recurrence-indicator]");
+  const cloneRecurrenceToastMessage = buildTaskRecurrenceToastMessage(
+    taskData?.recurrence,
+    taskElement.dataset.date || ""
+  );
+  if (cloneRecurrenceIndicator && cloneRecurrenceToastMessage) {
+    const onCloneRecurrenceClick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showToast(cloneRecurrenceToastMessage);
+    };
+    cloneRecurrenceIndicator.addEventListener("click", onCloneRecurrenceClick);
+    cloneRecurrenceIndicator.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+    });
+    cloneRecurrenceIndicator.addEventListener("touchstart", (event) => {
+      event.stopPropagation();
+    }, { passive: true });
+  }
 
   const menu = document.createElement("div");
   menu.id = "taskMobileMenu";
@@ -27768,6 +28522,18 @@ async function showTaskMobileMenu(taskElement, taskData, render){
         <path d="M12 8v4l3 2"/>
       </svg>
       <span>Definir horario</span>
+      <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m6 3 5 5-5 5"/>
+      </svg>
+    </button>
+    <button class="task-menu-btn" data-action="repeat" type="button">
+      <svg class="task-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M17 1 21 5l-4 4"/>
+        <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+        <path d="M7 23 3 19l4-4"/>
+        <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+      </svg>
+      <span>Repetir</span>
       <svg class="task-menu-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="m6 3 5 5-5 5"/>
       </svg>
@@ -27812,6 +28578,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
   document.body.appendChild(overlay);
   document.body.appendChild(clone);
   document.body.appendChild(menu);
+  document.body.classList.add("task-mobile-focus-open");
 
   taskElement.classList.add("task-mobile-focus-source");
 
@@ -28017,9 +28784,25 @@ async function showTaskMobileMenu(taskElement, taskData, render){
           e.preventDefault();
           e.stopPropagation();
           const selected = option.dataset.timeSlot || null;
-          taskData.timeSlot = selected;
-          taskData.timeCategory = selected ? "scheduled" : "all-day";
-          cleanup();
+          const previousTimeSlot = taskData.timeSlot || null;
+          const timeChanged = previousTimeSlot !== selected;
+          cleanup({ skipRefresh: true });
+          const applyToAllRecurring = timeChanged
+            ? await shouldApplyRecurringActionToAll(taskData, "aplicar este horario")
+            : false;
+
+          if (timeChanged && applyToAllRecurring) {
+            const recurrenceId = getTaskRecurrenceGroupId(taskData);
+            if (recurrenceId) {
+              updateRecurringTaskScheduleById(recurrenceId, selected);
+            } else {
+              taskData.timeSlot = selected;
+              taskData.timeCategory = selected ? "scheduled" : "all-day";
+            }
+          } else {
+            taskData.timeSlot = selected;
+            taskData.timeCategory = selected ? "scheduled" : "all-day";
+          }
           await save();
           render();
           renderMiniCalendar();
@@ -28190,6 +28973,53 @@ async function showTaskMobileMenu(taskElement, taskData, render){
     renderTagList();
   };
 
+  const openMobileRepeat = () => {
+    const taskIso = taskElement.dataset.date || "";
+    const recurrenceOptions = buildTaskRecurrenceOptionsForDate(taskIso);
+    const repeatOptionsMarkup = recurrenceOptions.map((option) => `
+      <button
+        class="task-side-option${normalizeTaskRecurrence(taskData.recurrence) === option.value ? " active" : ""}"
+        type="button"
+        data-task-recurrence="${option.value}"
+      >${option.label}</button>
+    `).join("");
+
+    renderMenuView(`
+      ${showSubmenuHeader("Repetir tarea")}
+      <div class="task-side-panel task-repeat-panel task-mobile-subpanel">
+        <div class="task-repeat-question">Como queres repetirla?</div>
+        ${repeatOptionsMarkup}
+      </div>
+    `, () => {
+      menu.querySelector('[data-action="back"]')?.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showMainMenu();
+      });
+
+      menu.querySelectorAll("[data-task-recurrence]").forEach((optionButton) => {
+        optionButton.addEventListener("click", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const previousRecurrenceId = getTaskRecurrenceGroupId(taskData);
+          const selectedRecurrence = optionButton.dataset.taskRecurrence || "";
+          const appliedRecurrence = setTaskRecurrence(taskData, selectedRecurrence);
+          if (previousRecurrenceId) {
+            removeRecurringTasksById(previousRecurrenceId, { excludeTask: taskData });
+          }
+          if (appliedRecurrence && taskIso) {
+            syncRecurringInstancesForTask(taskData, taskIso);
+          }
+          cleanup();
+          await save();
+          render();
+          renderMiniCalendar();
+          showToast(appliedRecurrence ? `Repite: ${getTaskRecurrenceLabel(appliedRecurrence, taskIso)}` : "Repeticion desactivada");
+        });
+      });
+    });
+  };
+
   const openMobilePostpone = () => {
     const postponeOptions = [
       { label: "Posponer para manana", days: 1 },
@@ -28254,6 +29084,7 @@ async function showTaskMobileMenu(taskElement, taskData, render){
       if (!textDiv) return;
 
       const oldText = taskData.text;
+      let editFinished = false;
 
       const input = document.createElement("input");
       input.type = "text";
@@ -28265,13 +29096,28 @@ async function showTaskMobileMenu(taskElement, taskData, render){
       input.focus();
       input.select();
 
-      function saveEdit(){
+      async function saveEdit(){
+        if (editFinished) return;
+        editFinished = true;
 
         const newValue = input.value.trim();
 
         if(newValue){
-          taskData.text = newValue;
-          save();
+          const applyToAllRecurring = newValue !== oldText
+            ? await shouldApplyRecurringActionToAll(taskData, "aplicar esta edicion")
+            : false;
+
+          if (newValue !== oldText && applyToAllRecurring) {
+            const recurrenceId = getTaskRecurrenceGroupId(taskData);
+            if (recurrenceId) {
+              updateRecurringTaskTextById(recurrenceId, newValue);
+            } else {
+              taskData.text = newValue;
+            }
+          } else {
+            taskData.text = newValue;
+          }
+          await save();
         }
 
         render();
@@ -28281,6 +29127,8 @@ async function showTaskMobileMenu(taskElement, taskData, render){
       }
 
       function cancelEdit() {
+        if (editFinished) return;
+        editFinished = true;
         render();
         renderMiniCalendar();
         forceMobileRenderRefresh(render);
@@ -28288,11 +29136,16 @@ async function showTaskMobileMenu(taskElement, taskData, render){
       }
 
       input.addEventListener("keydown", e=>{
-        if(e.key === "Enter") saveEdit();
+        if(e.key === "Enter") {
+          e.preventDefault();
+          void saveEdit();
+        }
         if(e.key === "Escape") cancelEdit();
       });
 
-      input.addEventListener("blur", saveEdit);
+      input.addEventListener("blur", () => {
+        void saveEdit();
+      });
 
     };
 
@@ -28309,6 +29162,15 @@ async function showTaskMobileMenu(taskElement, taskData, render){
         e.preventDefault();
         e.stopPropagation();
         openMobileSchedule();
+      };
+    }
+
+    const repeatButton = menu.querySelector('[data-action="repeat"]');
+    if (repeatButton) {
+      repeatButton.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openMobileRepeat();
       };
     }
 
@@ -28341,12 +29203,28 @@ async function showTaskMobileMenu(taskElement, taskData, render){
         playDeleteTaskSound();
       }
 
-      const removed = removeMobileTaskFromSource();
-      if (!removed) {
-        showToast("No se pudo eliminar la tarea.");
-        render();
-        renderMiniCalendar();
-        return;
+      const removeAllRecurring = await shouldApplyRecurringActionToAll(taskData, "borrar esta tarea");
+      if (removeAllRecurring) {
+        const recurrenceId = getTaskRecurrenceGroupId(taskData);
+        if (recurrenceId) {
+          removeRecurringTasksById(recurrenceId);
+        } else {
+          const removed = removeMobileTaskFromSource();
+          if (!removed) {
+            showToast("No se pudo eliminar la tarea.");
+            render();
+            renderMiniCalendar();
+            return;
+          }
+        }
+      } else {
+        const removed = removeMobileTaskFromSource();
+        if (!removed) {
+          showToast("No se pudo eliminar la tarea.");
+          render();
+          renderMiniCalendar();
+          return;
+        }
       }
 
       await save();
